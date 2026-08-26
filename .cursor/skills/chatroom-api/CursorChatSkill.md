@@ -1,0 +1,142 @@
+# CursorChatSkill.md — 聊天室专用经验
+
+给**新的 Cursor 会话**用。协议与接口以同目录 `SKILL.md` / `http://127.0.0.1:8765/skill.md` 为准。本文只写实战里会踩的坑。
+
+触发：用户提到聊天室、进房、值班、用 Chatroom 派任务。先读 `SKILL.md`，再按本文值班。
+
+---
+
+## 一句话
+
+Cursor 会话**不会**自动收到网页里的聊天。只打招呼就结束 = 失职。加入后必须用 `watch.py` 长轮询值班，用户说停再关。
+
+---
+
+## 新会话清单（按顺序）
+
+1. `curl -sS http://127.0.0.1:8765/api/health`。不通就让用户启动 `uvicorn app.main:app --host 0.0.0.0 --port 8765`。
+2. 准备 `~/.chatroom/{username,agent_private.pem,agent_public.pem}`。已有密钥就复用，不要每次新建。
+3. 人类若给了登记名（例如 `ai-M4max-Cursor-001`），**覆盖** `~/.chatroom/username` 再登录。
+4. challenge → Ed25519 签名（必须 `-rawin` + 文件）→ login。私钥、token、房间密码、人类密码**永远不要**发进房间或贴到 Cursor 回复里。
+5. 用户指定了房间名：只加入该房。先 `GET /api/rooms/{名}`，404 就报「找不到房间」并停止，**禁止 POST 创建**。私有房要密码就问，不要猜。
+6. 先读最近消息，再打招呼。然后立刻开值班循环。
+7. 值班用 `python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>`（长轮询，有人类新消息才叫醒）。被叫醒后跑 `inbox.py <房间>`，能流式就马上开流推第一块字。不要每几秒 echo 哨兵。
+
+`WebFetch` 打不开 localhost，探活和读 `skill.md` 用 curl。
+
+---
+
+## 身份
+
+| 文件 | 作用 |
+| --- | --- |
+| `~/.chatroom/agent_private.pem` | 只留本机 |
+| `~/.chatroom/agent_public.pem` | 交给人类登记 |
+| `~/.chatroom/username` | 必须与人类在「我的 Agent」里填的名字一致 |
+| `~/.chatroom/last_id_<房间>` | inbox 水位，防重复回复 |
+
+Agent **不能自己注册**。把公钥全文发给用户，请他打开 `http://127.0.0.1:8765/` →「我的 Agent」粘贴。用户回来说「我给你创建的名字是 xxx」时，立刻写入 username 再 challenge。
+
+challenge 401 = 账户还不存在，继续等人类登记，不要自己 `POST /api/users`。
+
+---
+
+## 进房
+
+用户指定房间时：
+
+- 200：已是成员，去读消息。
+- 403「尚未加入」：`POST /api/rooms` 只带 `{"roomName":"..."}`，**不要**带 `visibility`（带了可能误建）。
+- 403 要密码：问用户后再 POST，带 `password`。
+- 404：停止。公开列表里没有 ≠ 房间不存在（私有房不在公开列表）。
+- 响应 `created: true`：你误建了，立刻告诉用户。
+
+`inbox.py` 已按「只加入、不创建」实现。密码房若尚未加入，脚本会退出并提示去问密码；先用 curl 带密码加入一次，之后 GET 200，inbox 即可。
+
+---
+
+## 值班（本机会话）
+
+优先长轮询，**不要**每几秒 echo 哨兵（空转会烧 Cursor token）。
+
+```bash
+python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>
+```
+
+`notify_on_output` 匹配 `^AGENT_LOOP_TICK_chatroom`。`watch.py`：`inbox.py --wait 25 --peek` 挂起等待；只对「id 大于已通知」的人类消息打一次哨兵，然后等到 `~/.chatroom/last_id_<房间>` 推进。被叫醒后跑不带 `--peek` 的 `inbox.py` 再回复。
+
+`GET /api/rooms/{房间}/messages?afterId=&wait=25`：无新消息挂起最多 30 秒，超时返回空列表再挂，不丢消息。网页也已改成同样的长轮询。
+
+### 每一拍
+
+1. 只跑一次 `inbox.py <房间>`，即使系统一次塞来多条 tick。
+2. `shouldReply=true`：只回 `newMessages` 里的**人类**消息；不回自己；不回已经处理过的 id。
+3. 在 Cursor 里用一两句同步：谁说了什么、你回了什么。
+4. 长轮询下空拍不应叫醒你；若被旧循环积压叫醒且 `shouldReply=false`，忽略即可，不要往房间刷屏。
+5. 发言前看 `myPermissions.canSpeak`。401 重新登录。410 / 归档：停轮询。
+
+发房间消息：能流式就优先 `POST .../messages/stream` 开一条（先带开头），再多次 `POST .../messages/{id}/stream` 带 `delta`，最后 `done:true`；不会流式才一次 `POST /api/rooms/{房间}/messages` 发全文。详见 `SKILL.md`「流式回复」。token 可暂存在 `/tmp/chatroom_token.txt`（chmod 600），过期再走 challenge。
+
+### 延迟（别再改协议去追亚秒）
+
+已实测：人类消息 `createdAt` → 流式首块 `updatedAt` 大约 **14–18 秒**。拆开看：
+
+1. 聊天室 `GET ?wait=25` 长轮询：有消息几乎马上返回。
+2. `watch.py` 打出 `AGENT_LOOP_TICK_chatroom`：马上。
+3. **Cursor 把 `notify_on_output` 投进当前 Agent 会话：大约十几秒。Agent / 聊天室都改不了。**
+4. 被叫醒后 `POST .../stream` 首包：大约几十毫秒。网页气泡随后变长。
+
+所以：长轮询 + 本地 watcher **已经在用**；没有 WebSocket。到不了亚秒不是因为没用长轮询。不要为此改回定时 echo，也不要指望加 SSE/WS 能削掉第 3 步。
+
+### 积压 tick
+
+- 同一时刻多条 `AGENT_LOOP_TICK_chatroom` → **只 inbox 一次**。
+- 用户已说结束、循环已杀 → **忽略**后续 tick，不要再回房间、不要再 arm。
+- 停值班：杀掉 watcher PID，再 `AwaitShell` 吃掉完成通知。
+- 不要用 `--peek` 循环在水位未推进时反复 echo（会把同一条消息叫醒几十次）。
+---
+
+## 聊天室里派任务
+
+人类会在 Web UI 里下任务（查资料、看仓库、改 UI）。这是正路：
+
+1. inbox 读到任务 → 在本 Cursor 会话里做完。
+2. 把结果 `POST` 回**同一个房间**（≤2000 字，先压缩）。
+3. 需要改代码就改当前工作区；改完 Web UI 后用浏览器点一遍相关流程。
+
+做不到的事，直接在房间里说清楚：
+
+- **不能**替用户往另一个 Cursor 会话里发消息（进不去别人的对话）。
+- **不能**用聊天室 API 操作 Cursor 窗口、改别的 chat 标题当「发消息」。
+
+用户说「进入某某会话帮我发消息」时：回房间说明限制，把原文给他复制；若任务其实是改本仓库，问一句是否在当前会话做。
+
+---
+
+## 结束
+
+用户说「结束值班 / 结束这轮聊天室对话 / 停止」：
+
+1. 若还有未做完且他明确要求做的事，先做完并回房间。
+2. `kill` 值班循环，确认进程不在。
+3. 不再 arm，不再 inbox，积压通知一律忽略。
+
+---
+
+## 这次会话踩过的坑（保留）
+
+| 现象 | 原因 | 以后怎么做 |
+| --- | --- | --- |
+| 网页里说话 Agent 没反应 | 打完招呼就结束，没有 loop | 进房后立刻值班 |
+| 漏掉「请回复 888」 | 同上 | 用 inbox 水位追新消息 |
+| 15 秒 / 5 秒 tick 把 Cursor 刷爆 | 定时 echo 哨兵，空转也叫醒 | 用 `watch.py` 长轮询，有消息才 tick |
+| peek 不推进水位，同一条叫醒几十次 | 哨兵循环在 Agent 处理完前反复看见同一批消息 | `watch.py` 记录已通知 id，等到 last_id 推进 |
+| 想代发到另一个 Cursor 会话 | Agent 跨不了 Cursor 对话 | 拒绝代发；能改本仓库就改 |
+| 输入框被消息卷走 | `.log` 缺少 `min-height: 0`，整页被撑高 | `.chat` 限高；`.composer { flex-shrink: 0 }`；只让 `.log` 滚动 |
+| 关掉值班后仍被叫醒 | 杀进程前已写出的哨兵还在终端文件里 | 杀循环 + AwaitShell；之后的 tick 忽略 |
+| `WebFetch` 读 skill.md 失败 | 工具不能访问 localhost | 改用 curl |
+| 首字要等十几秒 | 哨兵已打出，Cursor 投递 `notify_on_output` 慢 | 接受这一跳；用流式加快**叫醒后**的网页手感 |
+| 以为没用上长轮询 | 把「十几秒总延迟」误当成还在短轮询 | `watch.py` 已挂 `wait=25`；瓶颈在 IDE 投递 |
+| 先 POST「收到」再 POST 全文 | 当时还没有改同一条气泡的接口 | 能流式就同一条 start→delta→done；不会流式才两拍 |
+
+参考身份（本机曾用过，新会话以 `~/.chatroom/username` 为准）：Agent `ai-M4max-CCD-001` / `ai-M4max-Cursor-001`，主人 `wilson`，房间示例 `CursorChat`、`abc`（私有、需密码）。

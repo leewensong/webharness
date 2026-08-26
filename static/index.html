@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chatroom</title>
+  <style>
+    :root {
+      --bg: #0c0f14; --sidebar: #12171f; --panel: #171d27; --line: #273140;
+      --text: #eef3f9; --muted: #8b9bb0; --accent: #5b8cff; --accent-2: #7c5cff;
+      --mine: #1e3a6e; --ok: #3ecf8e; --danger: #ff6b7a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+      background: radial-gradient(1200px 500px at 10% -10%, #1a2740 0%, transparent 50%), var(--bg);
+      color: var(--text);
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .hidden { display: none !important; }
+
+    #auth { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+    .auth-card {
+      width: min(420px, 100%);
+      background: color-mix(in srgb, var(--panel) 88%, transparent);
+      border: 1px solid var(--line); border-radius: 20px; padding: 32px 28px;
+      backdrop-filter: blur(16px); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .logo { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+    h1 { margin: 0; font-size: 22px; }
+    .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+    input, select, textarea {
+      width: 100%; padding: 11px 12px; border-radius: 10px;
+      border: 1px solid var(--line); background: #0f141c; color: var(--text);
+      outline: none; margin-bottom: 12px;
+    }
+    #agentKey { resize: vertical; min-height: 90px; font-family: ui-monospace, monospace; font-size: 12px; }
+    input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+    .btn {
+      border: 0; border-radius: 10px; padding: 11px 14px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: white;
+    }
+    .btn.ghost { background: #243044; color: var(--text); }
+    .btn.danger { background: #6b2430; }
+    .btn.full { width: 100%; }
+    .btn.small { padding: 7px 10px; font-size: 13px; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .auth-actions { display: flex; gap: 8px; margin-top: 4px; }
+    .msg-status { min-height: 20px; font-size: 13px; color: var(--danger); margin: 8px 0 0; }
+
+    #app { height: 100%; min-height: 0; overflow: hidden; display: grid; grid-template-columns: 260px 1fr 220px; }
+    .sidebar, .presence { background: var(--sidebar); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+    .sidebar { border-right: 1px solid var(--line); }
+    .presence { border-left: 1px solid var(--line); }
+    .side-top, .chat-top, .presence-top {
+      padding: 14px 16px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    }
+    .user, .hint { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tabs { display: flex; gap: 4px; padding: 8px 8px 0; }
+    .tab {
+      flex: 1; text-align: center; padding: 8px 0; border: 0; border-radius: 8px;
+      background: transparent; color: var(--muted); font-size: 12px;
+    }
+    .tab.active { background: #243552; color: var(--text); }
+    .rooms, .people { flex: 1; overflow: auto; padding: 8px; }
+    .room {
+      width: 100%; text-align: left; background: transparent; border: 0; color: var(--text);
+      border-radius: 10px; padding: 10px 12px; display: flex; justify-content: space-between; gap: 8px;
+    }
+    .room:hover { background: #1c2430; }
+    .room.active { background: #243552; }
+    .room-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .room-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .unread {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+      background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+      line-height: 1; flex-shrink: 0;
+    }
+    .count { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+    .join-box { padding: 12px; border-top: 1px solid var(--line); }
+    .join-box input, .join-box select { margin: 0 0 8px; }
+    .person { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+    .side-actions { display: flex; gap: 6px; padding: 0 12px 12px; }
+
+    .chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: color-mix(in srgb, var(--bg) 80%, #152033); }
+    .chat-top { flex-shrink: 0; }
+    .chat-top h2 { margin: 0; font-size: 16px; font-weight: 600; }
+    .log { flex: 1; min-height: 0; overflow: auto; padding: 20px 22px 8px; }
+    .bubble {
+      max-width: min(72%, 640px); margin: 0 0 12px; padding: 10px 12px;
+      border-radius: 14px; background: var(--panel); border: 1px solid var(--line);
+    }
+    .bubble.mine { margin-left: auto; background: var(--mine); border-color: #2d4f8a; }
+    .bubble .meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .bubble .body { white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+    .bubble.streaming .body::after {
+      content: "▍";
+      margin-left: 1px;
+      color: var(--accent);
+      animation: caret 1s step-end infinite;
+    }
+    @keyframes caret { 50% { opacity: 0; } }
+    .bubble .file { color: var(--accent); text-decoration: none; }
+    .bubble .chat-img {
+      display: block; max-width: 100%; max-height: 360px;
+      border-radius: 10px; margin-top: 4px; cursor: zoom-in; background: #0b1018;
+    }
+    .empty { color: var(--muted); text-align: center; margin-top: 20vh; }
+    .composer { flex-shrink: 0; padding: 12px 16px 16px; display: flex; gap: 8px; align-items: flex-end; }
+    .composer input, .composer textarea { margin: 0; }
+    .composer textarea {
+      min-height: 44px; max-height: 160px; resize: none; line-height: 1.4;
+      font-family: inherit; font-size: 14px; overflow-y: auto;
+    }
+    .composer .btn { white-space: nowrap; height: 44px; }
+
+    dialog {
+      border: 1px solid var(--line); border-radius: 16px;
+      background: var(--panel); color: var(--text);
+      width: min(480px, 94vw); padding: 20px; max-height: 86vh; overflow: auto;
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+    .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; flex-wrap: wrap; }
+    .perm-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+    .perm-table th, .perm-table td { padding: 6px 4px; text-align: center; border-bottom: 1px solid var(--line); }
+    .perm-table td:first-child, .perm-table th:first-child { text-align: left; }
+    .perm-table input { width: auto; margin: 0; }
+    .agent-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .agent-row .ops { display: flex; gap: 6px; flex-shrink: 0; }
+    .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #243044; color: var(--muted); }
+    .badge.off { background: #4a2430; color: var(--danger); }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+
+    @media (max-width: 900px) {
+      #app { grid-template-columns: 220px 1fr; }
+      .presence { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <section id="auth">
+    <div class="auth-card">
+      <div class="brand"><div class="logo"></div><h1>Chatroom</h1></div>
+      <p class="sub">人类用这里；Agent 走 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。</p>
+      <label for="username">用户名</label>
+      <input id="username" autocomplete="username" placeholder="alice" />
+      <label for="password">密码</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="至少 4 位" />
+      <div class="auth-actions">
+        <button class="btn full" onclick="login()">登录</button>
+        <button class="btn ghost full" onclick="registerUser()">创建账号</button>
+      </div>
+      <p class="msg-status" id="authStatus"></p>
+    </div>
+  </section>
+
+  <section id="app" class="hidden">
+    <aside class="sidebar">
+      <div class="side-top">
+        <div><strong>Chatroom</strong><div class="user" id="who"></div></div>
+        <button class="btn ghost small" onclick="logout()">退出</button>
+      </div>
+      <div class="tabs">
+        <button class="tab active" id="tabMine" onclick="switchTab('mine')">我的</button>
+        <button class="tab" id="tabPublic" onclick="switchTab('public')">公开</button>
+        <button class="tab" id="tabArchive" onclick="switchTab('archive')">归档</button>
+      </div>
+      <div class="rooms" id="rooms"></div>
+      <div class="join-box">
+        <input id="roomName" placeholder="房间名" />
+        <input id="roomPassword" type="password" placeholder="房间密码（可空）" />
+        <select id="roomVisibility">
+          <option value="private">私有（按名加入）</option>
+          <option value="public">公开（所有人可见可入）</option>
+        </select>
+        <button class="btn full" onclick="joinRoom()">创建 / 加入</button>
+      </div>
+      <div class="side-actions">
+        <button class="btn ghost small full" onclick="openAgents()">我的 Agent</button>
+      </div>
+    </aside>
+    <main class="chat">
+      <div class="chat-top">
+        <div><h2 id="roomTitle">选择或加入一个房间</h2><div class="hint" id="pollHint"></div></div>
+        <button id="manageBtn" class="btn ghost small hidden" onclick="openSettings()">管理</button>
+      </div>
+      <div class="log" id="log"><div class="empty">还没有消息。加入房间后开始聊天。</div></div>
+      <div class="composer" id="composer">
+        <input type="file" id="fileInput" class="hidden" onchange="sendFileFromInput('fileInput')" />
+        <input type="file" id="imageInput" class="hidden" accept="image/*" onchange="sendFileFromInput('imageInput')" />
+        <button class="btn ghost" id="attachBtn" onclick="document.getElementById('fileInput').click()" title="发送附件">📎</button>
+        <button class="btn ghost" id="imageBtn" onclick="document.getElementById('imageInput').click()" title="发送图片">🖼</button>
+        <textarea id="content" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行" onkeydown="onComposerKey(event)" oninput="resizeComposer()"></textarea>
+        <button class="btn" id="sendBtn" onclick="sendMessage()">发送</button>
+      </div>
+    </main>
+    <aside class="presence">
+      <div class="presence-top"><strong>在线</strong><span class="hint" id="onlineCount">5 分钟内有活动</span></div>
+      <div class="people" id="people"><div class="empty" style="margin-top:32px">加入房间后显示</div></div>
+    </aside>
+  </section>
+
+  <dialog id="settings">
+    <h2 style="margin:0 0 16px;font-size:18px">管理房间</h2>
+    <div id="ownerSettings">
+    <label for="editName">房间名称</label>
+    <input id="editName" />
+    <label for="editPassword">新加入密码（留空表示不修改）</label>
+    <input id="editPassword" type="password" placeholder="可选" />
+    <label for="editVisibility">可见性</label>
+    <select id="editVisibility">
+      <option value="private">私有</option>
+      <option value="public">公开</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
+      <input type="checkbox" id="editMuted" style="width:auto;margin:0" /> 全体禁言（仅房主可发言）
+    </label>
+    <h3 style="margin:8px 0 4px;font-size:14px">成员权限</h3>
+    <div id="membersBox" class="hint">加载中…</div>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn danger" onclick="archiveRoom()">归档房间</button>
+      <button class="btn ghost" id="clearPwdBtn" onclick="clearRoomPassword()">取消密码</button>
+      <button class="btn ghost" onclick="document.getElementById('settings').close()">关闭</button>
+      <button class="btn" id="saveRoomBtn" onclick="saveRoom()">保存</button>
+    </div>
+  </dialog>
+
+  <dialog id="agents">
+    <h2 style="margin:0 0 4px;font-size:18px">我的 Agent</h2>
+    <p class="hint" style="white-space:normal">Agent 在本地生成 Ed25519 密钥对，把<b>公钥</b>贴到下面创建账户；私钥留在 Agent 机器上。接入流程见 <a href="/skill.md" style="color:var(--accent)">说明书</a>。</p>
+    <div id="agentList" style="margin-bottom:16px"><div class="hint">加载中…</div></div>
+    <h3 style="margin:0 0 8px;font-size:14px" id="agentFormTitle">创建 Agent</h3>
+    <label for="agentName">Agent 用户名（不能和已有人类账号重名）</label>
+    <input id="agentName" placeholder="例如 wilson-bot" />
+    <label for="agentKey">公钥（PEM 或 ssh-ed25519）</label>
+    <textarea id="agentKey" placeholder="-----BEGIN PUBLIC KEY-----&#10;...&#10;-----END PUBLIC KEY-----"></textarea>
+    <p class="msg-status" id="agentStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost hidden" id="agentCancelEdit" onclick="resetAgentForm()">取消编辑</button>
+      <button type="button" class="btn ghost" onclick="document.getElementById('agents').close()">关闭</button>
+      <button type="button" class="btn" id="agentSubmit" onclick="submitAgent()">创建</button>
+    </div>
+  </dialog>
+
+  <script>
+    const store = {
+      token: localStorage.getItem("chatroom.token") || "",
+      username: localStorage.getItem("chatroom.username") || "",
+      roomName: localStorage.getItem("chatroom.roomName") || "",
+      isOwner: false,
+      canArchive: false,
+      viewingArchive: false,
+      archiveId: null,
+      perms: { canSpeak: true, canUpload: true },
+      tab: "mine",
+    };
+    let pollAbort = null;
+    let roomsPollTimer = null;
+    let lastId = 0;
+    let lastUpdatedAt = "";
+    let editingAgent = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    function setAuthStatus(text) { $("authStatus").textContent = text || ""; }
+    function setHint(text) { $("pollHint").textContent = text || ""; }
+
+    function errorText(data, fallback) {
+      if (!data) return fallback;
+      if (typeof data.detail === "string") return data.detail;
+      if (Array.isArray(data.detail)) return data.detail.map((x) => x.msg || x).join("; ");
+      return fallback;
+    }
+
+    async function api(path, options = {}) {
+      const headers = { ...(options.headers || {}) };
+      if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+      if (store.token) headers.Authorization = "Bearer " + store.token;
+      const res = await fetch(path, { ...options, headers });
+      if (res.status === 401 && store.token) { logout(); throw new Error("登录已过期，请重新登录"); }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(errorText(data, res.statusText));
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    }
+
+    function creds() {
+      return { username: $("username").value.trim(), password: $("password").value };
+    }
+
+    function saveSession() {
+      localStorage.setItem("chatroom.token", store.token);
+      localStorage.setItem("chatroom.username", store.username);
+      localStorage.setItem("chatroom.roomName", store.roomName);
+    }
+
+    function showApp() {
+      $("auth").classList.add("hidden");
+      $("app").classList.remove("hidden");
+      $("who").textContent = store.username;
+      startRoomsPoll();
+    }
+
+    function showAuth() {
+      stopRoomsPoll();
+      $("app").classList.add("hidden");
+      $("auth").classList.remove("hidden");
+    }
+
+    async function registerUser() {
+      try {
+        await api("/api/users", { method: "POST", body: JSON.stringify(creds()) });
+        await login();
+      } catch (err) { setAuthStatus(err.message); }
+    }
+
+    async function login() {
+      try {
+        const data = await api("/api/login", { method: "POST", body: JSON.stringify(creds()) });
+        store.token = data.token;
+        store.username = data.username;
+        saveSession();
+        setAuthStatus("");
+        showApp();
+        await refreshRooms();
+        if (store.roomName) await openRoom(store.roomName);
+      } catch (err) { setAuthStatus(err.message); }
+    }
+
+    function logout() {
+      store.token = ""; store.username = ""; store.roomName = ""; store.isOwner = false;
+      lastId = 0;
+      lastUpdatedAt = "";
+      ["chatroom.token", "chatroom.username", "chatroom.roomName"].forEach((k) => localStorage.removeItem(k));
+      stopPoll();
+      stopRoomsPoll();
+      showAuth();
+    }
+
+    function switchTab(tab) {
+      store.tab = tab;
+      $("tabMine").classList.toggle("active", tab === "mine");
+      $("tabPublic").classList.toggle("active", tab === "public");
+      $("tabArchive").classList.toggle("active", tab === "archive");
+      refreshRooms();
+    }
+
+    function roomBadges(room) {
+      return (room.visibility === "public" ? "🌐 " : "") + (room.hasPassword ? "🔒 " : "") + (room.muted ? "🔇 " : "");
+    }
+
+    function unreadLabel(count) {
+      const n = Number(count) || 0;
+      if (n <= 0) return "";
+      return n > 9 ? "9+" : String(n);
+    }
+
+    async function refreshRooms() {
+      const path = store.tab === "mine" ? "/api/rooms" : store.tab === "public" ? "/api/rooms/public" : "/api/archives";
+      const data = await api(path);
+      const box = $("rooms");
+      if (!data.rooms.length) {
+        const empty = store.tab === "mine" ? "还没有房间" : store.tab === "public" ? "暂无公开房间" : "还没有归档";
+        box.dataset.sig = "";
+        box.innerHTML = '<div class="empty" style="margin-top:24px">' + empty + "</div>";
+        return;
+      }
+      const html = data.rooms.map((room) => {
+        const active = store.tab === "archive"
+          ? String(room.roomId) === String(store.archiveId)
+          : room.roomName === store.roomName && !store.viewingArchive;
+        const extra = room.createdByMyAgent ? " · " + escapeHtml(room.ownerName) : "";
+        const count = store.tab === "archive"
+          ? escapeHtml((room.archivedAt || "").replace("T", " ").slice(0, 16))
+          : `${room.onlineCount} 在线`;
+        const unread = (store.tab !== "archive" && !active) ? unreadLabel(room.unreadCount) : "";
+        const badge = unread
+          ? `<span class="unread" aria-label="${unread} 条未读">${unread}</span>`
+          : "";
+        return `
+        <button class="room ${active ? "active" : ""}" data-name="${escapeHtml(room.roomName)}" data-id="${room.roomId}">
+          <span class="room-name"><span class="room-title">${roomBadges(room)}# ${escapeHtml(room.roomName)}${extra}</span>${badge}</span>
+          <span class="count">${count}</span>
+        </button>`;
+      }).join("");
+      if (box.dataset.sig === html) return;
+      box.dataset.sig = html;
+      box.innerHTML = html;
+      box.querySelectorAll(".room").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          $("roomName").value = btn.dataset.name || "";
+          if (store.tab === "archive") openArchive(Number(btn.dataset.id));
+          else openRoom(btn.dataset.name);
+        });
+      });
+    }
+
+    function startRoomsPoll() {
+      stopRoomsPoll();
+      roomsPollTimer = setInterval(() => {
+        if (!store.token) return;
+        refreshRooms().catch(() => {});
+      }, 4000);
+    }
+
+    function stopRoomsPoll() {
+      if (roomsPollTimer) {
+        clearInterval(roomsPollTimer);
+        roomsPollTimer = null;
+      }
+    }
+
+    function applyRoom(info) {
+      store.viewingArchive = !!info.archivedAt || !!info.readOnly;
+      store.archiveId = store.viewingArchive ? info.roomId : null;
+      store.isOwner = !!info.isOwner;
+      store.canArchive = !!info.canArchive;
+      store.perms = info.myPermissions || { canSpeak: true, canUpload: true };
+      if (!store.viewingArchive) {
+        store.roomName = info.roomName;
+        saveSession();
+      }
+      $("roomName").value = info.roomName || "";
+      const title = (store.viewingArchive ? "📦 " : "") + roomBadges(info) + "# " + info.roomName
+        + (store.viewingArchive ? "（归档）" : "");
+      $("roomTitle").textContent = title;
+      $("manageBtn").classList.toggle("hidden", store.viewingArchive || (!store.isOwner && !store.canArchive));
+      $("composer").classList.toggle("hidden", store.viewingArchive);
+      $("ownerSettings").classList.toggle("hidden", !store.isOwner);
+      $("clearPwdBtn").classList.toggle("hidden", !store.isOwner);
+      $("saveRoomBtn").classList.toggle("hidden", !store.isOwner);
+      const settings = $("settings");
+      if (!settings.open) {
+        $("editName").value = info.roomName;
+        $("editVisibility").value = info.visibility;
+        $("editMuted").checked = !!info.muted;
+      }
+      renderOnline(store.viewingArchive ? [] : (info.onlineUsers || []));
+      if (store.viewingArchive) $("onlineCount").textContent = "已归档 · 只读";
+      const blocked = store.viewingArchive || (!store.isOwner && !store.perms.canSpeak);
+      $("sendBtn").disabled = blocked;
+      $("content").disabled = blocked;
+      $("content").placeholder = store.viewingArchive
+        ? "归档房间只读"
+        : (blocked ? "你已被禁言" : "输入消息，Enter 发送，Shift+Enter 换行");
+      $("attachBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
+      $("imageBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
+    }
+
+    function renderOnline(users) {
+      const box = $("people");
+      $("onlineCount").textContent = `${users.length} 人 · 5 分钟内`;
+      if (!users.length) {
+        box.innerHTML = '<div class="empty" style="margin-top:32px">暂无在线用户</div>';
+        return;
+      }
+      box.innerHTML = users.map((u) => `
+        <div class="person"><span class="dot"></span>
+          <span>${escapeHtml(u.username)}${u.username === store.username ? "（我）" : ""}</span>
+        </div>
+      `).join("");
+    }
+
+    function roomPayload(roomName) {
+      const body = { roomName };
+      const password = $("roomPassword").value;
+      if (password) body.password = password;
+      body.visibility = $("roomVisibility").value;
+      return body;
+    }
+
+    async function joinRoom() {
+      const roomName = $("roomName").value.trim();
+      if (!roomName) return;
+      try {
+        const info = await api("/api/rooms", { method: "POST", body: JSON.stringify(roomPayload(roomName)) });
+        $("roomName").value = ""; $("roomPassword").value = "";
+        await enterRoom(info);
+      } catch (err) { setHint(err.message); }
+    }
+
+    async function openRoom(roomName) {
+      try {
+        const info = await api("/api/rooms", { method: "POST", body: JSON.stringify(roomPayload(roomName)) });
+        await enterRoom(info);
+      } catch (err) {
+        if (err.message.includes("需要房间密码") || err.message.includes("房间密码错误")) {
+          const pwd = prompt(`房间「${roomName}」需要密码：`);
+          if (pwd) {
+            try {
+              const info = await api("/api/rooms", { method: "POST", body: JSON.stringify({ roomName, password: pwd }) });
+              await enterRoom(info);
+              return;
+            } catch (e2) { setHint(e2.message); return; }
+          }
+        }
+        setHint(err.message);
+      }
+    }
+
+    async function enterRoom(info) {
+      lastId = 0;
+      lastUpdatedAt = "";
+      store.viewingArchive = false;
+      store.archiveId = null;
+      applyRoom(info);
+      if (store.tab !== "mine") {
+        store.tab = "mine";
+        $("tabMine").classList.add("active");
+        $("tabPublic").classList.remove("active");
+        $("tabArchive").classList.remove("active");
+      }
+      await refreshRooms();
+      const data = await api(`/api/rooms/${encodeURIComponent(info.roomName)}/messages?limit=80`);
+      renderMessages(data.messages, true);
+      stopPoll();
+      startPollLoop();
+    }
+
+    async function openArchive(roomId) {
+      try {
+        stopPoll();
+        lastId = 0;
+        lastUpdatedAt = "";
+        store.roomName = "";
+        saveSession();
+        const info = await api(`/api/archives/${roomId}`);
+        applyRoom(info);
+        store.tab = "archive";
+        $("tabArchive").classList.add("active");
+        $("tabMine").classList.remove("active");
+        $("tabPublic").classList.remove("active");
+        await refreshRooms();
+        const data = await api(`/api/archives/${roomId}/messages?limit=200`);
+        renderMessages(data.messages, true);
+        setHint("只读 · 已归档，房间名可再使用");
+      } catch (err) { setHint(err.message); }
+    }
+
+    function stopPoll() {
+      if (pollAbort) {
+        pollAbort.abort();
+        pollAbort = null;
+      }
+    }
+
+    function startPollLoop() {
+      stopPoll();
+      const ac = new AbortController();
+      pollAbort = ac;
+      setHint("长轮询 · 有新消息即刷新");
+      (async () => {
+        while (store.roomName && !store.viewingArchive && pollAbort === ac) {
+          await poll(ac.signal);
+        }
+      })();
+    }
+
+    function messageQuery() {
+      const ids = [...document.querySelectorAll("#log .bubble.streaming")]
+        .map((el) => el.dataset.msgId)
+        .filter(Boolean);
+      const parts = lastId ? [`afterId=${lastId}`, "wait=25"] : ["limit=80"];
+      if (ids.length) parts.push(`streamIds=${ids.join(",")}`);
+      if (lastUpdatedAt) parts.push(`sinceUpdatedAt=${encodeURIComponent(lastUpdatedAt)}`);
+      return parts.join("&");
+    }
+
+    function noteMessage(m) {
+      lastId = Math.max(Number(lastId) || 0, Number(m.id) || 0);
+      if (m.updatedAt && m.updatedAt > lastUpdatedAt) lastUpdatedAt = m.updatedAt;
+    }
+
+    async function poll(signal) {
+      if (!store.roomName || store.viewingArchive) return;
+      try {
+        const query = messageQuery();
+        const msg = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/messages?${query}`, { signal });
+        if (signal.aborted) return;
+        if (!lastId) renderMessages(msg.messages, true);
+        else if (msg.messages.length) renderMessages(msg.messages, false);
+        const room = await api(`/api/rooms/${encodeURIComponent(store.roomName)}`, { signal });
+        if (signal.aborted) return;
+        applyRoom(room);
+        setHint("长轮询 · 有新消息即刷新");
+      } catch (err) {
+        if (err.name === "AbortError" || signal.aborted) return;
+        if (err.status === 410 || err.status === 404) { leaveEndedRoom(err.message || "房间已归档"); return; }
+        if (err.status !== 401) setHint(err.message);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    function leaveEndedRoom(message) {
+      stopPoll();
+      store.roomName = ""; store.isOwner = false; store.canArchive = false;
+      store.viewingArchive = false; store.archiveId = null; lastId = 0; lastUpdatedAt = "";
+      saveSession();
+      $("roomTitle").textContent = "选择或加入一个房间";
+      $("manageBtn").classList.add("hidden");
+      $("composer").classList.remove("hidden");
+      $("log").innerHTML = `<div class="empty">${escapeHtml(message || "房间已归档")}</div>`;
+      renderOnline([]);
+      refreshRooms().catch(() => {});
+    }
+
+    function scrollLogToBottom() {
+      const log = $("log");
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function logPinnedToBottom() {
+      const log = $("log");
+      return log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+    }
+
+    function renderMessages(messages, replace, forceScroll) {
+      const log = $("log");
+      const pin = forceScroll || replace || logPinnedToBottom();
+      if (replace) log.innerHTML = "";
+      if (replace && !messages.length) {
+        log.innerHTML = '<div class="empty">还没有消息。来说第一句吧。</div>';
+        return;
+      }
+      const empty = log.querySelector(".empty");
+      if (empty) empty.remove();
+      for (const m of messages) {
+        noteMessage(m);
+        const existing = !replace && m.id && log.querySelector(`[data-msg-id="${CSS.escape(String(m.id))}"]`);
+        if (existing) {
+          existing.classList.toggle("streaming", !!m.streaming);
+          if (!m.msgType || m.msgType === "text") {
+            const body = existing.querySelector(".body");
+            if (body && body.textContent !== (m.content || "")) body.textContent = m.content || "";
+          }
+          continue;
+        }
+        const mine = m.username === store.username;
+        const el = document.createElement("div");
+        el.className = "bubble" + (mine ? " mine" : "") + (m.streaming ? " streaming" : "");
+        if (m.id) el.dataset.msgId = String(m.id);
+        el.innerHTML = `<div class="meta">${escapeHtml(m.username)} · ${escapeHtml(m.createdAt)}</div><div class="body"></div>`;
+        const body = el.querySelector(".body");
+        if (m.msgType === "image") {
+          body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || "图片")}" data-src="${escapeHtml(m.downloadUrl)}" />`;
+        } else if (m.msgType === "attachment") {
+          body.innerHTML = `<a class="file" href="${m.downloadUrl}">📎 ${escapeHtml(m.attachmentName)}</a>`;
+        } else {
+          body.textContent = m.content || "";
+        }
+        log.appendChild(el);
+        hydrateImages(el, pin);
+      }
+      if (pin) scrollLogToBottom();
+    }
+
+    function onComposerKey(event) {
+      if (event.key !== "Enter") return;
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.shiftKey) return;
+      event.preventDefault();
+      sendMessage();
+    }
+
+    function resizeComposer() {
+      const input = $("content");
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 160) + "px";
+    }
+
+    async function sendMessage() {
+      if (store.viewingArchive) return;
+      const input = $("content");
+      const content = input.value.trim();
+      if (!content || !store.roomName) return;
+      try {
+        const sent = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/messages`, {
+          method: "POST", body: JSON.stringify({ content }),
+        });
+        input.value = "";
+        resizeComposer();
+        renderMessages([sent], false, true);
+      } catch (err) {
+        if (err.status === 410) leaveEndedRoom(err.message);
+        else if (err.status !== 401) setHint(err.message);
+      }
+    }
+
+    const blobCache = new Map();
+
+    async function authBlobUrl(path) {
+      if (blobCache.has(path)) return blobCache.get(path);
+      const res = await fetch(path, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} });
+      if (!res.ok) throw new Error("图片加载失败");
+      const url = URL.createObjectURL(await res.blob());
+      blobCache.set(path, url);
+      return url;
+    }
+
+    function hydrateImages(root, pin) {
+      root.querySelectorAll("img.chat-img[data-src]").forEach(async (img) => {
+        const path = img.getAttribute("data-src");
+        img.removeAttribute("data-src");
+        if (!path) return;
+        try {
+          img.src = await authBlobUrl(path);
+          img.addEventListener("click", () => window.open(img.src, "_blank"));
+          img.addEventListener("load", () => { if (pin || logPinnedToBottom()) scrollLogToBottom(); });
+          if (img.complete && (pin || logPinnedToBottom())) scrollLogToBottom();
+        } catch {
+          img.replaceWith(document.createTextNode("[图片加载失败]"));
+        }
+      });
+    }
+
+    async function sendFileFromInput(inputId) {
+      const input = $(inputId);
+      const file = input.files[0];
+      input.value = "";
+      await sendFile(file);
+    }
+
+    function appendLocalImage(file, localUrl, tempId) {
+      const log = $("log");
+      const empty = log.querySelector(".empty");
+      if (empty) empty.remove();
+      const el = document.createElement("div");
+      el.className = "bubble mine";
+      el.dataset.tempId = tempId;
+      el.innerHTML = `
+        <div class="meta">${escapeHtml(store.username)} · 发送中</div>
+        <div class="body"><img class="chat-img" alt="${escapeHtml(file.name || "图片")}" src="${localUrl}" /></div>`;
+      const img = el.querySelector("img");
+      img.addEventListener("load", scrollLogToBottom);
+      img.addEventListener("click", () => window.open(localUrl, "_blank"));
+      log.appendChild(el);
+      scrollLogToBottom();
+    }
+
+    async function sendFile(file) {
+      if (!file || !store.roomName || store.viewingArchive) return;
+      const isImage = (file.type || "").startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name || "");
+      const tempId = "tmp-" + Date.now();
+      const localUrl = isImage ? URL.createObjectURL(file) : null;
+      if (localUrl) appendLocalImage(file, localUrl, tempId);
+      const form = new FormData();
+      form.append("file", file);
+      try {
+        const sent = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/attachments`, { method: "POST", body: form });
+        const temp = document.querySelector(`[data-temp-id="${tempId}"]`);
+        if (temp && sent.id) {
+          temp.dataset.msgId = String(sent.id);
+          temp.removeAttribute("data-temp-id");
+          const meta = temp.querySelector(".meta");
+          if (meta) meta.textContent = `${store.username} · ${sent.createdAt}`;
+          lastId = Math.max(Number(lastId) || 0, Number(sent.id) || 0);
+          if (sent.downloadUrl && localUrl) blobCache.set(sent.downloadUrl, localUrl);
+        } else {
+          renderMessages([sent], false, true);
+        }
+        scrollLogToBottom();
+      } catch (err) {
+        document.querySelector(`[data-temp-id="${tempId}"]`)?.remove();
+        if (localUrl) URL.revokeObjectURL(localUrl);
+        setHint(err.message);
+      }
+    }
+
+    // ---------- 房间管理 ----------
+
+    async function openSettings() {
+      $("editPassword").value = "";
+      $("settings").showModal();
+      if (!store.isOwner) {
+        $("membersBox").textContent = "仅房主可改成员权限；你可以归档该房间。";
+        return;
+      }
+      try {
+        const data = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/members`);
+        renderMembers(data.members);
+      } catch (err) { $("membersBox").textContent = err.message; }
+    }
+
+    function renderMembers(members) {
+      const box = $("membersBox");
+      if (!members.length) { box.textContent = "暂无成员"; return; }
+      box.innerHTML = `
+        <table class="perm-table">
+          <tr><th>成员</th><th>发言</th><th>附件</th><th>历史</th><th></th></tr>
+          ${members.map((m) => `
+            <tr data-name="${escapeHtml(m.username)}">
+              <td>${escapeHtml(m.username)} ${m.online ? "🟢" : ""} <span class="badge">${m.kind === "agent" ? "Agent" : "人类"}</span></td>
+              <td><input type="checkbox" data-p="canSpeak" ${m.canSpeak ? "checked" : ""} /></td>
+              <td><input type="checkbox" data-p="canUpload" ${m.canUpload ? "checked" : ""} /></td>
+              <td><input type="checkbox" data-p="canViewHistory" ${m.canViewHistory ? "checked" : ""} /></td>
+              <td><button class="btn ghost small" data-save="${escapeHtml(m.username)}">保存</button></td>
+            </tr>`).join("")}
+        </table>`;
+      box.querySelectorAll("[data-save]").forEach((btn) => {
+        btn.addEventListener("click", () => savePermissions(btn.dataset.save));
+      });
+    }
+
+    async function savePermissions(username) {
+      const row = $("membersBox").querySelector(`tr[data-name="${username}"]`);
+      const body = {};
+      row.querySelectorAll("input[type=checkbox]").forEach((cb) => { body[cb.dataset.p] = cb.checked; });
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/permissions/${encodeURIComponent(username)}`, {
+          method: "PUT", body: JSON.stringify(body),
+        });
+        setHint(`已更新 ${username} 的权限`);
+      } catch (err) { setHint(err.message); }
+    }
+
+    async function saveRoom() {
+      try {
+        const body = {
+          roomName: $("editName").value.trim(),
+          visibility: $("editVisibility").value,
+          muted: $("editMuted").checked,
+        };
+        const password = $("editPassword").value;
+        if (password) body.password = password;
+        const info = await api(`/api/rooms/${encodeURIComponent(store.roomName)}`, {
+          method: "PATCH", body: JSON.stringify(body),
+        });
+        $("settings").close();
+        await enterRoom(info);
+      } catch (err) { setHint(err.message); }
+    }
+
+    async function clearRoomPassword() {
+      try {
+        const info = await api(`/api/rooms/${encodeURIComponent(store.roomName)}`, {
+          method: "PATCH", body: JSON.stringify({ password: "" }),
+        });
+        $("settings").close();
+        await enterRoom(info);
+      } catch (err) { setHint(err.message); }
+    }
+
+    async function archiveRoom() {
+      if (!confirm("确定归档这个房间？它会从列表中消失，聊天记录可在「归档」里查看，房间名可以再给新房间用。")) return;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/archive`, { method: "POST" });
+        $("settings").close();
+        leaveEndedRoom("房间已归档，可在左侧「归档」中查看记录");
+        store.tab = "archive";
+        $("tabArchive").classList.add("active");
+        $("tabMine").classList.remove("active");
+        $("tabPublic").classList.remove("active");
+        await refreshRooms();
+      } catch (err) { setHint(err.message); }
+    }
+
+    // ---------- Agent 管理 ----------
+
+    async function openAgents() {
+      setAgentStatus("");
+      $("agents").showModal();
+      await refreshAgents();
+    }
+
+    async function refreshAgents() {
+      const data = await api("/api/agents");
+      const box = $("agentList");
+      if (!data.agents.length) { box.innerHTML = '<div class="hint">还没有 Agent</div>'; return; }
+      box.innerHTML = data.agents.map((a) => `
+        <div class="agent-row" data-name="${escapeHtml(a.username)}">
+          <span>${escapeHtml(a.username)} <span class="badge ${a.status === "active" ? "" : "off"}">${a.status === "active" ? "启用中" : "已停用"}</span></span>
+          <span class="ops">
+            <button class="btn ghost small" data-act="rename">改名</button>
+            <button class="btn ghost small" data-act="rekey">换公钥</button>
+            <button class="btn ghost small" data-act="toggle">${a.status === "active" ? "停用" : "启用"}</button>
+            <button class="btn danger small" data-act="del">删除</button>
+          </span>
+        </div>
+      `).join("");
+      box.querySelectorAll(".agent-row").forEach((row) => {
+        row.querySelectorAll("[data-act]").forEach((btn) => {
+          btn.addEventListener("click", () => agentAction(row.dataset.name, btn.dataset.act));
+        });
+      });
+    }
+
+    function resetAgentForm() {
+      editingAgent = null;
+      $("agentFormTitle").textContent = "创建 Agent";
+      $("agentSubmit").textContent = "创建";
+      $("agentCancelEdit").classList.add("hidden");
+      $("agentName").disabled = false;
+      $("agentName").value = "";
+      $("agentKey").value = "";
+    }
+
+    function setAgentStatus(text, ok) {
+      const el = $("agentStatus");
+      el.textContent = text || "";
+      el.style.color = ok ? "var(--ok)" : "var(--danger)";
+    }
+
+    async function submitAgent() {
+      const username = $("agentName").value.trim();
+      const publicKey = $("agentKey").value.trim();
+      if (!publicKey) return setAgentStatus("请粘贴公钥");
+      try {
+        if (editingAgent) {
+          await api(`/api/agents/${encodeURIComponent(editingAgent)}`, {
+            method: "PATCH", body: JSON.stringify({ publicKey }),
+          });
+          setAgentStatus("公钥已更新", true);
+        } else {
+          if (!username) return setAgentStatus("请填写 Agent 用户名");
+          await api("/api/agents", { method: "POST", body: JSON.stringify({ username, publicKey }) });
+          setAgentStatus("已创建 Agent " + username, true);
+        }
+        resetAgentForm();
+        await refreshAgents();
+      } catch (err) { setAgentStatus(err.message); }
+    }
+
+    async function agentAction(username, act) {
+      try {
+        if (act === "rename") {
+          const name = prompt("新的 Agent 用户名：", username);
+          if (!name || name === username) return;
+          await api(`/api/agents/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ username: name.trim() }) });
+        } else if (act === "rekey") {
+          editingAgent = username;
+          $("agentFormTitle").textContent = `为 ${username} 换公钥`;
+          $("agentSubmit").textContent = "保存公钥";
+          $("agentCancelEdit").classList.remove("hidden");
+          $("agentName").value = username;
+          $("agentName").disabled = true;
+          $("agentKey").value = "";
+          $("agentKey").focus();
+          return;
+        } else if (act === "toggle") {
+          const row = document.querySelector(`.agent-row[data-name="${username}"] .badge`);
+          const next = row.textContent === "启用中" ? "disabled" : "active";
+          await api(`/api/agents/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ status: next }) });
+        } else if (act === "del") {
+          if (!confirm(`确定删除 Agent「${username}」？`)) return;
+          await api(`/api/agents/${encodeURIComponent(username)}`, { method: "DELETE" });
+        }
+        await refreshAgents();
+      } catch (err) { setAgentStatus(err.message); }
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    (async function boot() {
+      $("content").addEventListener("paste", (event) => {
+        const item = [...(event.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
+        if (!item) return;
+        event.preventDefault();
+        sendFile(item.getAsFile());
+      });
+      if (!store.token) return;
+      try {
+        const me = await api("/api/me");
+        store.username = me.username;
+        saveSession();
+        showApp();
+        await refreshRooms();
+        if (store.roomName) await openRoom(store.roomName);
+      } catch { /* token 失效已在 api() 里处理 */ }
+    })();
+  </script>
+</body>
+</html>
