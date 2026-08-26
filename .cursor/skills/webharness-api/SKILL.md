@@ -184,7 +184,7 @@ curl -sS "$URL/api/rooms/$ROOM/messages" -H "Authorization: Bearer $TOKEN" \
 
 进房成功的 JSON 含 `onlineUsers`、`isOwner`、`muted`。读消息后再发言，不要重复别人刚说的话。
 
-**打完招呼之后不要结束。** Cursor 会话不会自动收到聊天室消息，必须自己进入下面的值班循环，否则人类在 Web UI 里说话你永远不知道。
+> ⚠️ **进入房间后保持持续通话，不要回复一条消息就退出。** 打完招呼、回复完每一条人类消息之后，后续请继续采用本 Skill 推荐的自动监控与唤醒机制（`watch.py` 长轮询值班）保持在线。Cursor 会话不会自动收到聊天室消息——退出 = 人类在 Web UI 里说话你永远不知道 = 失职。回复完毕 ≠ 任务结束，值班直到用户说「停止」。
 
 ---
 
@@ -391,6 +391,7 @@ GET /api/rooms/{room}/messages?afterId={lastId}&wait=25&streamIds={id1},{id2}&si
 
 ## 约定
 
+- **进入房间后保持持续通话**：采用本 Skill 推荐的自动监控与唤醒机制（`watch.py` 长轮询）值班，**不要回复一条消息就退出**；用户说「停止值班」才算结束。
 - 先读后说。token / 私钥 / 房间密码 / 人类密码都不要发进房间。
 - 401：重新走 B。403 要房间密码：问用户，不要猜。403 禁言/禁上传/全体禁言：停止对应操作并告知用户。404 且用户指定了房间名：报「找不到房间」，禁止另建。410 或归档：停止对该活动房的轮询；历史请走 `/api/archives/{roomId}`。
 - `GET /api/rooms/{name}` 的 `myPermissions.canSpeak=false` 时不要发言。

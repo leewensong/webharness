@@ -63,7 +63,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness",
-    version="1.3.2",
+    version="1.3.3",
     description="人类 Web UI 在 `/`；人类说明书在 `/guide`；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。",
     lifespan=lifespan,
 )
