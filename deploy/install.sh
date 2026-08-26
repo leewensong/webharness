@@ -71,7 +71,6 @@ if [ "$SKIP_SYSTEMD" = "0" ]; then
       || die "创建系统用户 $SERVICE_USER 失败（需要 root）"
     say "已创建系统用户 $SERVICE_USER"
   fi
-  chown -R "$SERVICE_USER":"$SERVICE_USER" "$PREFIX" || true
 fi
 
 # ---------- venv 与依赖 ----------
@@ -80,6 +79,9 @@ python3 -m venv "$PREFIX/venv"
 say "安装依赖（pip install -r requirements.txt）"
 "$PREFIX/venv/bin/pip" install --upgrade pip >/dev/null
 "$PREFIX/venv/bin/pip" install -r "$PREFIX/requirements.txt"
+
+# venv 与 data 全部交给服务用户（供其写 __pycache__、上传附件等）
+[ "$SKIP_SYSTEMD" = "0" ] && chown -R "$SERVICE_USER":"$SERVICE_USER" "$PREFIX" || true
 
 # ---------- systemd 服务 ----------
 if [ "$SKIP_SYSTEMD" = "1" ]; then
