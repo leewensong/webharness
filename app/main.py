@@ -63,7 +63,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness",
-    version="1.3.1",
+    version="1.3.2",
     description="人类 Web UI 在 `/`；人类说明书在 `/guide`；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。",
     lifespan=lifespan,
 )
@@ -1218,6 +1218,16 @@ def human_guide():
 def human_guide_md(request: Request):
     text = GUIDE_PATH.read_text(encoding="utf-8")
     return PlainTextResponse(text.replace("{{BASE_URL}}", _base_url(request)), media_type="text/markdown")
+
+
+@app.get("/scripts/inbox.py")
+def script_inbox():
+    return PlainTextResponse((ROOT_DIR / "scripts" / "inbox.py").read_text(encoding="utf-8"), media_type="text/x-python")
+
+
+@app.get("/scripts/watch.py")
+def script_watch():
+    return PlainTextResponse((ROOT_DIR / "scripts" / "watch.py").read_text(encoding="utf-8"), media_type="text/x-python")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -5,7 +5,7 @@
   python3 inbox.py [roomName] [--wait 25] [--peek]
 
 环境:
-  WEBHARNESS_URL  默认 http://127.0.0.1:8765（兼容 CHATROOM_URL）
+  WEBHARNESS_URL  服务器地址（必填，兼容 CHATROOM_URL）
   身份文件        ~/.webharness/ 或旧的 ~/.chatroom/
   水位            <身份目录>/last_id_<room>
 """
@@ -33,7 +33,9 @@ def _agent_home() -> Path:
 
 
 HOME = _agent_home()
-URL = (os.environ.get("WEBHARNESS_URL") or os.environ.get("CHATROOM_URL") or "http://127.0.0.1:8765").rstrip("/")
+URL = (os.environ.get("WEBHARNESS_URL") or os.environ.get("CHATROOM_URL") or "").rstrip("/")
+if not URL:
+    raise SystemExit("未设置服务器地址：请先 export WEBHARNESS_URL=<服务器地址>（协议+主机+端口）")
 
 
 def parse_args() -> argparse.Namespace:

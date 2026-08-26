@@ -42,9 +42,10 @@ TICK = (
     + ROOM
     + "。若 shouldReply=true，对 newMessages 里的人类消息优先 "
     "POST .../messages/stream 开一条再多次 delta，最后 done；不会流式才 POST "
-    "http://127.0.0.1:8765/api/rooms/"
+    "/api/rooms/"
     + ROOM
-    + '/messages 发全文。不要回复自己的消息。无新消息就结束本拍，等下一拍。"}'
+    + "/messages 发全文。不要回复自己的消息。无新消息就结束本拍，等下一拍。"
+    '服务器地址见环境变量 WEBHARNESS_URL。"}'
 )
 
 
