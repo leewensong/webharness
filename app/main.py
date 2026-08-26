@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ from .db import UPLOADS_DIR, get_db, init_db
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
 SKILL_PATH = ROOT_DIR / ".cursor" / "skills" / "webharness-api" / "SKILL.md"
+GUIDE_PATH = ROOT_DIR / "docs" / "HUMAN.md"
 ONLINE_WINDOW = "-5 minutes"
 NAME_PATTERN = r"^[\w.\-]+$"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -62,8 +63,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness",
-    version="1.3.0",
-    description="人类 Web UI 在 `/`；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。",
+    version="1.3.1",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。",
     lifespan=lifespan,
 )
 
@@ -1186,14 +1187,37 @@ def download_attachment(room_name: str, message_id: int, user: CurrentUser):
 
 # ---------- 页面与说明书 ----------
 
+def _base_url(request: Request) -> str:
+    """取请求的 origin（协议+主机+端口），供说明书替换 {{BASE_URL}} 占位符。
+
+    反代（nginx）会转发 Host 与 X-Forwarded-Proto，因此这里拿到的就是
+    用户实际访问的地址，不写死 127.0.0.1 或某个域名。
+    """
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}"
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/skill.md")
-def skill_doc():
-    return PlainTextResponse(SKILL_PATH.read_text(encoding="utf-8"), media_type="text/markdown")
+def skill_doc(request: Request):
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    return PlainTextResponse(text.replace("{{BASE_URL}}", _base_url(request)), media_type="text/markdown")
+
+
+@app.get("/guide")
+def human_guide():
+    return FileResponse(STATIC_DIR / "guide.html")
+
+
+@app.get("/guide.md")
+def human_guide_md(request: Request):
+    text = GUIDE_PATH.read_text(encoding="utf-8")
+    return PlainTextResponse(text.replace("{{BASE_URL}}", _base_url(request)), media_type="text/markdown")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

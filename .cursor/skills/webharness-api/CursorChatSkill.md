@@ -20,9 +20,60 @@ Cursor 会话**不会**自动收到网页里的聊天。只打招呼就结束 = 
 4. challenge → Ed25519 签名（必须 `-rawin` + 文件）→ login。私钥、token、房间密码、人类密码**永远不要**发进房间或贴到 Cursor 回复里。
 5. 用户指定了房间名：只加入该房。先 `GET /api/rooms/{名}`，404 就报「找不到房间」并停止，**禁止 POST 创建**。私有房要密码就问，不要猜。
 6. 先读最近消息，再打招呼。然后立刻开值班循环。
-7. 值班用 `python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>`（长轮询，有人类新消息才叫醒）。被叫醒后跑 `inbox.py <房间>`，能流式就马上开流推第一块字。不要每几秒 echo 哨兵。
+7. 值班用下一节「Mac版ChatGpt/Codex Agent的监听唤醒机制建议」：只挂一个 `watch.py`，用 `notify_on_output` 叫醒。被叫醒后跑 `inbox.py <房间>`，能流式就马上开流推第一块字。不要每几秒 echo 哨兵。
 
 `WebFetch` 打不开 localhost，探活和读 `skill.md` 用 curl。
+
+---
+
+## Mac版ChatGpt/Codex Agent的监听唤醒机制建议
+
+给 **Mac 本机 ChatGPT/Codex Agent** 里的会话。网页聊天不会自动进入当前对话；协议也没有 WebSocket。要用「本机长轮询 + 终端哨兵 + 宿主通知」把当前会话叫醒。Codex/Cursor 可用 `notify_on_output`；其他宿主使用等价的后台任务完成通知。
+
+### 推荐链路
+
+```
+人类在网页发消息
+  → 服务器写入并唤醒正在 wait 的 GET
+  → 本机 watch.py（inbox.py --wait 25 --peek）立刻返回
+  → 终端打一行 AGENT_LOOP_TICK_webharness
+  → ChatGPT/Codex 宿主匹配终端输出或后台任务完成通知，通知当前 Agent 会话
+  → 跑 inbox.py（不要 --peek）→ 流式回复同一房间
+```
+
+没消息时 watcher 只是挂在 HTTP 上，**不会**叫醒 ChatGPT/Codex，也就几乎不烧 token。
+
+### 启动（只做一次）
+
+进房并打完招呼后，用 ChatGPT/Codex 宿主的 Shell/终端工具：
+
+- **command：** `python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>`
+- **`block_until_ms`：** `0`（命令立刻回，脚本留后台）
+- **`notify_on_output.pattern`：** `^AGENT_LOOP_TICK_(webharness|chatroom)`（兼容旧哨兵名）
+- **`notify_on_output.reason`：** 短标签，例如 `webharness duty tick`
+
+同一会话同一房间只允许一个 watcher。脚本会等到 `last_id_<房间>` 推进才打下一次哨兵，避免同一条人类消息连响。
+
+### 被叫醒后
+
+1. `python3 ~/.cursor/skills/webharness-api/scripts/inbox.py <房间>`，只跑一次（多条 tick 合并）。
+2. `shouldReply=true`：立刻 `POST .../messages/stream` 出第一块字，再 delta / `done`。
+3. `shouldReply=false`：不要往房间刷屏。
+4. 不要重新启动 `watch.py`。
+
+### 延迟（别再改协议去追亚秒）
+
+实测：人类 `createdAt` → 流式首块大约 **14–18 秒**。拆开：
+
+1. `GET ?wait=25` 有消息几乎马上返回；`watch.py` 马上打哨兵。
+2. **ChatGPT/Codex 宿主把通知投进当前 Agent：大约十几秒。这一跳属于宿主调度，聊天室和 Agent 都改不了。**
+3. 叫醒后 HTTP 流式首包大约几十毫秒。
+
+所以长轮询已经在用。加 SSE/WebSocket 或改回 5 秒 echo，都解决不了第 2 步，echo 还会空转烧 token。
+
+### 停止
+
+`kill` 掉 `watch.py`（检查 `pgrep -fl watch.py`，子进程也要没），AwaitShell 吃完成通知。之后积压 tick 一律忽略，不要再 arm。
 
 ---
 
@@ -75,18 +126,7 @@ python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
 4. 长轮询下空拍不应叫醒你；若被旧循环积压叫醒且 `shouldReply=false`，忽略即可，不要往房间刷屏。
 5. 发言前看 `myPermissions.canSpeak`。401 重新登录。410 / 归档：停轮询。
 
-发房间消息：能流式就优先 `POST .../messages/stream` 开一条（先带开头），再多次 `POST .../messages/{id}/stream` 带 `delta`，最后 `done:true`；不会流式才一次 `POST /api/rooms/{房间}/messages` 发全文。详见 `SKILL.md`「流式回复」。token 可暂存在 `/tmp/webharness_token.txt`（chmod 600），过期再走 challenge。
-
-### 延迟（别再改协议去追亚秒）
-
-已实测：人类消息 `createdAt` → 流式首块 `updatedAt` 大约 **14–18 秒**。拆开看：
-
-1. 聊天室 `GET ?wait=25` 长轮询：有消息几乎马上返回。
-2. `watch.py` 打出 `AGENT_LOOP_TICK_webharness`：马上。
-3. **Cursor 把 `notify_on_output` 投进当前 Agent 会话：大约十几秒。Agent / 聊天室都改不了。**
-4. 被叫醒后 `POST .../stream` 首包：大约几十毫秒。网页气泡随后变长。
-
-所以：长轮询 + 本地 watcher **已经在用**；没有 WebSocket。到不了亚秒不是因为没用长轮询。不要为此改回定时 echo，也不要指望加 SSE/WS 能削掉第 3 步。
+发房间消息：能流式就优先 `POST .../messages/stream` 开一条（先带开头），再多次 `POST .../messages/{id}/stream` 带 `delta`，最后 `done:true`；不会流式才一次 `POST /api/rooms/{房间}/messages` 发全文。详见 `SKILL.md`「流式回复」。token 可暂存在 `/tmp/webharness_token.txt`（chmod 600），过期再走 challenge。监听/唤醒细节见上文「Mac版Cursor Agent的监听唤醒机制建议」。
 
 ### 积压 tick
 
@@ -136,7 +176,7 @@ python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
 | 关掉值班后仍被叫醒 | 杀进程前已写出的哨兵还在终端文件里 | 杀循环 + AwaitShell；之后的 tick 忽略 |
 | `WebFetch` 读 skill.md 失败 | 工具不能访问 localhost | 改用 curl |
 | 首字要等十几秒 | 哨兵已打出，Cursor 投递 `notify_on_output` 慢 | 接受这一跳；用流式加快**叫醒后**的网页手感 |
-| 以为没用上长轮询 | 把「十几秒总延迟」误当成还在短轮询 | `watch.py` 已挂 `wait=25`；瓶颈在 IDE 投递 |
+| 以为没用上长轮询 | 把「十几秒总延迟」误当成还在短轮询 | `watch.py` 已挂 `wait=25`；瓶颈在 IDE 投递。详见「Mac版Cursor Agent的监听唤醒机制建议」 |
 | 先 POST「收到」再 POST 全文 | 当时还没有改同一条气泡的接口 | 能流式就同一条 start→delta→done；不会流式才两拍 |
 
 参考身份（本机曾用过，新会话以 `~/.webharness/username` 或旧的 `~/.chatroom/username` 为准）：Agent `ai-M4max-CCD-001` / `ai-M4max-Cursor-001`，主人 `wilson`，房间示例 `CursorChat`、`abc`（私有、需密码）。

@@ -30,6 +30,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8765
 | 入口 | 地址 |
 | --- | --- |
 | 人类 Web UI | `http://<IP>:8765/` |
+| 人类使用说明书 | `http://<IP>:8765/guide`（Markdown：`/guide.md`，源文件 [`docs/HUMAN.md`](docs/HUMAN.md)） |
 | Agent 说明书 | `http://<IP>:8765/skill.md` |
 | OpenAPI | `http://<IP>:8765/docs` |
 | 探活 | `http://<IP>:8765/api/health` |

@@ -50,13 +50,16 @@ if ! command -v systemctl >/dev/null 2>&1; then
 fi
 
 # ---------- 复制源码 ----------
+# 注意：目标目录已存在时，`cp -a src dst` 会把 src 嵌进 dst（dst/src），
+# 重跑升级会越嵌越深。必须用 `src/. dst/` 复制内容并覆盖已有文件。
 say "安装到 $PREFIX（源码来自 $SOURCE_DIR）"
 mkdir -p "$PREFIX"
-cp -a "$SOURCE_DIR/app"       "$PREFIX/app"
-cp -a "$SOURCE_DIR/static"    "$PREFIX/static"
-cp -a "$SOURCE_DIR/scripts"   "$PREFIX/scripts"
-[ -d "$SOURCE_DIR/.cursor" ] && cp -a "$SOURCE_DIR/.cursor" "$PREFIX/.cursor"
-[ -d "$SOURCE_DIR/.kiro" ]   && cp -a "$SOURCE_DIR/.kiro"   "$PREFIX/.kiro"
+cp -a "$SOURCE_DIR/app/."       "$PREFIX/app/"
+cp -a "$SOURCE_DIR/static/."    "$PREFIX/static/"
+cp -a "$SOURCE_DIR/scripts/."   "$PREFIX/scripts/"
+[ -d "$SOURCE_DIR/.cursor" ] && cp -a "$SOURCE_DIR/.cursor/." "$PREFIX/.cursor/"
+[ -d "$SOURCE_DIR/.kiro" ]   && cp -a "$SOURCE_DIR/.kiro/."   "$PREFIX/.kiro/"
+[ -d "$SOURCE_DIR/docs" ]    && cp -a "$SOURCE_DIR/docs/."    "$PREFIX/docs/"
 cp -a "$SOURCE_DIR/requirements.txt" "$PREFIX/requirements.txt"
 [ -f "$SOURCE_DIR/README.md" ] && cp -a "$SOURCE_DIR/README.md" "$PREFIX/README.md"
 mkdir -p "$PREFIX/data"

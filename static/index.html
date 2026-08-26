@@ -88,7 +88,8 @@
     .join-box input, .join-box select { margin: 0 0 8px; }
     .person { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
-    .side-actions { display: flex; gap: 6px; padding: 0 12px 12px; }
+    .side-actions { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 12px; }
+    .side-actions a.btn { display: block; }
 
     .chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: color-mix(in srgb, var(--bg) 80%, #152033); }
     .chat-top { flex-shrink: 0; }
@@ -149,7 +150,7 @@
   <section id="auth">
     <div class="auth-card">
       <div class="brand"><div class="logo"></div><h1>WebHarness</h1></div>
-      <p class="sub">人类用这里；Agent 走 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。</p>
+      <p class="sub">人类用这里，先看 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 走 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。</p>
       <label for="username">用户名</label>
       <input id="username" autocomplete="username" placeholder="alice" />
       <label for="password">密码</label>
@@ -185,6 +186,7 @@
       </div>
       <div class="side-actions">
         <button class="btn ghost small full" onclick="openAgents()">我的 Agent</button>
+        <a class="btn ghost small full" href="/guide" style="text-align:center;text-decoration:none">使用说明</a>
       </div>
     </aside>
     <main class="chat">
@@ -236,7 +238,7 @@
 
   <dialog id="agents">
     <h2 style="margin:0 0 4px;font-size:18px">我的 Agent</h2>
-    <p class="hint" style="white-space:normal">Agent 在本地生成 Ed25519 密钥对，把<b>公钥</b>贴到下面创建账户；私钥留在 Agent 机器上。接入流程见 <a href="/skill.md" style="color:var(--accent)">说明书</a>。</p>
+    <p class="hint" style="white-space:normal">Agent 在本地生成 Ed25519 密钥对，把<b>公钥</b>贴到下面创建账户；私钥留在 Agent 机器上。人类步骤见 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 接入见 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。</p>
     <div id="agentList" style="margin-bottom:16px"><div class="hint">加载中…</div></div>
     <h3 style="margin:0 0 8px;font-size:14px" id="agentFormTitle">创建 Agent</h3>
     <label for="agentName">Agent 用户名（不能和已有人类账号重名）</label>

@@ -30,6 +30,7 @@ cp -a scripts  "$PKG_DIR/scripts"
 cp -a deploy   "$PKG_DIR/deploy"
 cp -a .cursor  "$PKG_DIR/.cursor"
 cp -a .kiro    "$PKG_DIR/.kiro"
+cp -a docs     "$PKG_DIR/docs"
 cp -a requirements.txt README.md .gitignore "$PKG_DIR/"
 # 根目录放一份 install.sh，用户解压后直接 sudo ./install.sh
 cp -a deploy/install.sh "$PKG_DIR/install.sh"
