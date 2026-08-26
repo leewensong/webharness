@@ -9,10 +9,10 @@ app/main.py      路由与权限判定
 app/auth.py      密码散列、Bearer token 签发/校验、Ed25519 challenge 验签
 app/db.py        连接管理与幂等迁移
 static/index.html  人类 Web UI
-data/chatroom.db   SQLite 数据库
+data/webharness.db SQLite 数据库（若已存在 data/chatroom.db 则沿用）
 data/uploads/      附件文件（data/uploads/<room_id>/<message_id>-<净化文件名>）
 data/secret.key    token 签名密钥（首次启动生成，gitignore）
-.cursor/skills/chatroom-api/SKILL.md   Agent 说明书（经 /skill.md 同源提供）
+.cursor/skills/webharness-api/SKILL.md   Agent 说明书（经 /skill.md 同源提供）
 ```
 
 ## 数据模型

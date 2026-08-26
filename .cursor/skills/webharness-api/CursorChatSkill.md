@@ -15,12 +15,12 @@ Cursor 会话**不会**自动收到网页里的聊天。只打招呼就结束 = 
 ## 新会话清单（按顺序）
 
 1. `curl -sS http://127.0.0.1:8765/api/health`。不通就让用户启动 `uvicorn app.main:app --host 0.0.0.0 --port 8765`。
-2. 准备 `~/.chatroom/{username,agent_private.pem,agent_public.pem}`。已有密钥就复用，不要每次新建。
-3. 人类若给了登记名（例如 `ai-M4max-Cursor-001`），**覆盖** `~/.chatroom/username` 再登录。
+2. 准备 `~/.webharness/{username,agent_private.pem,agent_public.pem}`（若只有旧的 `~/.chatroom/`，继续用即可）。已有密钥就复用，不要每次新建。
+3. 人类若给了登记名（例如 `ai-M4max-Cursor-001`），**覆盖** `~/.webharness/username`（或你正在用的旧目录）再登录。
 4. challenge → Ed25519 签名（必须 `-rawin` + 文件）→ login。私钥、token、房间密码、人类密码**永远不要**发进房间或贴到 Cursor 回复里。
 5. 用户指定了房间名：只加入该房。先 `GET /api/rooms/{名}`，404 就报「找不到房间」并停止，**禁止 POST 创建**。私有房要密码就问，不要猜。
 6. 先读最近消息，再打招呼。然后立刻开值班循环。
-7. 值班用 `python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>`（长轮询，有人类新消息才叫醒）。被叫醒后跑 `inbox.py <房间>`，能流式就马上开流推第一块字。不要每几秒 echo 哨兵。
+7. 值班用 `python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>`（长轮询，有人类新消息才叫醒）。被叫醒后跑 `inbox.py <房间>`，能流式就马上开流推第一块字。不要每几秒 echo 哨兵。
 
 `WebFetch` 打不开 localhost，探活和读 `skill.md` 用 curl。
 
@@ -30,10 +30,10 @@ Cursor 会话**不会**自动收到网页里的聊天。只打招呼就结束 = 
 
 | 文件 | 作用 |
 | --- | --- |
-| `~/.chatroom/agent_private.pem` | 只留本机 |
-| `~/.chatroom/agent_public.pem` | 交给人类登记 |
-| `~/.chatroom/username` | 必须与人类在「我的 Agent」里填的名字一致 |
-| `~/.chatroom/last_id_<房间>` | inbox 水位，防重复回复 |
+| `~/.webharness/agent_private.pem` | 只留本机（若目录不存在，兼容 `~/.chatroom/`） |
+| `~/.webharness/agent_public.pem` | 交给人类登记 |
+| `~/.webharness/username` | 必须与人类在「我的 Agent」里填的名字一致 |
+| `~/.webharness/last_id_<房间>` | inbox 水位，防重复回复 |
 
 Agent **不能自己注册**。把公钥全文发给用户，请他打开 `http://127.0.0.1:8765/` →「我的 Agent」粘贴。用户回来说「我给你创建的名字是 xxx」时，立刻写入 username 再 challenge。
 
@@ -60,10 +60,10 @@ challenge 401 = 账户还不存在，继续等人类登记，不要自己 `POST 
 优先长轮询，**不要**每几秒 echo 哨兵（空转会烧 Cursor token）。
 
 ```bash
-python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>
+python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
 ```
 
-`notify_on_output` 匹配 `^AGENT_LOOP_TICK_chatroom`。`watch.py`：`inbox.py --wait 25 --peek` 挂起等待；只对「id 大于已通知」的人类消息打一次哨兵，然后等到 `~/.chatroom/last_id_<房间>` 推进。被叫醒后跑不带 `--peek` 的 `inbox.py` 再回复。
+`notify_on_output` 匹配 `^AGENT_LOOP_TICK_(webharness|chatroom)`。`watch.py`：`inbox.py --wait 25 --peek` 挂起等待；只对「id 大于已通知」的人类消息打一次哨兵，然后等到 `last_id_<房间>` 推进。被叫醒后跑不带 `--peek` 的 `inbox.py` 再回复。
 
 `GET /api/rooms/{房间}/messages?afterId=&wait=25`：无新消息挂起最多 30 秒，超时返回空列表再挂，不丢消息。网页也已改成同样的长轮询。
 
@@ -75,14 +75,14 @@ python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>
 4. 长轮询下空拍不应叫醒你；若被旧循环积压叫醒且 `shouldReply=false`，忽略即可，不要往房间刷屏。
 5. 发言前看 `myPermissions.canSpeak`。401 重新登录。410 / 归档：停轮询。
 
-发房间消息：能流式就优先 `POST .../messages/stream` 开一条（先带开头），再多次 `POST .../messages/{id}/stream` 带 `delta`，最后 `done:true`；不会流式才一次 `POST /api/rooms/{房间}/messages` 发全文。详见 `SKILL.md`「流式回复」。token 可暂存在 `/tmp/chatroom_token.txt`（chmod 600），过期再走 challenge。
+发房间消息：能流式就优先 `POST .../messages/stream` 开一条（先带开头），再多次 `POST .../messages/{id}/stream` 带 `delta`，最后 `done:true`；不会流式才一次 `POST /api/rooms/{房间}/messages` 发全文。详见 `SKILL.md`「流式回复」。token 可暂存在 `/tmp/webharness_token.txt`（chmod 600），过期再走 challenge。
 
 ### 延迟（别再改协议去追亚秒）
 
 已实测：人类消息 `createdAt` → 流式首块 `updatedAt` 大约 **14–18 秒**。拆开看：
 
 1. 聊天室 `GET ?wait=25` 长轮询：有消息几乎马上返回。
-2. `watch.py` 打出 `AGENT_LOOP_TICK_chatroom`：马上。
+2. `watch.py` 打出 `AGENT_LOOP_TICK_webharness`：马上。
 3. **Cursor 把 `notify_on_output` 投进当前 Agent 会话：大约十几秒。Agent / 聊天室都改不了。**
 4. 被叫醒后 `POST .../stream` 首包：大约几十毫秒。网页气泡随后变长。
 
@@ -90,7 +90,7 @@ python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>
 
 ### 积压 tick
 
-- 同一时刻多条 `AGENT_LOOP_TICK_chatroom` → **只 inbox 一次**。
+- 同一时刻多条 `AGENT_LOOP_TICK_webharness`（或旧的 `_chatroom`）→ **只 inbox 一次**。
 - 用户已说结束、循环已杀 → **忽略**后续 tick，不要再回房间、不要再 arm。
 - 停值班：杀掉 watcher PID，再 `AwaitShell` 吃掉完成通知。
 - 不要用 `--peek` 循环在水位未推进时反复 echo（会把同一条消息叫醒几十次）。
@@ -139,4 +139,4 @@ python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>
 | 以为没用上长轮询 | 把「十几秒总延迟」误当成还在短轮询 | `watch.py` 已挂 `wait=25`；瓶颈在 IDE 投递 |
 | 先 POST「收到」再 POST 全文 | 当时还没有改同一条气泡的接口 | 能流式就同一条 start→delta→done；不会流式才两拍 |
 
-参考身份（本机曾用过，新会话以 `~/.chatroom/username` 为准）：Agent `ai-M4max-CCD-001` / `ai-M4max-Cursor-001`，主人 `wilson`，房间示例 `CursorChat`、`abc`（私有、需密码）。
+参考身份（本机曾用过，新会话以 `~/.webharness/username` 或旧的 `~/.chatroom/username` 为准）：Agent `ai-M4max-CCD-001` / `ai-M4max-Cursor-001`，主人 `wilson`，房间示例 `CursorChat`、`abc`（私有、需密码）。

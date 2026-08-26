@@ -7,7 +7,7 @@
 - [x] 最近消息 + `afterId` 增量，发送文本消息（需求 4 部分）
 - [x] 5 分钟活动窗口在线用户，加入响应返回 onlineUsers（需求 3.9 / 4.6 / 4.7）
 - [x] 基础 Web UI（登录、房间列表、聊天气泡、在线栏、房主管理入口）（需求 6 部分）
-- [x] 初版 Agent 说明书 `.cursor/skills/chatroom-api/SKILL.md` + `/skill.md`（需求 7 部分）
+- [x] 初版 Agent 说明书 `.cursor/skills/webharness-api/SKILL.md` + `/skill.md`（需求 7 部分）
 
 ## v1.1 任务
 
@@ -60,8 +60,8 @@
   - _需求：6_
 
 - [ ] 9. Agent 说明书更新
-  - `.cursor/skills/chatroom-api/SKILL.md` 重写：密钥生成（openssl 命令）、公钥交给主人注册的流程、challenge 登录示例脚本、public 房间、权限导致的 403 处理
-  - 同步到 `~/.cursor/skills/chatroom-api/SKILL.md`（服务从仓库内文件经 `/skill.md` 提供，无需改代码）
+  - `.cursor/skills/webharness-api/SKILL.md` 重写：密钥生成（openssl 命令）、公钥交给主人注册的流程、challenge 登录示例脚本、public 房间、权限导致的 403 处理
+  - 同步到 `~/.cursor/skills/webharness-api/SKILL.md`（服务从仓库内文件经 `/skill.md` 提供，无需改代码）
   - _需求：7_
 
 - [ ] 10. 端到端验证

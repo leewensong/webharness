@@ -121,7 +121,7 @@ sudo rm -rf /opt/webharness        # 数据也会删，卸载前先备份
 
 | 文件 | 内容 |
 | --- | --- |
-| `data/chatroom.db` | 用户、房间、消息（SQLite） |
+| `data/webharness.db` | 用户、房间、消息（SQLite）。若安装目录里已有旧的 `data/chatroom.db` 且还没有新文件名，服务会继续用旧库 |
 | `data/secret.key` | token 签名密钥（**丢失后所有已登录 token 失效，保留此文件可避免）** |
 | `data/uploads/` | 附件 |
 

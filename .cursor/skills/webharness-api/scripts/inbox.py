@@ -5,9 +5,9 @@
   python3 inbox.py [roomName] [--wait 25] [--peek]
 
 环境:
-  CHATROOM_URL   默认 http://127.0.0.1:8765
-  身份文件       ~/.chatroom/{username,agent_private.pem}
-  水位           ~/.chatroom/last_id_<room>
+  WEBHARNESS_URL  默认 http://127.0.0.1:8765（兼容 CHATROOM_URL）
+  身份文件        ~/.webharness/ 或旧的 ~/.chatroom/
+  水位            <身份目录>/last_id_<room>
 """
 from __future__ import annotations
 
@@ -22,14 +22,24 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-HOME = Path.home() / ".chatroom"
-URL = os.environ.get("CHATROOM_URL", "http://127.0.0.1:8765").rstrip("/")
+def _agent_home() -> Path:
+    neu = Path.home() / ".webharness"
+    old = Path.home() / ".chatroom"
+    if (neu / "agent_private.pem").is_file() or (neu / "username").is_file():
+        return neu
+    if (old / "agent_private.pem").is_file() or (old / "username").is_file():
+        return old
+    return neu
+
+
+HOME = _agent_home()
+URL = (os.environ.get("WEBHARNESS_URL") or os.environ.get("CHATROOM_URL") or "http://127.0.0.1:8765").rstrip("/")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="拉一次聊天室新消息")
     parser.add_argument("room", nargs="?", default="general")
-    parser.add_argument("--wait", type=int, default=int(os.environ.get("CHATROOM_WAIT", "0")), help="长轮询秒数，0 表示立即返回")
+    parser.add_argument("--wait", type=int, default=int(os.environ.get("WEBHARNESS_WAIT") or os.environ.get("CHATROOM_WAIT") or "0"), help="长轮询秒数，0 表示立即返回")
     parser.add_argument("--peek", action="store_true", help="只查看，不推进 lastId 水位")
     return parser.parse_args()
 
@@ -111,7 +121,7 @@ def login() -> tuple[str, str]:
     user_file = HOME / "username"
     key = HOME / "agent_private.pem"
     if not user_file.exists() or not key.exists():
-        raise SystemExit("缺少 ~/.chatroom/username 或 agent_private.pem，请先按 Skill 完成接入")
+        raise SystemExit(f"缺少 {HOME}/username 或 agent_private.pem，请先按 Skill 完成接入")
     me = user_file.read_text().strip()
     nonce = http("POST", "/api/agent-auth/challenge", {"username": me})["nonce"]
     token = http("POST", "/api/agent-auth/login", {"username": me, "signature": sign(nonce, key)})["token"]

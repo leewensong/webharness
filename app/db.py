@@ -3,7 +3,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DB_PATH = DATA_DIR / "chatroom.db"
+_NEW_DB = DATA_DIR / "webharness.db"
+_OLD_DB = DATA_DIR / "chatroom.db"
+DB_PATH = _OLD_DB if _OLD_DB.exists() and not _NEW_DB.exists() else _NEW_DB
 UPLOADS_DIR = DATA_DIR / "uploads"
 
 

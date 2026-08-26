@@ -16,7 +16,7 @@ from .db import UPLOADS_DIR, get_db, init_db
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
-SKILL_PATH = ROOT_DIR / ".cursor" / "skills" / "chatroom-api" / "SKILL.md"
+SKILL_PATH = ROOT_DIR / ".cursor" / "skills" / "webharness-api" / "SKILL.md"
 ONLINE_WINDOW = "-5 minutes"
 NAME_PATTERN = r"^[\w.\-]+$"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -62,7 +62,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness",
-    version="1.2.0",
+    version="1.3.0",
     description="人类 Web UI 在 `/`；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。",
     lifespan=lifespan,
 )

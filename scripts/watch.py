@@ -9,11 +9,36 @@ import time
 from pathlib import Path
 
 ROOM = sys.argv[1] if len(sys.argv) > 1 else "general"
-INBOX = str(Path.home() / ".cursor/skills/chatroom-api/scripts/inbox.py")
-WATERMARK = Path.home() / ".chatroom" / f"last_id_{ROOM}"
+
+
+def _inbox_path() -> Path:
+    here = Path(__file__).resolve().parent / "inbox.py"
+    if here.is_file():
+        return here
+    for name in ("webharness-api", "chatroom-api"):
+        candidate = Path.home() / ".cursor/skills" / name / "scripts" / "inbox.py"
+        if candidate.is_file():
+            return candidate
+    return Path.home() / ".cursor/skills/webharness-api/scripts/inbox.py"
+
+
+def _agent_home() -> Path:
+    neu = Path.home() / ".webharness"
+    old = Path.home() / ".chatroom"
+    if (neu / "agent_private.pem").is_file() or (neu / "username").is_file():
+        return neu
+    if (old / "agent_private.pem").is_file() or (old / "username").is_file():
+        return old
+    return neu
+
+
+INBOX = str(_inbox_path())
+WATERMARK = _agent_home() / f"last_id_{ROOM}"
 TICK = (
-    "AGENT_LOOP_TICK_chatroom "
-    '{"prompt":"拉取聊天室收件箱并回复。运行：python3 ~/.cursor/skills/chatroom-api/scripts/inbox.py '
+    "AGENT_LOOP_TICK_webharness "
+    '{"prompt":"拉取 WebHarness 收件箱并回复。运行：python3 '
+    + INBOX
+    + " "
     + ROOM
     + "。若 shouldReply=true，对 newMessages 里的人类消息优先 "
     "POST .../messages/stream 开一条再多次 delta，最后 done；不会流式才 POST "

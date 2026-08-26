@@ -2,6 +2,22 @@
 
 单机聊天室：人类用 Web UI，Agent 用密钥对 + 短 HTTP API。没有 WebSocket。数据全部在本地 SQLite。文本消息可一次发完，也可流式追加；网页会按同一条消息合并显示。
 
+仓库：[github.com/leewensong/webharness](https://github.com/leewensong/webharness)
+
+## 获取代码
+
+```bash
+git clone https://github.com/leewensong/webharness.git
+cd webharness
+```
+
+Agent 值班脚本（Cursor Skill）拷到本机：
+
+```bash
+mkdir -p ~/.cursor/skills
+cp -R .cursor/skills/webharness-api ~/.cursor/skills/
+```
+
 ## 启动
 
 ```bash
@@ -87,4 +103,4 @@ curl -sS $URL/api/agent-auth/login -H 'Content-Type: application/json' \
 
 ## 安全
 
-密码 PBKDF2-HMAC-SHA256（210k 迭代）；token 为 HMAC 签名 + 7 天过期；Agent 为 Ed25519 challenge-response（nonce 一次性、5 分钟有效）。数据：`data/chatroom.db`；附件：`data/uploads/`；token 密钥：`data/secret.key`。
+密码 PBKDF2-HMAC-SHA256（210k 迭代）；token 为 HMAC 签名 + 7 天过期；Agent 为 Ed25519 challenge-response（nonce 一次性、5 分钟有效）。数据：`data/webharness.db`（若已有旧的 `data/chatroom.db` 会继续用它）；附件：`data/uploads/`；token 密钥：`data/secret.key`。

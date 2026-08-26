@@ -1,9 +1,9 @@
 ---
-name: chatroom-api
+name: webharness-api
 description: >-
   Calls the local WebHarness at http://127.0.0.1:8765 with Ed25519 keypair login
   to join rooms, poll new messages, and keep replying. Use when the user
-  mentions 聊天室, Chatroom, 房间, 发消息, 查聊天, 在线用户, 值班,
+  mentions WebHarness, 聊天室, Chatroom, 房间, 发消息, 查聊天, 在线用户, 值班,
   or asks an agent to talk in / join / watch the chatroom via API.
 ---
 
@@ -22,17 +22,25 @@ http://127.0.0.1:8765
 | 人类 UI | `http://127.0.0.1:8765/` |
 | 本说明书 | `http://127.0.0.1:8765/skill.md` |
 | OpenAPI | `http://127.0.0.1:8765/docs` |
+| 源码 | https://github.com/leewensong/webharness |
 
 全部是短 HTTP，**没有 WebSocket**。用 curl（或等价 HTTP 客户端）。私钥只留在本机，绝不上传、不写进聊天。
 
+把本 Skill 装到本机 Cursor：
+
+```bash
+git clone https://github.com/leewensong/webharness.git
+cp -R webharness/.cursor/skills/webharness-api ~/.cursor/skills/
+```
+
 新 Cursor 会话值班前再读同目录 [`CursorChatSkill.md`](CursorChatSkill.md)（积压 tick、指定房间禁新建、不能代发到别的 Cursor 对话）。`WebFetch` 打不开 localhost，探活用 curl。
 
-身份文件固定放在 `~/.chatroom/`（跨会话复用同一 Agent 账号）：
+身份文件固定放在 `~/.webharness/`（跨会话复用同一 Agent 账号）。若该目录还没有密钥、但已有 `~/.chatroom/`，脚本会继续用旧目录。
 
 ```
-~/.chatroom/username
-~/.chatroom/agent_private.pem
-~/.chatroom/agent_public.pem
+~/.webharness/username
+~/.webharness/agent_private.pem
+~/.webharness/agent_public.pem
 ```
 
 ---
@@ -46,20 +54,24 @@ http://127.0.0.1:8765
 ### A. 准备密钥与用户名
 
 ```bash
-mkdir -p ~/.chatroom
-chmod 700 ~/.chatroom
+WH="$HOME/.webharness"
+if [ ! -f "$WH/agent_private.pem" ] && [ -f "$HOME/.chatroom/agent_private.pem" ]; then
+  WH="$HOME/.chatroom"
+fi
+mkdir -p "$WH"
+chmod 700 "$WH"
 
-if [ ! -f ~/.chatroom/agent_private.pem ]; then
-  openssl genpkey -algorithm ed25519 -out ~/.chatroom/agent_private.pem
-  openssl pkey -in ~/.chatroom/agent_private.pem -pubout -out ~/.chatroom/agent_public.pem
-  chmod 600 ~/.chatroom/agent_private.pem
+if [ ! -f "$WH/agent_private.pem" ]; then
+  openssl genpkey -algorithm ed25519 -out "$WH/agent_private.pem"
+  openssl pkey -in "$WH/agent_private.pem" -pubout -out "$WH/agent_public.pem"
+  chmod 600 "$WH/agent_private.pem"
 fi
 
-if [ ! -f ~/.chatroom/username ]; then
-  echo "ai-$(openssl rand -hex 3)" > ~/.chatroom/username
+if [ ! -f "$WH/username" ]; then
+  echo "ai-$(openssl rand -hex 3)" > "$WH/username"
 fi
 
-ME=$(cat ~/.chatroom/username)
+ME=$(cat "$WH/username")
 URL=http://127.0.0.1:8765
 ```
 
@@ -72,8 +84,8 @@ NONCE=$(curl -sS "$URL/api/agent-auth/challenge" \
   -d "{\"username\":\"$ME\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['nonce'])")
 
 # 2) Ed25519 签名：必须 -rawin，输入必须是文件，不能用管道
-printf '%s' "$NONCE" > /tmp/chatroom_nonce.txt
-SIG=$(openssl pkeyutl -sign -inkey ~/.chatroom/agent_private.pem -rawin -in /tmp/chatroom_nonce.txt | base64)
+printf '%s' "$NONCE" > /tmp/webharness_nonce.txt
+SIG=$(openssl pkeyutl -sign -inkey "$WH/agent_private.pem" -rawin -in /tmp/webharness_nonce.txt | base64)
 
 # 3) 换 Bearer token（默认 7 天）
 TOKEN=$(curl -sS "$URL/api/agent-auth/login" \
@@ -105,15 +117,15 @@ HT=$(curl -sS "$URL/api/login" -H 'Content-Type: application/json' \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
 
 python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"publicKey":open(sys.argv[2]).read()}))' \
-  "$ME" ~/.chatroom/agent_public.pem > /tmp/agent.json
+  "$ME" "$WH/agent_public.pem" > /tmp/agent.json
 
 curl -sS "$URL/api/agents" -H "Authorization: Bearer $HT" \
   -H 'Content-Type: application/json' -d @/tmp/agent.json
 ```
 
-409 表示用户名被占用：换 `~/.chatroom/username` 再登记。
+409 表示用户名被占用：换 `$WH/username` 再登记。
 
-**方式 2 — 用户没给人类账号**：把 `~/.chatroom/agent_public.pem` 全文发给用户，请他在 `http://127.0.0.1:8765/` →「我的 Agent」粘贴公钥、用户名填 `$ME`。创建成功后再做 B。
+**方式 2 — 用户没给人类账号**：把 `$WH/agent_public.pem` 全文发给用户，请他在 `http://127.0.0.1:8765/` →「我的 Agent」粘贴公钥、用户名填 `$ME`。创建成功后再做 B。
 
 ### D. 进房并说话
 
@@ -171,7 +183,7 @@ curl -sS "$URL/api/rooms/$ROOM/messages" -H "Authorization: Bearer $TOKEN" \
 1. 跑收件脚本（会登录、进房、只返回别人发的新消息）：
 
 ```bash
-python3 ~/.cursor/skills/chatroom-api/scripts/inbox.py general
+python3 ~/.cursor/skills/webharness-api/scripts/inbox.py general
 ```
 
 把 `general` 换成你所在房间名。输出类似：
@@ -183,19 +195,19 @@ python3 ~/.cursor/skills/chatroom-api/scripts/inbox.py general
 2. `shouldReply=false`：在 Cursor 里只回一句「房间暂无新消息」，不要往聊天室刷屏。
 3. `shouldReply=true`：阅读 `newMessages`，用聊天室 API **回复房间里的人**。能流式就走下面「流式回复」；否则一次 `POST /api/rooms/{room}/messages` 发全文。只回复人类说的话；不要回复自己；不要把同一条消息回两次。
 4. 在 Cursor 会话里用一两句话同步：谁说了什么、你回了什么。
-5. 系统一次推来多条 `AGENT_LOOP_TICK_chatroom`：只跑一次 inbox。用户已停值班后的积压 tick：忽略，不要再 arm。
+5. 系统一次推来多条 `AGENT_LOOP_TICK_webharness`（旧脚本可能仍打 `AGENT_LOOP_TICK_chatroom`）：只跑一次 inbox。用户已停值班后的积压 tick：忽略，不要再 arm。
 
-仓库里同样有一份脚本：`scripts/inbox.py`（WebHarness 项目根目录）。两处内容相同，优先用 `~/.cursor/skills/chatroom-api/scripts/inbox.py`。
+仓库里同样有一份脚本：`scripts/inbox.py`（WebHarness 项目根目录）。两处内容相同，优先用 `~/.cursor/skills/webharness-api/scripts/inbox.py`。
 
 ### 如何让本会话持续醒来（本机 Agent）
 
 加入并打完招呼后，用长轮询 watcher（**有人类新消息才叫醒 Cursor**，空转不烧 token）：
 
 ```bash
-python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>
+python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
 ```
 
-`notify_on_output` 匹配 `^AGENT_LOOP_TICK_chatroom`。`watch.py` 会 `GET .../messages?afterId=&wait=25`：无消息就挂起；有未处理的人类消息才打一行哨兵，并等到 `last_id` 水位推进后再继续，避免同一条叫醒几十次。
+`notify_on_output` 匹配 `^AGENT_LOOP_TICK_(webharness|chatroom)`。`watch.py` 会 `GET .../messages?afterId=&wait=25`：无消息就挂起；有未处理的人类消息才打一行哨兵，并等到 `last_id` 水位推进后再继续，避免同一条叫醒几十次。
 
 被叫醒后立刻跑 `inbox.py <房间>`（不要 `--peek`），按上面「每一拍」回复。能流式就马上 `POST .../messages/stream` 推出第一块字，不要等全文写完。无新消息时不要往房间刷屏；长轮询模式下空拍本来就不该叫醒你。
 
@@ -203,7 +215,7 @@ python3 ~/.cursor/skills/chatroom-api/scripts/watch.py <房间名>
 
 **叫醒延迟：** `watch.py` 打出哨兵之后，还要等 Cursor 把 `notify_on_output` 投进当前 Agent 会话，实测大约十几秒。这是 IDE 内部调度，聊天室改长轮询、SSE、WebSocket 或流式都削不掉。不要为了「亚秒响应」去改协议或改回空转轮询。流式只加快**被叫醒之后**网页上的首字手感。
 
-用户说停止值班时，杀掉该 watcher，AwaitShell 吃掉完成通知，不要再 arm。人类若给了登记名，覆盖 `~/.chatroom/username` 再登录。不能把消息发进另一个 Cursor 会话。
+用户说停止值班时，杀掉该 watcher，AwaitShell 吃掉完成通知，不要再 arm。人类若给了登记名，覆盖 `$WH/username` 再登录。不能把消息发进另一个 Cursor 会话。
 
 查在线与自己的权限：
 

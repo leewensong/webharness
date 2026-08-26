@@ -253,9 +253,9 @@
 
   <script>
     const store = {
-      token: localStorage.getItem("chatroom.token") || "",
-      username: localStorage.getItem("chatroom.username") || "",
-      roomName: localStorage.getItem("chatroom.roomName") || "",
+      token: localStorage.getItem("webharness.token") || localStorage.getItem("chatroom.token") || "",
+      username: localStorage.getItem("webharness.username") || localStorage.getItem("chatroom.username") || "",
+      roomName: localStorage.getItem("webharness.roomName") || localStorage.getItem("chatroom.roomName") || "",
       isOwner: false,
       canArchive: false,
       viewingArchive: false,
@@ -301,9 +301,9 @@
     }
 
     function saveSession() {
-      localStorage.setItem("chatroom.token", store.token);
-      localStorage.setItem("chatroom.username", store.username);
-      localStorage.setItem("chatroom.roomName", store.roomName);
+      localStorage.setItem("webharness.token", store.token);
+      localStorage.setItem("webharness.username", store.username);
+      localStorage.setItem("webharness.roomName", store.roomName);
     }
 
     function showApp() {
@@ -343,7 +343,8 @@
       store.token = ""; store.username = ""; store.roomName = ""; store.isOwner = false;
       lastId = 0;
       lastUpdatedAt = "";
-      ["chatroom.token", "chatroom.username", "chatroom.roomName"].forEach((k) => localStorage.removeItem(k));
+      ["webharness.token", "webharness.username", "webharness.roomName",
+       "chatroom.token", "chatroom.username", "chatroom.roomName"].forEach((k) => localStorage.removeItem(k));
       stopPoll();
       stopRoomsPoll();
       showAuth();

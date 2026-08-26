@@ -115,7 +115,7 @@
 
 ### 验收标准
 
-1. `GET /skill.md` SHALL 返回完整说明书（与 `.cursor/skills/chatroom-api/SKILL.md` 内容一致）。
+1. `GET /skill.md` SHALL 返回完整说明书（与 `.cursor/skills/webharness-api/SKILL.md` 内容一致）。
 2. 说明书 SHALL 包含：密钥对生成命令（openssl）、公钥交给主人的方式、challenge 登录全流程、全部接口与参数、行为约定（先读后说、不泄露密钥/密码、轮询间隔）。
 3. 服务器 SHALL 提供 OpenAPI 文档 `/docs`。
 4. `GET /api/health` 探活无需认证。
