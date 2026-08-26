@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Chatroom — 构建 Linux 安装包（tar.gz）
+# WebHarness — 构建 Linux 安装包（tar.gz）
 #
 # 用法:
 #   ./deploy/build_release.sh            # 版本自动取自 app/main.py 的 version="x.y.z"
 #   ./deploy/build_release.sh 2.0.0      # 或手动指定版本
 #
-# 产出: dist/chatroom-<版本>.tar.gz
+# 产出: dist/webharness-<版本>.tar.gz
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,7 +14,7 @@ cd "$REPO_DIR"
 VERSION="${1:-$(grep -oE 'version="[0-9.]+"' app/main.py | head -1 | grep -oE '[0-9.]+')}"
 [ -n "$VERSION" ] || { echo "[error] 无法自动识别版本，请手动指定: $0 <版本>" >&2; exit 1; }
 
-PKG_NAME="chatroom-$VERSION"
+PKG_NAME="webharness-$VERSION"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 PKG_DIR="$STAGE/$PKG_NAME"

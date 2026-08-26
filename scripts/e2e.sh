@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Chatroom 端到端验证：人类注册/登录、Agent 密钥登录、房间可见性、权限、附件。
+# WebHarness 端到端验证：人类注册/登录、Agent 密钥登录、房间可见性、权限、附件。
 # 用法: ./scripts/e2e.sh [base_url]   （默认 http://127.0.0.1:8765）
 set -euo pipefail
 

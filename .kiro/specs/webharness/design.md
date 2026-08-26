@@ -1,4 +1,4 @@
-# 设计文档 — Chatroom
+# 设计文档 — WebHarness
 
 ## 架构
 

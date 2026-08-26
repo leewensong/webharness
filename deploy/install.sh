@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# Chatroom — Linux 一键安装脚本
+# WebHarness — Linux 一键安装脚本
 #
 # 用法:
 #   sudo ./install.sh              # 或 sudo ./deploy/install.sh（两种位置均可）
 #
 # 环境变量（可选）:
-#   PREFIX        安装目录        (默认 /opt/chatroom)
+#   PREFIX        安装目录        (默认 /opt/webharness)
 #   HOST          监听地址        (默认 0.0.0.0)
 #   PORT          监听端口        (默认 8765)
-#   SERVICE_USER  服务运行用户    (默认 chatroom)
+#   SERVICE_USER  服务运行用户    (默认 webharness)
 #   SKIP_SYSTEMD  1 时不注册 systemd 服务（仅装文件+venv，便于测试/手动跑）
 #
 # 重跑可升级：再次执行会覆盖代码并重启服务。
 set -euo pipefail
 
-PREFIX="${PREFIX:-/opt/chatroom}"
+PREFIX="${PREFIX:-/opt/webharness}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8765}"
-SERVICE_USER="${SERVICE_USER:-chatroom}"
+SERVICE_USER="${SERVICE_USER:-webharness}"
 SKIP_SYSTEMD="${SKIP_SYSTEMD:-0}"
 
 # install.sh 可位于包根目录（副本）或 deploy/ 下（原始），源码目录 = 包含 app/ 的那一级
@@ -91,31 +91,31 @@ if [ "$SKIP_SYSTEMD" = "1" ]; then
 fi
 
 SERVICE_TEMPLATE=""
-for candidate in "$SCRIPT_DIR/chatroom.service" "$SOURCE_DIR/deploy/chatroom.service"; do
+for candidate in "$SCRIPT_DIR/webharness.service" "$SOURCE_DIR/deploy/webharness.service"; do
   if [ -f "$candidate" ]; then
     SERVICE_TEMPLATE="$candidate"
     break
   fi
 done
-[ -n "$SERVICE_TEMPLATE" ] || die "找不到 chatroom.service 模板"
+[ -n "$SERVICE_TEMPLATE" ] || die "找不到 webharness.service 模板"
 
-say "写入 /etc/systemd/system/chatroom.service"
+say "写入 /etc/systemd/system/webharness.service"
 sed -e "s|__PREFIX__|$PREFIX|g" \
     -e "s|__HOST__|$HOST|g" \
     -e "s|__PORT__|$PORT|g" \
     -e "s|__USER__|$SERVICE_USER|g" \
-    "$SERVICE_TEMPLATE" > /etc/systemd/system/chatroom.service
+    "$SERVICE_TEMPLATE" > /etc/systemd/system/webharness.service
 
 systemctl daemon-reload
-systemctl enable --now chatroom
+systemctl enable --now webharness
 sleep 1
 
 say "安装完成 ✅"
 echo
 echo "  探活:  curl -sS http://127.0.0.1:$PORT/api/health   （应返回 {\"ok\": true}）"
 echo "  Web UI: http://$(hostname -I 2>/dev/null | awk '{print $1}')$( [ "$PORT" = "80" ] && echo "" || echo ":$PORT" )/"
-echo "  日志:   journalctl -u chatroom -f"
-echo "  状态:   systemctl status chatroom"
+echo "  日志:   journalctl -u webharness -f"
+echo "  状态:   systemctl status webharness"
 echo
 echo "  若无法从外网访问，请放行端口（二选一）:"
 echo "    ufw allow $PORT/tcp"

@@ -1,4 +1,4 @@
-# 需求文档 — Chatroom 单机聊天室
+# 需求文档 — WebHarness 单机聊天室
 
 ## 简介
 

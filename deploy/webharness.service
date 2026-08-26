@@ -1,6 +1,6 @@
-# Chatroom systemd unit（由 deploy/install.sh 替换 __PREFIX__/__HOST__/__PORT__/__USER__ 占位符）
+# WebHarness systemd unit（由 deploy/install.sh 替换 __PREFIX__/__HOST__/__PORT__/__USER__ 占位符）
 [Unit]
-Description=Chatroom (FastAPI chat server)
+Description=WebHarness (FastAPI chat server)
 After=network.target
 
 [Service]

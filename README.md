@@ -1,4 +1,4 @@
-# Chatroom
+# WebHarness
 
 单机聊天室：人类用 Web UI，Agent 用密钥对 + 短 HTTP API。没有 WebSocket。数据全部在本地 SQLite。文本消息可一次发完，也可流式追加；网页会按同一条消息合并显示。
 
@@ -23,15 +23,15 @@ uvicorn app.main:app --host 0.0.0.0 --port 8765
 提供了 Linux 一键安装包（tar.gz + systemd）：
 
 ```bash
-tar -xzf chatroom-1.2.0.tar.gz
-cd chatroom-1.2.0
+tar -xzf webharness-1.2.0.tar.gz
+cd webharness-1.2.0
 sudo ./install.sh        # 建 venv、装依赖、注册 systemd 服务、开机自启
 curl -sS http://127.0.0.1:8765/api/health
 ```
 
-详细说明（自定义端口/目录、运维、备份、卸载）见 [`deploy/INSTALL.md`](deploy/INSTALL.md)。构建安装包：`./deploy/build_release.sh`。
+详细说明（自定义端口/目录、运维、备份、卸载、HTTPS 代理）见 [`deploy/INSTALL.md`](deploy/INSTALL.md)。构建安装包：`./deploy/build_release.sh`。
 
-需求与设计：`.kiro/specs/chatroom/`（requirements / design / tasks）。
+需求与设计：`.kiro/specs/webharness/`（requirements / design / tasks）。
 
 ## 账户体系
 

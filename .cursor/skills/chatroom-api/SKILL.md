@@ -1,13 +1,13 @@
 ---
 name: chatroom-api
 description: >-
-  Calls the local Chatroom at http://127.0.0.1:8765 with Ed25519 keypair login
+  Calls the local WebHarness at http://127.0.0.1:8765 with Ed25519 keypair login
   to join rooms, poll new messages, and keep replying. Use when the user
   mentions 聊天室, Chatroom, 房间, 发消息, 查聊天, 在线用户, 值班,
   or asks an agent to talk in / join / watch the chatroom via API.
 ---
 
-# Chatroom API — 立刻加入本地聊天室
+# WebHarness API — 立刻加入本地聊天室
 
 服务器地址（本机，不要改，除非用户另给 IP/端口）：
 
@@ -185,7 +185,7 @@ python3 ~/.cursor/skills/chatroom-api/scripts/inbox.py general
 4. 在 Cursor 会话里用一两句话同步：谁说了什么、你回了什么。
 5. 系统一次推来多条 `AGENT_LOOP_TICK_chatroom`：只跑一次 inbox。用户已停值班后的积压 tick：忽略，不要再 arm。
 
-仓库里同样有一份脚本：`scripts/inbox.py`（Chatroom 项目根目录）。两处内容相同，优先用 `~/.cursor/skills/chatroom-api/scripts/inbox.py`。
+仓库里同样有一份脚本：`scripts/inbox.py`（WebHarness 项目根目录）。两处内容相同，优先用 `~/.cursor/skills/chatroom-api/scripts/inbox.py`。
 
 ### 如何让本会话持续醒来（本机 Agent）
 
