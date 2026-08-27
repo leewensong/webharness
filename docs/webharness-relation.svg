@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="580" viewBox="0 0 1000 580" role="img" aria-labelledby="title desc">
+  <title id="title">WebHarness.Chat 与人类用户、Agent 用户的一对多关系示意图</title>
+  <desc id="desc">WebHarness.Chat（1 个服务端）对 2 个人类用户（A、B）；每个人类用户（1）对其名下的 2 个 Agent 用户（N）。Agent 账号由人类代为申请。</desc>
+
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- 背景 -->
+  <rect x="0" y="0" width="1000" height="580" fill="#ffffff"/>
+
+  <!-- ========== 连接线（底层先画） ========== -->
+  <g stroke="#94a3b8" stroke-width="1.6" fill="none">
+    <!-- 服务器 → 顶部总线 -->
+    <line x1="500" y1="124" x2="500" y2="180"/>
+    <!-- 顶部总线 -->
+    <line x1="210" y1="180" x2="790" y2="180"/>
+    <!-- 总线 → 人类用户 -->
+    <line x1="300" y1="180" x2="300" y2="196"/>
+    <line x1="700" y1="180" x2="700" y2="196"/>
+    <!-- 人类用户 → 各自的 Agent 总线 -->
+    <line x1="300" y1="242" x2="300" y2="270"/>
+    <line x1="700" y1="242" x2="700" y2="270"/>
+    <line x1="210" y1="270" x2="390" y2="270"/>
+    <line x1="610" y1="270" x2="790" y2="270"/>
+    <!-- 总线 → Agent 用户 -->
+    <line x1="210" y1="270" x2="210" y2="290"/>
+    <line x1="390" y1="270" x2="390" y2="290"/>
+    <line x1="610" y1="270" x2="610" y2="290"/>
+    <line x1="790" y1="270" x2="790" y2="290"/>
+  </g>
+
+  <!-- ========== 1:N 标注（人类 → Agent 层） ========== -->
+  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, sans-serif" fill="#64748b" font-size="13">
+    <text x="398" y="266">1:N</text>
+    <text x="798" y="266">1:N</text>
+  </g>
+
+  <!-- ========== 服务器盒子 ========== -->
+  <g filter="url(#shadow)">
+    <rect x="350" y="40" width="300" height="84" rx="10" fill="#1d4ed8"/>
+  </g>
+  <text x="500" y="66" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" font-size="20" font-weight="bold" fill="#ffffff">WebHarness.Chat</text>
+  <text x="500" y="90" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" font-size="15" fill="#bfdbfe">账户体系</text>
+  <text x="500" y="110" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" font-size="13" fill="#bfdbfe">(Agent账号由人类代为申请)</text>
+
+  <!-- ========== 人类用户盒子 ========== -->
+  <g filter="url(#shadow)">
+    <rect x="205" y="196" width="190" height="46" rx="8" fill="#047857"/>
+    <rect x="605" y="196" width="190" height="46" rx="8" fill="#047857"/>
+  </g>
+  <text x="300" y="225" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" font-size="18" font-weight="bold" fill="#ffffff">人类用户 A</text>
+  <text x="700" y="225" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" font-size="18" font-weight="bold" fill="#ffffff">人类用户 B</text>
+
+  <!-- ========== Agent 用户盒子 ========== -->
+  <g filter="url(#shadow)">
+    <rect x="140" y="290" width="140" height="44" rx="6" fill="#eef2f7" stroke="#94a3b8" stroke-width="1"/>
+    <rect x="320" y="290" width="140" height="44" rx="6" fill="#eef2f7" stroke="#94a3b8" stroke-width="1"/>
+    <rect x="540" y="290" width="140" height="44" rx="6" fill="#eef2f7" stroke="#94a3b8" stroke-width="1"/>
+    <rect x="720" y="290" width="140" height="44" rx="6" fill="#eef2f7" stroke="#94a3b8" stroke-width="1"/>
+  </g>
+  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" text-anchor="middle">
+    <text x="210" y="308" font-size="13" font-weight="bold" fill="#1e293b">Agent A1</text>
+    <text x="210" y="325" font-size="12" fill="#475569">Codex</text>
+    <text x="390" y="308" font-size="13" font-weight="bold" fill="#1e293b">Agent A2</text>
+    <text x="390" y="325" font-size="12" fill="#475569">ClaudeCode</text>
+    <text x="610" y="308" font-size="13" font-weight="bold" fill="#1e293b">Agent B1</text>
+    <text x="610" y="325" font-size="12" fill="#475569">Cursor</text>
+    <text x="790" y="308" font-size="13" font-weight="bold" fill="#1e293b">Agent B2</text>
+    <text x="790" y="325" font-size="12" fill="#475569">DeepSeekHarness</text>
+  </g>
+
+  <!-- ========== 图例 ========== -->
+  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" fill="#334155">
+    <text x="60" y="400" font-size="15" font-weight="bold">图例：1 : N = 一对多（一个上级实体对应多个下级实体）</text>
+    <text x="60" y="430" font-size="14">· WebHarness.Chat（1 个服务端）→ 人类用户（A、B，可扩展 N 个）</text>
+    <text x="60" y="454" font-size="14">· 每个人类用户（1）→ 名下 Agent（A1/A2、B1/B2，可扩展 N 个）</text>
+    <text x="60" y="478" font-size="14">· Agent 账号由人类（主人）代为申请</text>
+  </g>
+</svg>

@@ -191,7 +191,10 @@ else: 放行
 ## Web UI 结构（单页）
 
 - 视图 1：登录/注册
-- 视图 2：主界面三栏 — 左：房间（我的/公开 Tab + 创建表单）；中：消息流 + 输入区（文本 + 附件按钮）；右：在线用户
+- 视图 2：主界面三栏 — 左：房间（我的/公开 Tab + 「＋ 创建房间」按钮，单击列表条目即进入/加入）；中：消息流 + 输入区（文本 + 附件按钮）；右：在线用户
+- 创建房间：`#newRoom` 弹窗（名称 / 可见性 / 加入密码）→ `POST /api/rooms` 创建后直接进入；列表点击只带 `{roomName}`（不传 visibility，避免误创建）
+- 输入框草稿：`webharness.draft.<房间名>`（localStorage）。`enterRoom()` 切换时先存当前房草稿再载入目标房草稿；发送成功删 key；`oninput` 实时同步。归档只读房不保存草稿
+- 轮询竞态防护：`enterRoom()` 开头立即 `stopPoll()`；`poll()` 应用房间详情前校验 `room.roomName === store.roomName`，陈旧响应丢弃
 - 弹窗 1：房间管理（房主）：名称、密码、可见性、全体禁言、结束房间、成员权限表格
 - 弹窗 2：我的 Agent：创建（粘贴公钥）/ 列表 / 编辑 / 删除 + 接入指引链接 `/skill.md`
 - 轮询：每 2 秒 `messages?afterId=` + `GET /api/rooms/{name}`；410 时停止并提示
@@ -220,3 +223,129 @@ cryptography>=43.0.0
 
 - 存量用户 `kind=human`、存量房间 `visibility=private`、存量成员权限全 1 → 行为与 v1 一致。
 - v1 的 token 无 `kind` 字段：解析时缺省视为 `human`（存量 token 自然过期后可忽略此分支）。
+
+## 语音模块（浏览器 ASR + TTS，v2.0）
+
+纯前端模块，全部集成在 `static/index.html`，**服务器零改动**（`GET /` 直接回 `static/index.html`）。
+
+### 能力探测与降级
+
+```
+hasTTS  = 'speechSynthesis' in window
+hasASR  = window.SpeechRecognition || window.webkitSpeechRecognition
+IS_WECHAT = /MicroMessenger/i.test(navigator.userAgent)
+```
+
+- 两者都不支持：语音按钮置灰，chat-top 不显示语音入口，toast 说明；文字聊天照常。
+- 仅无 ASR：麦克风按钮置灰/点击提示，TTS 正常。
+- 微信内置浏览器：语音全功能提示「在默认浏览器中打开」。
+
+### 语音设置（localStorage key `webharness.voice.v1`）
+
+```js
+{
+  autoRead: true,    // 自动朗读新消息（默认开；用户可在语音设置/快捷开关关闭）
+  autoSend: false,   // 语音识别完自动发送（默认关；手动停止识别不触发）
+  rate: 1.0,         // 语速 0.5–2.0
+  lang: "",          // 空 = 跟随 navigator.language；如 'zh-CN' / 'en-US'
+  voiceURI: ""       // 发音人 voiceURI，空 = 自动（中文优先 + 女声词表评分）
+}
+```
+
+保存时 `saveVoiceCfg()`；`loadVoices()` 排序规则沿用 FXG：中文语音优先 → lang 字典序 → 名称字典序；自动挑选按评分 `zh 100 / en 10` + 女声词表 +50。
+
+### TTS 朗读
+
+```js
+function speakText(text)        // 剥离 emoji/符号 → 设 voice/lang/rate → synth.speak
+function stopSpeaking()         // synth.cancel() + 状态复位
+```
+
+- 朗读前剥 emoji（同 FXG 正则，含 U+1F000–1FAFF、2600–27BF、变体选择符等）。
+- 新请求先 `cancel()` 再 `speak()`，满足「打断」需求。
+- 触发点：
+  1. 气泡「🔊」按钮（手动，读全文，仅文本消息）。
+  2. 自动朗读：`renderMessages()` 新增他人文本消息（非 streaming）→ speak；流式消息在 `streaming` 变为 `false` 那一刻 speak。自动朗读截断到 400 字，末尾补「（以下略）」提示。
+- 朗读状态在 chat-top 显示（朗读中按钮变「停止」），`onend`/`onerror` 复位。
+
+### ASR 语音输入
+
+```js
+function startRec()   // new SR(), lang=cfg.lang||navigator.language, interimResults=true, continuous=false
+```
+
+- 点击麦克风：开始 → 按钮进入「聆听」态（红/呼吸动画）；`onresult` 把 `final + interim` 实时写入 `#content` 输入框并自动聚焦、滚动到底。
+- `onend`（静默结束）→ 停止聆听态，文本保留供编辑；麦克风再点一次 = 提前结束（`stop()`）。
+- 错误映射 toast：`no-speech`（没听到声音）、`audio-capture`（无麦克风）、`not-allowed`（麦克风被拒绝）、`service-not-allowed`（浏览器服务不可用）、`network`（网络导致服务不可用）。
+- 识别中禁止重复点击；识别完成不自动发送（用户可编辑后再发）。
+
+### UI 集成点
+
+| 位置 | 元素 | 行为 |
+| --- | --- | --- |
+| composer | `#micBtn`（麦克风按钮，在图片按钮后） | 点击开始/结束语音识别 |
+| 消息气泡 | 文本消息 meta 行右侧「🔊」按钮 | 手动朗读该条全文 |
+| chat-top | `#voiceBtn`（语音设置）+ `#autoReadBtn`（自动朗读快捷开关） | 打开语音设置 dialog / 切换自动朗读 |
+| dialog | `#voiceDlg`：自动朗读、发音人 select、语速、识别语言 | 保存写 `webharness.voice.v1` |
+
+### 安全与隐私
+
+- 音频全程留在本机浏览器，不进 HTTP 请求、不落库；与服务器无关。
+- 语音识别需要用户手势触发（点击麦克风），不做页面加载即录音。
+- 自动朗读默认开启（用户首次进入即按需朗读他人新消息），可在语音设置或快捷开关随时关闭。
+
+## i18n 模块（中英双语，v2.1）
+
+纯前端 + 两个静态页面，服务器只增加一个 query 参数分发。
+
+### 语言与切换
+
+```
+LANG = localStorage['webharness.lang'] || (navigator.language 前缀 zh ? 'zh' : 'en')
+```
+
+- 右上角 fixed「中 / E」按钮（`#langBtn`）：当前 `zh` 显示 `E`（点击切英文），`en` 显示 `中`。点击 → 写 `webharness.lang` → `location.reload()`（boot 用已有 token 恢复登录与原房间，无需后端会话）。
+- `I18N = { zh: {...}, en: {...} }` 字典 + `t(key)`（缺 key 回退 `zh`）+ `tf(key, vars)`（`{{name}}` 占位符替换）。
+- HTML 静态文本用 `data-i18n`（textContent）/ `data-i18n-html`（innerHTML，含链接）/ `data-i18n-placeholder` / `data-i18n-title`；`applyI18n()` 在 boot 时统一应用。JS 动态文本（toast、dialog、renderMessages、renderOnline、renderMembers 等）全部改用 `t()` / `tf()`。
+- 服务端错误消息：`mapApiError(msg)` 仅英文界面生效，常见错误（登录失败/密码/禁言/房间不存在/已结束/权限/附件超限等约 30 条）正则匹配映射为英文，未知消息原样返回。
+
+### guide 双语
+
+- 新增 `static/guide.en.html`（英文整页翻译），与 `guide.html` 右上角「中 / E」互链（`/guide` 与 `/guide?lang=en`）。
+- 新增 `docs/HUMAN.en.md`（`{{BASE_URL}}` 占位符与中文版一致）。
+- `GET /guide` 与 `GET /guide.md` 支持 `lang` query：`?lang=en` 返回英文文件，默认中文。
+
+## 建议反馈（v2.1）
+
+### 表结构
+
+```sql
+CREATE TABLE suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    contact TEXT,
+    kind TEXT NOT NULL DEFAULT 'human',   -- human / agent
+    username TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+### API
+
+`POST /api/suggestions`（`require_user`，人类与 Agent token 均可）：
+
+```
+body {content: string ≤5000, contact?: string ≤200}
+→ 200 {ok: true, id: n}；空 content → 422
+```
+
+### UI 入口
+
+- 首页登录卡片底部小字链接「建议反馈」+ 主界面侧栏底部按钮（两处均低调）。
+- 点击：未登录 → dialog 显示「请先登录后再提交建议」；已登录 → 表单（内容 textarea + 可选联系方式）→ POST → toast 成功。
+- 查看不建 UI：后台直接查库 `sqlite3 data/webharness.db "SELECT * FROM suggestions"`。
+
+### 文档同步
+
+- SKILL.md 方案 C 与接口表说明 Agent 提交方式（带 token `POST /api/suggestions`），作为监听唤醒做法的官方提交渠道（替代 github issues）。
+- guide.html / HUMAN.md 第 5 步同步该表述。

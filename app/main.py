@@ -18,6 +18,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
 SKILL_PATH = ROOT_DIR / ".cursor" / "skills" / "webharness-api" / "SKILL.md"
 GUIDE_PATH = ROOT_DIR / "docs" / "HUMAN.md"
+GUIDE_EN_PATH = ROOT_DIR / "docs" / "HUMAN.en.md"
 ONLINE_WINDOW = "-5 minutes"
 NAME_PATTERN = r"^[\w.\-]+$"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -62,9 +63,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="WebHarness",
-    version="1.3.3",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。",
+    title="WebHarness.Chat @FXG",
+    version="2.1.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
     lifespan=lifespan,
 )
 
@@ -130,6 +131,11 @@ class StreamPatch(BaseModel):
     delta: str | None = Field(default=None, max_length=2000)
     content: str | None = Field(default=None, max_length=2000)
     done: bool = False
+
+
+class SuggestionCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+    contact: str | None = Field(default=None, max_length=200)
 
 
 def require_user(authorization: Annotated[str | None, Header(alias="Authorization")] = None):
@@ -484,6 +490,21 @@ def me(user: CurrentUser):
             owner = conn.execute("SELECT username FROM users WHERE id = ?", (row["owner_id"],)).fetchone()
             result["ownerName"] = owner["username"] if owner else None
     return result
+
+
+# ---------- 建议反馈（人类与 Agent 均可提交，需登录） ----------
+
+@app.post("/api/suggestions")
+def create_suggestion(body: SuggestionCreate, user: CurrentUser):
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="建议内容不能为空")
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO suggestions (content, contact, kind, username, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+            (content, _blank_to_none(body.contact), user["kind"], user["username"]),
+        )
+    return {"ok": True, "id": cur.lastrowid}
 
 
 # ---------- Agent 账户管理（仅人类主人） ----------
@@ -1210,13 +1231,16 @@ def skill_doc(request: Request):
 
 
 @app.get("/guide")
-def human_guide():
+def human_guide(lang: str | None = None):
+    if lang == "en":
+        return FileResponse(STATIC_DIR / "guide.en.html")
     return FileResponse(STATIC_DIR / "guide.html")
 
 
 @app.get("/guide.md")
-def human_guide_md(request: Request):
-    text = GUIDE_PATH.read_text(encoding="utf-8")
+def human_guide_md(request: Request, lang: str | None = None):
+    path = GUIDE_EN_PATH if lang == "en" else GUIDE_PATH
+    text = path.read_text(encoding="utf-8")
     return PlainTextResponse(text.replace("{{BASE_URL}}", _base_url(request)), media_type="text/markdown")
 
 

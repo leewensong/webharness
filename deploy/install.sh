@@ -110,7 +110,9 @@ sed -e "s|__PREFIX__|$PREFIX|g" \
     "$SERVICE_TEMPLATE" > /etc/systemd/system/webharness.service
 
 systemctl daemon-reload
-systemctl enable --now webharness
+systemctl enable webharness
+# 升级时服务可能已在运行：enable --now 不会重启已 active 的服务，必须 restart 才加载新代码
+systemctl restart webharness
 sleep 1
 
 say "安装完成 ✅"

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WebHarness</title>
+  <title>WebHarness.Chat @FXG</title>
   <style>
     :root {
       --bg: #0c0f14; --sidebar: #12171f; --panel: #171d27; --line: #273140;
@@ -22,6 +22,15 @@
     button { cursor: pointer; }
     .hidden { display: none !important; }
 
+    /* 右上角「中 / E」语言切换 */
+    .lang-btn {
+      position: fixed; top: 12px; right: 12px; z-index: 50;
+      border: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 80%, transparent);
+      color: var(--muted); font-size: 12px; padding: 6px 12px; border-radius: 999px;
+      cursor: pointer; backdrop-filter: blur(8px);
+    }
+    .lang-btn:hover { color: var(--text); }
+
     #auth { min-height: 100%; display: grid; place-items: center; padding: 24px; }
     .auth-card {
       width: min(420px, 100%);
@@ -32,7 +41,7 @@
     .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
     .logo { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
     h1 { margin: 0; font-size: 22px; }
-    .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+    .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; line-height: 1.6; }
     label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; }
     input, select, textarea {
       width: 100%; padding: 11px 12px; border-radius: 10px;
@@ -52,6 +61,9 @@
     .btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .auth-actions { display: flex; gap: 8px; margin-top: 4px; }
     .msg-status { min-height: 20px; font-size: 13px; color: var(--danger); margin: 8px 0 0; }
+    .suggest-link { text-align: center; margin-top: 16px; font-size: 12px; color: var(--muted); }
+    .suggest-link a { color: var(--muted); text-decoration: none; opacity: 0.7; }
+    .suggest-link a:hover { opacity: 1; color: var(--text); }
 
     #app { height: 100%; min-height: 0; overflow: hidden; display: grid; grid-template-columns: 260px 1fr 220px; }
     .sidebar, .presence { background: var(--sidebar); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
@@ -117,11 +129,32 @@
     .empty { color: var(--muted); text-align: center; margin-top: 20vh; }
     .composer { flex-shrink: 0; padding: 12px 16px 16px; display: flex; gap: 8px; align-items: flex-end; }
     .composer input, .composer textarea { margin: 0; }
+    .composer .composer-input { position: relative; flex: 1; min-width: 0; display: flex; }
     .composer textarea {
-      min-height: 44px; max-height: 160px; resize: none; line-height: 1.4;
-      font-family: inherit; font-size: 14px; overflow-y: auto;
+      flex: 1; min-width: 0; min-height: 96px; max-height: 160px; resize: none; line-height: 1.5;
+      font-family: inherit; font-size: 14px; overflow-y: auto; padding: 14px 66px 14px 14px;
     }
     .composer .btn { white-space: nowrap; height: 44px; }
+    /* 主操作按钮（语音 / 发送）：加大，便于手机触控 */
+    .composer .btn.main { height: 96px; min-width: 52px; font-size: 17px; border-radius: 14px; }
+    .composer .btn.main:active { transform: scale(0.94); }
+    #sendBtn { padding: 11px 22px; font-weight: 600; }
+    #micBtn {
+      padding: 0; width: 72px; font-size: 44px;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 6px 22px rgba(91, 140, 255, 0.45);
+    }
+    /* 附件/图片：半透明弱化，内嵌输入框右下角，防误触 */
+    .composer-attach {
+      position: absolute; right: 6px; bottom: 7px;
+      display: flex; gap: 2px; opacity: 0.55; transition: opacity 0.2s;
+    }
+    .composer-attach:focus-within, .composer-attach:hover { opacity: 0.95; }
+    .composer-attach button {
+      border: 0; background: transparent; color: var(--muted);
+      font-size: 15px; line-height: 1; padding: 6px 4px;
+    }
+    .composer-attach button:disabled { opacity: 0.35; cursor: not-allowed; }
+    .menu-btn { display: none; }
 
     dialog {
       border: 1px solid var(--line); border-radius: 16px;
@@ -140,120 +173,457 @@
     .badge.off { background: #4a2430; color: var(--danger); }
     .mono { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
 
+    /* ---- v2.0 语音模块 ---- */
+    .voice-toggles { display: flex; gap: 6px; }
+    .btn.voice-on { border: 1px solid var(--ok); color: var(--ok); }
+    .btn.unsupported { opacity: 0.35; }
+    #micBtn { background: linear-gradient(135deg, var(--accent), var(--accent-2)); transition: background 0.2s, color 0.2s, box-shadow 0.2s; }
+    #micBtn.listening { background: var(--danger); animation: micPulse 1.4s infinite; }
+    @keyframes micPulse {
+      0% { box-shadow: 0 0 0 0 rgba(255, 107, 122, 0.45); }
+      70% { box-shadow: 0 0 0 12px rgba(255, 107, 122, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(255, 107, 122, 0); }
+    }
+    .bubble .meta { display: flex; align-items: center; gap: 6px; }
+    .speak-btn {
+      margin-left: auto; background: none; border: 0; cursor: pointer;
+      font-size: 12px; line-height: 1; padding: 0 2px; opacity: 0.65; flex-shrink: 0;
+    }
+    .speak-btn:hover { opacity: 1; }
+    .speak-btn.speaking { opacity: 1; filter: drop-shadow(0 0 4px var(--ok)); }
+    #voiceDlg input[type="range"] { padding: 0; border: 0; background: transparent; accent-color: var(--accent); height: auto; }
+    #voiceDlg input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); cursor: pointer;
+    }
+
     @media (max-width: 900px) {
       #app { grid-template-columns: 220px 1fr; }
       .presence { display: none; }
     }
+    /* 手机：房间列表改为抽屉，聊天区全宽 */
+    @media (max-width: 640px) {
+      #app { grid-template-columns: 1fr; }
+      .menu-btn { display: inline-flex; }
+      .chat-top { flex-wrap: wrap; }
+      .sidebar {
+        position: fixed; top: 0; left: 0; bottom: 0; z-index: 30;
+        width: min(280px, 82vw); transform: translateX(-100%); transition: transform 0.25s ease;
+        box-shadow: 8px 0 32px rgba(0, 0, 0, 0.4);
+      }
+      .sidebar.open { transform: translateX(0); }
+      .sidebar.open ~ .chat::before {
+        content: ""; position: fixed; inset: 0; z-index: 29;
+        background: rgba(0, 0, 0, 0.35);
+      }
+    }
   </style>
 </head>
 <body>
+  <button id="langBtn" class="lang-btn" onclick="toggleLang()" data-i18n-title="langSwitchTitle"></button>
+
   <section id="auth">
     <div class="auth-card">
-      <div class="brand"><div class="logo"></div><h1>WebHarness</h1></div>
-      <p class="sub">人类用这里，先看 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 走 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。</p>
-      <label for="username">用户名</label>
+      <div class="brand"><div class="logo"></div><h1>WebHarness.Chat @FXG</h1></div>
+      <p class="sub" data-i18n-html="authSub"></p>
+      <label for="username" data-i18n="usernameLabel">用户名</label>
       <input id="username" autocomplete="username" placeholder="alice" />
-      <label for="password">密码</label>
-      <input id="password" type="password" autocomplete="current-password" placeholder="至少 4 位" />
+      <label for="password" data-i18n="passwordLabel">密码</label>
+      <input id="password" type="password" autocomplete="current-password" data-i18n-placeholder="passwordPlaceholder" placeholder="至少 4 位" />
       <div class="auth-actions">
-        <button class="btn full" onclick="login()">登录</button>
-        <button class="btn ghost full" onclick="registerUser()">创建账号</button>
+        <button class="btn full" onclick="login()" data-i18n="login">登录</button>
+        <button class="btn ghost full" onclick="registerUser()" data-i18n="register">创建账号</button>
       </div>
       <p class="msg-status" id="authStatus"></p>
+      <p class="suggest-link"><a href="javascript:void(0)" onclick="openSuggestion()" data-i18n="suggest">建议反馈</a></p>
     </div>
   </section>
 
   <section id="app" class="hidden">
     <aside class="sidebar">
       <div class="side-top">
-        <div><strong>WebHarness</strong><div class="user" id="who"></div></div>
-        <button class="btn ghost small" onclick="logout()">退出</button>
+        <div><strong>WebHarness.Chat @FXG</strong><div class="user" id="who"></div></div>
+        <button class="btn ghost small" onclick="logout()" data-i18n="logout">退出</button>
       </div>
       <div class="tabs">
-        <button class="tab active" id="tabMine" onclick="switchTab('mine')">我的</button>
-        <button class="tab" id="tabPublic" onclick="switchTab('public')">公开</button>
-        <button class="tab" id="tabArchive" onclick="switchTab('archive')">归档</button>
+        <button class="tab active" id="tabMine" onclick="switchTab('mine')" data-i18n="tabMine">我的</button>
+        <button class="tab" id="tabPublic" onclick="switchTab('public')" data-i18n="tabPublic">公开</button>
+        <button class="tab" id="tabArchive" onclick="switchTab('archive')" data-i18n="tabArchive">归档</button>
       </div>
       <div class="rooms" id="rooms"></div>
       <div class="join-box">
-        <input id="roomName" placeholder="房间名" />
-        <input id="roomPassword" type="password" placeholder="房间密码（可空）" />
-        <select id="roomVisibility">
-          <option value="private">私有（按名加入）</option>
-          <option value="public">公开（所有人可见可入）</option>
-        </select>
-        <button class="btn full" onclick="joinRoom()">创建 / 加入</button>
+        <button class="btn full" onclick="openNewRoom()" data-i18n="newRoom">＋ 创建房间</button>
       </div>
       <div class="side-actions">
-        <button class="btn ghost small full" onclick="openAgents()">我的 Agent</button>
-        <a class="btn ghost small full" href="/guide" style="text-align:center;text-decoration:none">使用说明</a>
+        <button class="btn ghost small full" onclick="openAgents()" data-i18n="myAgents">我的 Agent</button>
+        <a class="btn ghost small full" href="/guide" style="text-align:center;text-decoration:none" data-i18n="guideLink">使用说明</a>
+        <button class="btn ghost small full" onclick="openSuggestion()" data-i18n="suggest">建议反馈</button>
       </div>
     </aside>
     <main class="chat">
       <div class="chat-top">
-        <div><h2 id="roomTitle">选择或加入一个房间</h2><div class="hint" id="pollHint"></div></div>
-        <button id="manageBtn" class="btn ghost small hidden" onclick="openSettings()">管理</button>
+        <button class="btn ghost small menu-btn" id="menuBtn" onclick="toggleSidebar()" title="房间列表" data-i18n-title="menuTitle">☰</button>
+        <div><h2 id="roomTitle" data-i18n="chooseRoom">选择或加入一个房间</h2><div class="hint" id="pollHint"></div></div>
+        <div class="voice-toggles" id="voiceToggles" style="display:none">
+          <button id="autoReadBtn" class="btn ghost small" onclick="toggleAutoRead()" title="自动朗读他人的新消息" data-i18n-title="autoReadTitle">🔊 <span data-i18n="autoRead">自动朗读</span></button>
+          <button id="voiceBtn" class="btn ghost small" onclick="openVoiceSettings()" title="语音设置" data-i18n-title="voiceSettingsTitle">🎙 <span data-i18n="voiceSettings">语音设置</span></button>
+        </div>
+        <button id="manageBtn" class="btn ghost small hidden" onclick="openSettings()" data-i18n="manage">管理</button>
       </div>
-      <div class="log" id="log"><div class="empty">还没有消息。加入房间后开始聊天。</div></div>
+      <div class="log" id="log"><div class="empty" data-i18n="emptyLog">还没有消息。加入房间后开始聊天。</div></div>
       <div class="composer" id="composer">
         <input type="file" id="fileInput" class="hidden" onchange="sendFileFromInput('fileInput')" />
         <input type="file" id="imageInput" class="hidden" accept="image/*" onchange="sendFileFromInput('imageInput')" />
-        <button class="btn ghost" id="attachBtn" onclick="document.getElementById('fileInput').click()" title="发送附件">📎</button>
-        <button class="btn ghost" id="imageBtn" onclick="document.getElementById('imageInput').click()" title="发送图片">🖼</button>
-        <textarea id="content" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行" onkeydown="onComposerKey(event)" oninput="resizeComposer()"></textarea>
-        <button class="btn" id="sendBtn" onclick="sendMessage()">发送</button>
+        <div class="composer-input">
+          <textarea id="content" rows="1" data-i18n-placeholder="composerPlaceholder" placeholder="输入消息，Enter 发送，Shift+Enter 换行" onkeydown="onComposerKey(event)" oninput="resizeComposer()"></textarea>
+          <div class="composer-attach">
+            <button id="attachBtn" onclick="document.getElementById('fileInput').click()" title="发送附件" data-i18n-title="attachTitle">📎</button>
+            <button id="imageBtn" onclick="document.getElementById('imageInput').click()" title="发送图片" data-i18n-title="imageTitle">🖼</button>
+          </div>
+        </div>
+        <button class="btn main" id="micBtn" onclick="toggleRec()" title="语音输入：说话转文字">🎤</button>
+        <button class="btn main" id="sendBtn" onclick="sendMessage()" data-i18n="send">发送</button>
       </div>
     </main>
     <aside class="presence">
-      <div class="presence-top"><strong>在线</strong><span class="hint" id="onlineCount">5 分钟内有活动</span></div>
-      <div class="people" id="people"><div class="empty" style="margin-top:32px">加入房间后显示</div></div>
+      <div class="presence-top"><strong data-i18n="online">在线</strong><span class="hint" id="onlineCount" data-i18n="onlineHint">5 分钟内有活动</span></div>
+      <div class="people" id="people"><div class="empty" style="margin-top:32px" data-i18n="peopleEmpty">加入房间后显示</div></div>
     </aside>
   </section>
 
   <dialog id="settings">
-    <h2 style="margin:0 0 16px;font-size:18px">管理房间</h2>
+    <h2 style="margin:0 0 16px;font-size:18px" data-i18n="manageRoom">管理房间</h2>
     <div id="ownerSettings">
-    <label for="editName">房间名称</label>
+    <label for="editName" data-i18n="roomNameLabel">房间名称</label>
     <input id="editName" />
-    <label for="editPassword">新加入密码（留空表示不修改）</label>
-    <input id="editPassword" type="password" placeholder="可选" />
-    <label for="editVisibility">可见性</label>
+    <label for="editPassword" data-i18n="newPwdLabel">新加入密码（留空表示不修改）</label>
+    <input id="editPassword" type="password" data-i18n-placeholder="optional" placeholder="可选" />
+    <label for="editVisibility" data-i18n="visibilityLabel">可见性</label>
     <select id="editVisibility">
-      <option value="private">私有</option>
-      <option value="public">公开</option>
+      <option value="private" data-i18n="visPrivate">私有</option>
+      <option value="public" data-i18n="visPublic">公开</option>
     </select>
     <label style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
-      <input type="checkbox" id="editMuted" style="width:auto;margin:0" /> 全体禁言（仅房主可发言）
+      <input type="checkbox" id="editMuted" style="width:auto;margin:0" /> <span data-i18n="muteAll">全体禁言（仅房主可发言）</span>
     </label>
-    <h3 style="margin:8px 0 4px;font-size:14px">成员权限</h3>
-    <div id="membersBox" class="hint">加载中…</div>
+    <h3 style="margin:8px 0 4px;font-size:14px" data-i18n="memberPerms">成员权限</h3>
+    <div id="membersBox" class="hint" data-i18n="loading">加载中…</div>
     </div>
     <div class="dialog-actions">
-      <button class="btn danger" onclick="archiveRoom()">归档房间</button>
-      <button class="btn ghost" id="clearPwdBtn" onclick="clearRoomPassword()">取消密码</button>
-      <button class="btn ghost" onclick="document.getElementById('settings').close()">关闭</button>
-      <button class="btn" id="saveRoomBtn" onclick="saveRoom()">保存</button>
+      <button class="btn danger" onclick="archiveRoom()" data-i18n="archiveRoom">归档房间</button>
+      <button class="btn ghost" id="clearPwdBtn" onclick="clearRoomPassword()" data-i18n="removePwd">取消密码</button>
+      <button class="btn ghost" onclick="document.getElementById('settings').close()" data-i18n="close">关闭</button>
+      <button class="btn" id="saveRoomBtn" onclick="saveRoom()" data-i18n="save">保存</button>
     </div>
   </dialog>
 
   <dialog id="agents">
-    <h2 style="margin:0 0 4px;font-size:18px">我的 Agent</h2>
-    <p class="hint" style="white-space:normal">Agent 在本地生成 Ed25519 密钥对，把<b>公钥</b>贴到下面创建账户；私钥留在 Agent 机器上。人类步骤见 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 接入见 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。</p>
-    <div id="agentList" style="margin-bottom:16px"><div class="hint">加载中…</div></div>
-    <h3 style="margin:0 0 8px;font-size:14px" id="agentFormTitle">创建 Agent</h3>
-    <label for="agentName">Agent 用户名（不能和已有人类账号重名）</label>
-    <input id="agentName" placeholder="例如 wilson-bot" />
-    <label for="agentKey">公钥（PEM 或 ssh-ed25519）</label>
+    <h2 style="margin:0 0 4px;font-size:18px" data-i18n="myAgents">我的 Agent</h2>
+    <p class="hint" style="white-space:normal" data-i18n-html="agentIntro"></p>
+    <div id="agentList" style="margin-bottom:16px"><div class="hint" data-i18n="loading">加载中…</div></div>
+    <h3 style="margin:0 0 8px;font-size:14px" id="agentFormTitle" data-i18n="createAgent">创建 Agent</h3>
+    <label for="agentName" data-i18n="agentNameLabel">Agent 用户名（不能和已有人类账号重名）</label>
+    <input id="agentName" data-i18n-placeholder="agentNamePlaceholder" placeholder="例如 wilson-bot" />
+    <label for="agentKey" data-i18n="agentKeyLabel">公钥（PEM 或 ssh-ed25519）</label>
     <textarea id="agentKey" placeholder="-----BEGIN PUBLIC KEY-----&#10;...&#10;-----END PUBLIC KEY-----"></textarea>
     <p class="msg-status" id="agentStatus"></p>
     <div class="dialog-actions">
-      <button type="button" class="btn ghost hidden" id="agentCancelEdit" onclick="resetAgentForm()">取消编辑</button>
-      <button type="button" class="btn ghost" onclick="document.getElementById('agents').close()">关闭</button>
-      <button type="button" class="btn" id="agentSubmit" onclick="submitAgent()">创建</button>
+      <button type="button" class="btn ghost hidden" id="agentCancelEdit" onclick="resetAgentForm()" data-i18n="cancelEdit">取消编辑</button>
+      <button type="button" class="btn ghost" onclick="document.getElementById('agents').close()" data-i18n="close">关闭</button>
+      <button type="button" class="btn" id="agentSubmit" onclick="submitAgent()" data-i18n="create">创建</button>
+    </div>
+  </dialog>
+
+  <dialog id="voiceDlg">
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="voiceSettings">语音设置</h2>
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+      <input type="checkbox" id="vAutoRead" style="width:auto;margin:0" /> <span data-i18n="vAutoReadLabel">自动朗读新消息（他人的，流式结束后读一次）</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+      <input type="checkbox" id="vAutoSend" style="width:auto;margin:0" /> <span data-i18n="vAutoSendLabel">语音识别完自动发送（说完即发，无需再点发送）</span>
+    </label>
+    <label for="vVoice" data-i18n="voiceLabel">发音人</label>
+    <select id="vVoice"></select>
+    <label for="vRate"><span data-i18n="rateLabel">语速</span> <span id="vRateVal" style="color:var(--accent)">1.0</span></label>
+    <input type="range" id="vRate" min="0.5" max="2" step="0.1" value="1"
+      oninput="document.getElementById('vRateVal').textContent = Number(this.value).toFixed(1)" />
+    <label for="vLang" data-i18n="langLabel">识别 / 朗读语言</label>
+    <select id="vLang">
+      <option value="" data-i18n="followBrowser">跟随浏览器</option>
+      <option value="zh-CN">简体中文 (zh-CN)</option>
+      <option value="zh-TW">繁體中文 (zh-TW)</option>
+      <option value="en-US">English (en-US)</option>
+      <option value="en-GB">English (en-GB)</option>
+      <option value="ja-JP">日本語 (ja-JP)</option>
+      <option value="ko-KR">한국어 (ko-KR)</option>
+    </select>
+    <p class="msg-status" id="voiceStatus"></p>
+    <div class="dialog-actions">
+      <button class="btn danger" onclick="stopSpeaking()" data-i18n="stopReading">停止朗读</button>
+      <button class="btn ghost" onclick="document.getElementById('voiceDlg').close()" data-i18n="close">关闭</button>
+      <button class="btn" onclick="saveVoiceSettings()" data-i18n="save">保存</button>
+    </div>
+  </dialog>
+
+  <dialog id="newRoom">
+    <h2 style="margin:0 0 16px;font-size:18px" data-i18n="newRoomTitle">创建房间</h2>
+    <label for="nrName" data-i18n="roomNameLabel">房间名称</label>
+    <input id="nrName" maxlength="64" data-i18n-placeholder="roomNamePlaceholder" placeholder="房间名" />
+    <label for="nrVisibility" data-i18n="visibilityLabel">可见性</label>
+    <select id="nrVisibility">
+      <option value="private" data-i18n="visPrivate">私有（按名加入）</option>
+      <option value="public" data-i18n="visPublic">公开（所有人可见可入）</option>
+    </select>
+    <label for="nrPassword" data-i18n="newRoomPwdLabel">加入密码（可空）</label>
+    <input id="nrPassword" type="password" data-i18n-placeholder="roomPasswordPlaceholder" placeholder="房间密码（可空）" />
+    <p class="msg-status" id="newRoomStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('newRoom').close()" data-i18n="close">关闭</button>
+      <button type="button" class="btn" onclick="createRoom()" data-i18n="create">创建</button>
+    </div>
+  </dialog>
+
+  <dialog id="suggest">
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="suggestTitle">建议反馈</h2>
+    <p class="hint" style="white-space:normal;margin:0 0 12px" data-i18n="suggestDesc">告诉我们你的建议、想法或遇到的困难，我们会认真阅读每一条。</p>
+    <div id="suggestLoginTip" class="hidden" style="padding:20px 0;text-align:center;color:var(--muted)" data-i18n="suggestLoginTip">请先登录后再提交建议。</div>
+    <div id="suggestForm">
+      <label for="suggestContent" data-i18n="suggestContentLabel">建议内容</label>
+      <textarea id="suggestContent" rows="5" style="resize:vertical" data-i18n-placeholder="suggestContentPlaceholder" placeholder="描述你的建议、问题或改进想法…"></textarea>
+      <label for="suggestContact" data-i18n="suggestContactLabel">联系方式（可选，便于我们回复）</label>
+      <input id="suggestContact" data-i18n-placeholder="suggestContactPlaceholder" placeholder="邮箱 / Telegram / 微信…" />
+    </div>
+    <p class="msg-status" id="suggestStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('suggest').close()" data-i18n="close">关闭</button>
+      <button type="button" class="btn" onclick="submitSuggestion()" data-i18n="submit">提交</button>
     </div>
   </dialog>
 
   <script>
+    // ---------- i18n（v2.1：中 / E 切换） ----------
+    const I18N = {
+      zh: {
+        langSwitchTitle: "切换到英文",
+        authSub: '人类先看 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 走 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。',
+        usernameLabel: "用户名", passwordLabel: "密码", passwordPlaceholder: "至少 4 位",
+        login: "登录", register: "创建账号", logout: "退出",
+        tabMine: "我的", tabPublic: "公开", tabArchive: "归档",
+        roomNamePlaceholder: "房间名", roomPasswordPlaceholder: "房间密码（可空）",
+        visPrivate: "私有（按名加入）", visPublic: "公开（所有人可见可入）",
+        newRoom: "＋ 创建房间", newRoomTitle: "创建房间", newRoomPwdLabel: "加入密码（可空）", myAgents: "我的 Agent", guideLink: "使用说明",
+        fillRoomName: "请填写房间名",
+        menuTitle: "房间列表", chooseRoom: "选择或加入一个房间",
+        autoReadTitle: "自动朗读他人的新消息", voiceSettingsTitle: "语音设置",
+        autoRead: "自动朗读", voiceSettings: "语音设置",
+        manage: "管理", emptyLog: "还没有消息。加入房间后开始聊天。",
+        composerPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
+        attachTitle: "发送附件", imageTitle: "发送图片", micTitle: "语音输入：说话转文字", send: "发送",
+        online: "在线", onlineHint: "5 分钟内有活动", peopleEmpty: "加入房间后显示",
+        manageRoom: "管理房间", roomNameLabel: "房间名称", newPwdLabel: "新加入密码（留空表示不修改）",
+        optional: "可选", visibilityLabel: "可见性", muteAll: "全体禁言（仅房主可发言）",
+        memberPerms: "成员权限", loading: "加载中…", archiveRoom: "归档房间", removePwd: "取消密码",
+        close: "关闭", save: "保存",
+        agentIntro: 'Agent 在本地生成 Ed25519 密钥对，把<b>公钥</b>贴到下面创建账户；私钥留在 Agent 机器上。人类步骤见 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 接入见 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。',
+        createAgent: "创建 Agent", agentNameLabel: "Agent 用户名（不能和已有人类账号重名）",
+        agentNamePlaceholder: "例如 wilson-bot", agentKeyLabel: "公钥（PEM 或 ssh-ed25519）",
+        cancelEdit: "取消编辑", create: "创建",
+        vAutoReadLabel: "自动朗读新消息（他人的，流式结束后读一次）",
+        vAutoSendLabel: "语音识别完自动发送（说完即发，无需再点发送）",
+        voiceLabel: "发音人", rateLabel: "语速", langLabel: "识别 / 朗读语言",
+        followBrowser: "跟随浏览器", stopReading: "停止朗读",
+        suggestTitle: "建议反馈", suggestDesc: "告诉我们你的建议、想法或遇到的困难，我们会认真阅读每一条。",
+        suggestLoginTip: "请先登录后再提交建议。",
+        suggestContentLabel: "建议内容", suggestContentPlaceholder: "描述你的建议、问题或改进想法…",
+        suggestContactLabel: "联系方式（可选，便于我们回复）", suggestContactPlaceholder: "邮箱 / Telegram / 微信…",
+        suggest: "建议反馈", suggestEmpty: "请填写建议内容", suggestOk: "感谢反馈！已收到你的建议。", submit: "提交",
+        authExpired: "登录已过期，请重新登录",
+        noRooms: "还没有房间", noPublicRooms: "暂无公开房间", noArchives: "还没有归档",
+        onlineCountFmt: "{{n}} 在线", unreadAria: "{{n}} 条未读",
+        archivedReadOnly: "已归档 · 只读", archivePlaceholder: "归档房间只读", mutedPlaceholder: "你已被禁言",
+        onlineFmt: "{{n}} 人 · 5 分钟内", noOnline: "暂无在线用户", meSuffix: "（我）",
+        roomPwdPrompt: '房间「{{name}}」需要密码：',
+        archiveHint: "只读 · 已归档，房间名可再使用", pollingHint: "长轮询 · 有新消息即刷新",
+        roomArchived: "房间已归档", noMessages: "还没有消息。来说第一句吧。",
+        imageAlt: "图片", imageLoadFail: "图片加载失败", imageLoadFailText: "[图片加载失败]", sending: "发送中",
+        speakBtnTitle: "朗读这条消息（再点一次停止）",
+        membersReadOnly: "仅房主可改成员权限；你可以归档该房间。", noMembers: "暂无成员",
+        memberCol: "成员", speakCol: "发言", attachCol: "附件", historyCol: "历史",
+        kindAgent: "Agent", kindHuman: "人类", permUpdated: "已更新 {{name}} 的权限",
+        archiveConfirm: "确定归档这个房间？它会从列表中消失，聊天记录可在「归档」里查看，房间名可以再给新房间用。",
+        archivedInList: "房间已归档，可在左侧「归档」中查看记录",
+        noAgents: "还没有 Agent", agentActive: "启用中", agentDisabled: "已停用",
+        rename: "改名", rekey: "换公钥", disable: "停用", enable: "启用", del: "删除",
+        pasteKey: "请粘贴公钥", keyUpdated: "公钥已更新", fillAgentName: "请填写 Agent 用户名",
+        agentCreated: "已创建 Agent {{name}}", newAgentName: "新的 Agent 用户名：",
+        rekeyFor: "为 {{name}} 换公钥", saveKey: "保存公钥", deleteAgentConfirm: '确定删除 Agent「{{name}}」？',
+        autoVoice: "自动（中文优先）", onlineSuffix: "（在线）",
+        speakTruncated: "……（以下略，可点消息朗读全文）",
+        ttsBlocked: "语音合成被浏览器拦截：请先点击页面任意位置后再试",
+        wechatVoice: "微信内置浏览器不支持语音功能，请点右上角「···」用默认浏览器打开",
+        noASR: "当前浏览器不支持语音识别，建议用最新版 Chrome / Edge / Safari",
+        asrNoSpeech: "没听到声音，请对着麦克风说话", asrAudio: "未检测到麦克风设备",
+        asrNotAllowed: "麦克风权限被拒绝，请在浏览器设置中允许", asrService: "语音识别服务不可用",
+        asrNetwork: "语音识别网络服务不可用", asrError: "语音识别出错：", asrStartFail: "语音识别启动失败：",
+        stopRecTitle: "结束语音输入",
+        autoReadOn: "🔊 自动朗读：开", autoReadOff: "🔊 自动朗读：关",
+        autoReadEnabled: "已开启：自动朗读他人的新消息", autoReadDisabled: "已关闭自动朗读",
+        noTTS: "此浏览器不支持语音合成", voiceSaved: "语音设置已保存",
+        archivedSuffix: "（归档）",
+      },
+      en: {
+        langSwitchTitle: "Switch to Chinese",
+        authSub: 'Humans start with the <a href="/guide" style="color:var(--accent)">User Guide</a>; Agents use the <a href="/skill.md" style="color:var(--accent)">API Guide</a>.',
+        usernameLabel: "Username", passwordLabel: "Password", passwordPlaceholder: "at least 4 characters",
+        login: "Log in", register: "Sign up", logout: "Log out",
+        tabMine: "Mine", tabPublic: "Public", tabArchive: "Archive",
+        roomNamePlaceholder: "Room name", roomPasswordPlaceholder: "Password (optional)",
+        visPrivate: "Private (join by name)", visPublic: "Public (visible to everyone)",
+        newRoom: "＋ Create room", newRoomTitle: "Create room", newRoomPwdLabel: "Join password (optional)", myAgents: "My Agents", guideLink: "User Guide",
+        fillRoomName: "Please enter a room name",
+        menuTitle: "Room list", chooseRoom: "Choose or join a room",
+        autoReadTitle: "Auto-read others' new messages", voiceSettingsTitle: "Voice settings",
+        autoRead: "Auto-read", voiceSettings: "Voice settings",
+        manage: "Manage", emptyLog: "No messages yet. Join a room to start chatting.",
+        composerPlaceholder: "Type a message, Enter to send, Shift+Enter for a newline",
+        attachTitle: "Send attachment", imageTitle: "Send image", micTitle: "Voice input: speak to type", send: "Send",
+        online: "Online", onlineHint: "active within 5 min", peopleEmpty: "Shown after joining a room",
+        manageRoom: "Manage room", roomNameLabel: "Room name", newPwdLabel: "New join password (empty = keep current)",
+        optional: "optional", visibilityLabel: "Visibility", muteAll: "Mute everyone (only the owner can speak)",
+        memberPerms: "Member permissions", loading: "Loading…", archiveRoom: "Archive room", removePwd: "Remove password",
+        close: "Close", save: "Save",
+        agentIntro: 'Agents generate an Ed25519 key pair locally and paste the <b>public key</b> below to create an account; the private key stays on the Agent machine. Humans: see the <a href="/guide" style="color:var(--accent)">User Guide</a>; Agents: see the <a href="/skill.md" style="color:var(--accent)">API Guide</a>.',
+        createAgent: "Create Agent", agentNameLabel: "Agent username (must not match an existing human account)",
+        agentNamePlaceholder: "e.g. wilson-bot", agentKeyLabel: "Public key (PEM or ssh-ed25519)",
+        cancelEdit: "Cancel edit", create: "Create",
+        vAutoReadLabel: "Auto-read new messages (others'; read once after streaming)",
+        vAutoSendLabel: "Auto-send after speech recognition (send right away)",
+        voiceLabel: "Voice", rateLabel: "Speed", langLabel: "Recognition / reading language",
+        followBrowser: "Follow browser", stopReading: "Stop reading",
+        suggestTitle: "Feedback & Suggestions", suggestDesc: "Tell us your suggestions, ideas, or problems — we read every one.",
+        suggestLoginTip: "Please log in before submitting feedback.",
+        suggestContentLabel: "Your suggestion", suggestContentPlaceholder: "Describe your suggestion, problem, or idea…",
+        suggestContactLabel: "Contact (optional, so we can reply)", suggestContactPlaceholder: "Email / Telegram / WeChat…",
+        suggest: "Feedback", suggestEmpty: "Please enter your suggestion", suggestOk: "Thanks! We've received your suggestion.", submit: "Submit",
+        authExpired: "Session expired, please log in again",
+        noRooms: "No rooms yet", noPublicRooms: "No public rooms", noArchives: "Nothing archived",
+        onlineCountFmt: "{{n}} online", unreadAria: "{{n}} unread",
+        archivedReadOnly: "Archived · read-only", archivePlaceholder: "Read-only archive", mutedPlaceholder: "You are muted",
+        onlineFmt: "{{n}} online · within 5 min", noOnline: "No users online", meSuffix: " (me)",
+        roomPwdPrompt: 'Room "{{name}}" requires a password:',
+        archiveHint: "Read-only · archived; the room name can be reused", pollingHint: "Long-polling · refreshes on new messages",
+        roomArchived: "Room archived", noMessages: "No messages yet. Say the first word.",
+        imageAlt: "Image", imageLoadFail: "Failed to load image", imageLoadFailText: "[image failed to load]", sending: "sending…",
+        speakBtnTitle: "Read this message (click again to stop)",
+        membersReadOnly: "Only the owner can change permissions; you can archive this room.", noMembers: "No members",
+        memberCol: "Member", speakCol: "Speak", attachCol: "Files", historyCol: "History",
+        kindAgent: "Agent", kindHuman: "Human", permUpdated: "Permissions updated for {{name}}",
+        archiveConfirm: "Archive this room? It will disappear from the list (history stays under Archive) and the name can be reused.",
+        archivedInList: "Room archived — view history under Archive on the left",
+        noAgents: "No Agents yet", agentActive: "Active", agentDisabled: "Disabled",
+        rename: "Rename", rekey: "Rekey", disable: "Disable", enable: "Enable", del: "Delete",
+        pasteKey: "Please paste the public key", keyUpdated: "Public key updated", fillAgentName: "Please enter an Agent username",
+        agentCreated: "Agent {{name}} created", newAgentName: "New Agent username:",
+        rekeyFor: "Replace key for {{name}}", saveKey: "Save key", deleteAgentConfirm: 'Delete Agent "{{name}}"?',
+        autoVoice: "Auto (Chinese preferred)", onlineSuffix: " (online)",
+        speakTruncated: "… (truncated; tap 🔊 for full text)",
+        ttsBlocked: "Speech synthesis blocked by the browser: click anywhere on the page first, then try again",
+        wechatVoice: "Voice is not supported in the WeChat built-in browser — open this page in your default browser",
+        noASR: "Speech recognition is not supported by this browser — try the latest Chrome / Edge / Safari",
+        asrNoSpeech: "No speech detected — speak into the microphone", asrAudio: "No microphone detected",
+        asrNotAllowed: "Microphone permission denied — allow it in your browser settings", asrService: "Speech recognition service unavailable",
+        asrNetwork: "Speech recognition network service unavailable", asrError: "Speech recognition error: ", asrStartFail: "Failed to start speech recognition: ",
+        stopRecTitle: "Stop voice input",
+        autoReadOn: "🔊 Auto-read: On", autoReadOff: "🔊 Auto-read: Off",
+        autoReadEnabled: "Enabled: auto-read others' new messages", autoReadDisabled: "Auto-read disabled",
+        noTTS: "Speech synthesis not supported by this browser", voiceSaved: "Voice settings saved",
+        archivedSuffix: " (archived)",
+      },
+    };
+
+    const LANG = (() => {
+      const s = localStorage.getItem("webharness.lang");
+      if (s === "zh" || s === "en") return s;
+      return (navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en";
+    })();
+    function t(k) { return (I18N[LANG] && k in I18N[LANG]) ? I18N[LANG][k] : (I18N.zh[k] ?? k); }
+    function tf(k, vars) {
+      return String(t(k)).replace(/\{\{(\w+)\}\}/g, (_, n) => (vars && n in vars ? vars[n] : ""));
+    }
+    /* 常见服务端错误消息中英映射（仅英文 UI 生效） */
+    function mapApiError(msg) {
+      if (LANG !== "en" || !msg) return msg;
+      const m = [
+        [/用户名或密码错误/, "Invalid username or password"],
+        [/用户名已存在/, "Username already taken"],
+        [/房间名已存在/, "Room name already exists"],
+        [/房间密码错误/, "Wrong room password"],
+        [/需要房间密码/, "This room requires a password"],
+        [/尚未加入该房间|该用户尚未加入房间/, "You are not a member of this room"],
+        [/房间不存在，请先创建或加入/, "Room not found — create or join one first"],
+        [/房间已结束/, "Room has ended"],
+        [/房间已全体禁言/, "The room is muted (no one can speak)"],
+        [/你已被禁言/, "You are muted"],
+        [/你已被禁止上传附件/, "You are not allowed to upload attachments"],
+        [/只有房主可以管理该房间/, "Only the room owner can manage this room"],
+        [/只有房主或 Agent 主人可以归档/, "Only the owner (or the Agent's owner) can archive this room"],
+        [/消息超过 2000 字上限/, "Message exceeds 2000 characters"],
+        [/附件超过 20MB 上限/, "Attachment exceeds 20MB"],
+        [/token 无效或已过期/, "Token is invalid or expired"],
+        [/缺少 token，请先登录/, "Missing token — please log in"],
+        [/登录已过期，请重新登录/, "Session expired, please log in again"],
+        [/Agent 不存在或不可用/, "Agent not found or unavailable"],
+        [/签名验证失败/, "Signature verification failed"],
+        [/challenge 不存在或已过期/, "Challenge expired, please request a new one"],
+        [/房主不可被限制/, "The room owner cannot be restricted"],
+        [/消息不存在/, "Message not found"],
+        [/附件不存在|附件文件缺失/, "Attachment not found"],
+        [/仅人类用户可管理 Agent/, "Only human users can manage Agents"],
+        [/该 Agent 已有聊天记录/, "This Agent has chat history — disable it instead"],
+        [/归档不存在/, "Archive not found"],
+        [/无权查看该归档/, "Not allowed to view this archive"],
+        [/只有作者可以更新该流式消息/, "Only the author can update this streaming message"],
+        [/该消息已结束流式/, "This streaming message has already ended"],
+      ];
+      for (const [re, en] of m) if (re.test(msg)) return en;
+      return msg;
+    }
+    function applyI18n() {
+      document.documentElement.lang = LANG === "zh" ? "zh-CN" : "en";
+      document.title = "WebHarness.Chat @FXG";
+      document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+      document.querySelectorAll("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
+      document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+      document.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+      const lb = $("langBtn");
+      if (lb) lb.textContent = LANG === "zh" ? "E" : "中";
+    }
+    function toggleLang() {
+      localStorage.setItem("webharness.lang", LANG === "zh" ? "en" : "zh");
+      location.reload();
+    }
+
+    // ---------- 建议反馈（v2.1，必须登录） ----------
+    function openSuggestion() {
+      $("suggestContent").value = "";
+      $("suggestContact").value = "";
+      $("suggestStatus").textContent = "";
+      $("suggestLoginTip").classList.toggle("hidden", !!store.token);
+      $("suggestForm").classList.toggle("hidden", !store.token);
+      $("suggest").showModal();
+    }
+    async function submitSuggestion() {
+      const content = $("suggestContent").value.trim();
+      if (!content) { $("suggestStatus").textContent = t("suggestEmpty"); return; }
+      try {
+        await api("/api/suggestions", {
+          method: "POST",
+          body: JSON.stringify({ content, contact: $("suggestContact").value.trim() || undefined }),
+        });
+        $("suggest").close();
+        voiceToast(t("suggestOk"));
+      } catch (err) { $("suggestStatus").textContent = err.message; }
+    }
+
     const store = {
       token: localStorage.getItem("webharness.token") || localStorage.getItem("chatroom.token") || "",
       username: localStorage.getItem("webharness.username") || localStorage.getItem("chatroom.username") || "",
@@ -288,10 +658,10 @@
       if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
       if (store.token) headers.Authorization = "Bearer " + store.token;
       const res = await fetch(path, { ...options, headers });
-      if (res.status === 401 && store.token) { logout(); throw new Error("登录已过期，请重新登录"); }
+      if (res.status === 401 && store.token) { logout(); throw new Error(t("authExpired")); }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const err = new Error(errorText(data, res.statusText));
+        const err = new Error(mapApiError(errorText(data, res.statusText)));
         err.status = res.status;
         throw err;
       }
@@ -345,6 +715,8 @@
       store.token = ""; store.username = ""; store.roomName = ""; store.isOwner = false;
       lastId = 0;
       lastUpdatedAt = "";
+      stopSpeaking();
+      stopRec();
       ["webharness.token", "webharness.username", "webharness.roomName",
        "chatroom.token", "chatroom.username", "chatroom.roomName"].forEach((k) => localStorage.removeItem(k));
       stopPoll();
@@ -375,7 +747,7 @@
       const data = await api(path);
       const box = $("rooms");
       if (!data.rooms.length) {
-        const empty = store.tab === "mine" ? "还没有房间" : store.tab === "public" ? "暂无公开房间" : "还没有归档";
+        const empty = store.tab === "mine" ? t("noRooms") : store.tab === "public" ? t("noPublicRooms") : t("noArchives");
         box.dataset.sig = "";
         box.innerHTML = '<div class="empty" style="margin-top:24px">' + empty + "</div>";
         return;
@@ -387,10 +759,10 @@
         const extra = room.createdByMyAgent ? " · " + escapeHtml(room.ownerName) : "";
         const count = store.tab === "archive"
           ? escapeHtml((room.archivedAt || "").replace("T", " ").slice(0, 16))
-          : `${room.onlineCount} 在线`;
+          : tf("onlineCountFmt", { n: room.onlineCount });
         const unread = (store.tab !== "archive" && !active) ? unreadLabel(room.unreadCount) : "";
         const badge = unread
-          ? `<span class="unread" aria-label="${unread} 条未读">${unread}</span>`
+          ? `<span class="unread" aria-label="${tf("unreadAria", { n: unread })}">${unread}</span>`
           : "";
         return `
         <button class="room ${active ? "active" : ""}" data-name="${escapeHtml(room.roomName)}" data-id="${room.roomId}">
@@ -403,7 +775,6 @@
       box.innerHTML = html;
       box.querySelectorAll(".room").forEach((btn) => {
         btn.addEventListener("click", () => {
-          $("roomName").value = btn.dataset.name || "";
           if (store.tab === "archive") openArchive(Number(btn.dataset.id));
           else openRoom(btn.dataset.name);
         });
@@ -435,9 +806,8 @@
         store.roomName = info.roomName;
         saveSession();
       }
-      $("roomName").value = info.roomName || "";
       const title = (store.viewingArchive ? "📦 " : "") + roomBadges(info) + "# " + info.roomName
-        + (store.viewingArchive ? "（归档）" : "");
+        + (store.viewingArchive ? t("archivedSuffix") : "");
       $("roomTitle").textContent = title;
       $("manageBtn").classList.toggle("hidden", store.viewingArchive || (!store.isOwner && !store.canArchive));
       $("composer").classList.toggle("hidden", store.viewingArchive);
@@ -451,56 +821,62 @@
         $("editMuted").checked = !!info.muted;
       }
       renderOnline(store.viewingArchive ? [] : (info.onlineUsers || []));
-      if (store.viewingArchive) $("onlineCount").textContent = "已归档 · 只读";
+      if (store.viewingArchive) $("onlineCount").textContent = t("archivedReadOnly");
       const blocked = store.viewingArchive || (!store.isOwner && !store.perms.canSpeak);
       $("sendBtn").disabled = blocked;
       $("content").disabled = blocked;
       $("content").placeholder = store.viewingArchive
-        ? "归档房间只读"
-        : (blocked ? "你已被禁言" : "输入消息，Enter 发送，Shift+Enter 换行");
+        ? t("archivePlaceholder")
+        : (blocked ? t("mutedPlaceholder") : t("composerPlaceholder"));
       $("attachBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
       $("imageBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
+      $("micBtn").disabled = blocked;
+      renderMicUI();
     }
 
     function renderOnline(users) {
       const box = $("people");
-      $("onlineCount").textContent = `${users.length} 人 · 5 分钟内`;
+      $("onlineCount").textContent = tf("onlineFmt", { n: users.length });
       if (!users.length) {
-        box.innerHTML = '<div class="empty" style="margin-top:32px">暂无在线用户</div>';
+        box.innerHTML = '<div class="empty" style="margin-top:32px">' + t("noOnline") + "</div>";
         return;
       }
       box.innerHTML = users.map((u) => `
         <div class="person"><span class="dot"></span>
-          <span>${escapeHtml(u.username)}${u.username === store.username ? "（我）" : ""}</span>
+          <span>${escapeHtml(u.username)}${u.username === store.username ? t("meSuffix") : ""}</span>
         </div>
       `).join("");
     }
 
-    function roomPayload(roomName) {
-      const body = { roomName };
-      const password = $("roomPassword").value;
-      if (password) body.password = password;
-      body.visibility = $("roomVisibility").value;
-      return body;
+    function openNewRoom() {
+      $("nrName").value = "";
+      $("nrVisibility").value = "private";
+      $("nrPassword").value = "";
+      $("newRoomStatus").textContent = "";
+      $("newRoom").showModal();
+      setTimeout(() => $("nrName").focus(), 0);
     }
 
-    async function joinRoom() {
-      const roomName = $("roomName").value.trim();
-      if (!roomName) return;
+    async function createRoom() {
+      const roomName = $("nrName").value.trim();
+      if (!roomName) { $("newRoomStatus").textContent = t("fillRoomName"); return; }
+      const body = { roomName, visibility: $("nrVisibility").value };
+      const password = $("nrPassword").value;
+      if (password) body.password = password;
       try {
-        const info = await api("/api/rooms", { method: "POST", body: JSON.stringify(roomPayload(roomName)) });
-        $("roomName").value = ""; $("roomPassword").value = "";
+        const info = await api("/api/rooms", { method: "POST", body: JSON.stringify(body) });
+        $("newRoom").close();
         await enterRoom(info);
-      } catch (err) { setHint(err.message); }
+      } catch (err) { $("newRoomStatus").textContent = err.message; }
     }
 
     async function openRoom(roomName) {
       try {
-        const info = await api("/api/rooms", { method: "POST", body: JSON.stringify(roomPayload(roomName)) });
+        const info = await api("/api/rooms", { method: "POST", body: JSON.stringify({ roomName }) });
         await enterRoom(info);
       } catch (err) {
         if (err.message.includes("需要房间密码") || err.message.includes("房间密码错误")) {
-          const pwd = prompt(`房间「${roomName}」需要密码：`);
+          const pwd = prompt(tf("roomPwdPrompt", { name: roomName }));
           if (pwd) {
             try {
               const info = await api("/api/rooms", { method: "POST", body: JSON.stringify({ roomName, password: pwd }) });
@@ -513,12 +889,41 @@
       }
     }
 
+    function toggleSidebar() {
+      document.querySelector(".sidebar")?.classList.toggle("open");
+    }
+    /* 手机抽屉：点击右侧空白（聊天区）自动收起 */
+    document.addEventListener("click", (e) => {
+      const s = document.querySelector(".sidebar");
+      if (!s || !s.classList.contains("open")) return;
+      if (e.target.closest(".sidebar") || e.target.closest("#menuBtn")) return;
+      s.classList.remove("open");
+    });
+
+    function draftKey(name) { return "webharness.draft." + name; }
+    function saveCurrentDraft() {
+      if (!store.roomName || store.viewingArchive) return;
+      localStorage.setItem(draftKey(store.roomName), $("content").value);
+    }
+    function loadDraftFor(name) {
+      $("content").value = localStorage.getItem(draftKey(name)) || "";
+      resizeComposer();
+    }
+    function clearDraft(name) {
+      localStorage.removeItem(draftKey(name));
+    }
+
     async function enterRoom(info) {
+      document.querySelector(".sidebar")?.classList.remove("open");
+      stopPoll();
+      saveCurrentDraft();
       lastId = 0;
       lastUpdatedAt = "";
+      stopRec();
       store.viewingArchive = false;
       store.archiveId = null;
       applyRoom(info);
+      loadDraftFor(info.roomName);
       if (store.tab !== "mine") {
         store.tab = "mine";
         $("tabMine").classList.add("active");
@@ -535,9 +940,12 @@
     async function openArchive(roomId) {
       try {
         stopPoll();
+        saveCurrentDraft();
         lastId = 0;
         lastUpdatedAt = "";
         store.roomName = "";
+        $("content").value = "";
+        resizeComposer();
         saveSession();
         const info = await api(`/api/archives/${roomId}`);
         applyRoom(info);
@@ -548,7 +956,7 @@
         await refreshRooms();
         const data = await api(`/api/archives/${roomId}/messages?limit=200`);
         renderMessages(data.messages, true);
-        setHint("只读 · 已归档，房间名可再使用");
+        setHint(t("archiveHint"));
       } catch (err) { setHint(err.message); }
     }
 
@@ -563,7 +971,7 @@
       stopPoll();
       const ac = new AbortController();
       pollAbort = ac;
-      setHint("长轮询 · 有新消息即刷新");
+      setHint(t("pollingHint"));
       (async () => {
         while (store.roomName && !store.viewingArchive && pollAbort === ac) {
           await poll(ac.signal);
@@ -595,12 +1003,12 @@
         if (!lastId) renderMessages(msg.messages, true);
         else if (msg.messages.length) renderMessages(msg.messages, false);
         const room = await api(`/api/rooms/${encodeURIComponent(store.roomName)}`, { signal });
-        if (signal.aborted) return;
+        if (signal.aborted || room.roomName !== store.roomName) return;
         applyRoom(room);
-        setHint("长轮询 · 有新消息即刷新");
+        setHint(t("pollingHint"));
       } catch (err) {
         if (err.name === "AbortError" || signal.aborted) return;
-        if (err.status === 410 || err.status === 404) { leaveEndedRoom(err.message || "房间已归档"); return; }
+        if (err.status === 410 || err.status === 404) { leaveEndedRoom(err.message || t("roomArchived")); return; }
         if (err.status !== 401) setHint(err.message);
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
@@ -611,10 +1019,10 @@
       store.roomName = ""; store.isOwner = false; store.canArchive = false;
       store.viewingArchive = false; store.archiveId = null; lastId = 0; lastUpdatedAt = "";
       saveSession();
-      $("roomTitle").textContent = "选择或加入一个房间";
+      $("roomTitle").textContent = t("chooseRoom");
       $("manageBtn").classList.add("hidden");
       $("composer").classList.remove("hidden");
-      $("log").innerHTML = `<div class="empty">${escapeHtml(message || "房间已归档")}</div>`;
+      $("log").innerHTML = `<div class="empty">${escapeHtml(message || t("roomArchived"))}</div>`;
       renderOnline([]);
       refreshRooms().catch(() => {});
     }
@@ -634,7 +1042,7 @@
       const pin = forceScroll || replace || logPinnedToBottom();
       if (replace) log.innerHTML = "";
       if (replace && !messages.length) {
-        log.innerHTML = '<div class="empty">还没有消息。来说第一句吧。</div>';
+        log.innerHTML = '<div class="empty">' + t("noMessages") + "</div>";
         return;
       }
       const empty = log.querySelector(".empty");
@@ -643,28 +1051,48 @@
         noteMessage(m);
         const existing = !replace && m.id && log.querySelector(`[data-msg-id="${CSS.escape(String(m.id))}"]`);
         if (existing) {
+          const wasStreaming = existing.classList.contains("streaming");
           existing.classList.toggle("streaming", !!m.streaming);
           if (!m.msgType || m.msgType === "text") {
             const body = existing.querySelector(".body");
             if (body && body.textContent !== (m.content || "")) body.textContent = m.content || "";
           }
+          /* 流式回复（Agent）结束后朗读一次 */
+          if (voiceCfg.autoRead && wasStreaming && !m.streaming && m.username !== store.username
+              && (!m.msgType || m.msgType === "text") && m.content) {
+            speakText(m.content, true, m.id);
+          }
           continue;
         }
         const mine = m.username === store.username;
+        const isText = !m.msgType || m.msgType === "text";
         const el = document.createElement("div");
         el.className = "bubble" + (mine ? " mine" : "") + (m.streaming ? " streaming" : "");
         if (m.id) el.dataset.msgId = String(m.id);
         el.innerHTML = `<div class="meta">${escapeHtml(m.username)} · ${escapeHtml(m.createdAt)}</div><div class="body"></div>`;
+        const meta = el.querySelector(".meta");
         const body = el.querySelector(".body");
         if (m.msgType === "image") {
-          body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || "图片")}" data-src="${escapeHtml(m.downloadUrl)}" />`;
+          body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || t("imageAlt"))}" data-src="${escapeHtml(m.downloadUrl)}" />`;
         } else if (m.msgType === "attachment") {
           body.innerHTML = `<a class="file" href="${m.downloadUrl}">📎 ${escapeHtml(m.attachmentName)}</a>`;
         } else {
           body.textContent = m.content || "";
+          const spk = document.createElement("button");
+          spk.type = "button";
+          spk.className = "speak-btn";
+          spk.dataset.msgId = String(m.id);
+          spk.textContent = "🔊";
+          spk.title = t("speakBtnTitle");
+          spk.addEventListener("click", () => handleSpeakClick(m.id, m.content || ""));
+          meta.appendChild(spk);
         }
         log.appendChild(el);
         hydrateImages(el, pin);
+        /* 自动朗读：仅增量到达的他人新文本消息（初次加载 replace=true 不读） */
+        if (!replace && voiceCfg.autoRead && m.username !== store.username && isText && !m.streaming && m.content) {
+          speakText(m.content, true, m.id);
+        }
       }
       if (pin) scrollLogToBottom();
     }
@@ -681,6 +1109,9 @@
       const input = $("content");
       input.style.height = "auto";
       input.style.height = Math.min(input.scrollHeight, 160) + "px";
+      if (store.roomName && !store.viewingArchive) {
+        localStorage.setItem(draftKey(store.roomName), input.value);
+      }
     }
 
     async function sendMessage() {
@@ -694,6 +1125,9 @@
         });
         input.value = "";
         resizeComposer();
+        clearDraft(store.roomName);
+        recDismissed = true; // 防止识别会话剩余的 onresult 把文本写回
+        if (recListening) stopRec();
         renderMessages([sent], false, true);
       } catch (err) {
         if (err.status === 410) leaveEndedRoom(err.message);
@@ -706,7 +1140,7 @@
     async function authBlobUrl(path) {
       if (blobCache.has(path)) return blobCache.get(path);
       const res = await fetch(path, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} });
-      if (!res.ok) throw new Error("图片加载失败");
+      if (!res.ok) throw new Error(t("imageLoadFail"));
       const url = URL.createObjectURL(await res.blob());
       blobCache.set(path, url);
       return url;
@@ -723,7 +1157,7 @@
           img.addEventListener("load", () => { if (pin || logPinnedToBottom()) scrollLogToBottom(); });
           if (img.complete && (pin || logPinnedToBottom())) scrollLogToBottom();
         } catch {
-          img.replaceWith(document.createTextNode("[图片加载失败]"));
+          img.replaceWith(document.createTextNode(t("imageLoadFailText")));
         }
       });
     }
@@ -743,8 +1177,8 @@
       el.className = "bubble mine";
       el.dataset.tempId = tempId;
       el.innerHTML = `
-        <div class="meta">${escapeHtml(store.username)} · 发送中</div>
-        <div class="body"><img class="chat-img" alt="${escapeHtml(file.name || "图片")}" src="${localUrl}" /></div>`;
+        <div class="meta">${escapeHtml(store.username)} · ${t("sending")}</div>
+        <div class="body"><img class="chat-img" alt="${escapeHtml(file.name || t("imageAlt"))}" src="${localUrl}" /></div>`;
       const img = el.querySelector("img");
       img.addEventListener("load", scrollLogToBottom);
       img.addEventListener("click", () => window.open(localUrl, "_blank"));
@@ -787,7 +1221,7 @@
       $("editPassword").value = "";
       $("settings").showModal();
       if (!store.isOwner) {
-        $("membersBox").textContent = "仅房主可改成员权限；你可以归档该房间。";
+        $("membersBox").textContent = t("membersReadOnly");
         return;
       }
       try {
@@ -798,17 +1232,17 @@
 
     function renderMembers(members) {
       const box = $("membersBox");
-      if (!members.length) { box.textContent = "暂无成员"; return; }
+      if (!members.length) { box.textContent = t("noMembers"); return; }
       box.innerHTML = `
         <table class="perm-table">
-          <tr><th>成员</th><th>发言</th><th>附件</th><th>历史</th><th></th></tr>
+          <tr><th>${t("memberCol")}</th><th>${t("speakCol")}</th><th>${t("attachCol")}</th><th>${t("historyCol")}</th><th></th></tr>
           ${members.map((m) => `
             <tr data-name="${escapeHtml(m.username)}">
-              <td>${escapeHtml(m.username)} ${m.online ? "🟢" : ""} <span class="badge">${m.kind === "agent" ? "Agent" : "人类"}</span></td>
+              <td>${escapeHtml(m.username)} ${m.online ? "🟢" : ""} <span class="badge">${m.kind === "agent" ? t("kindAgent") : t("kindHuman")}</span></td>
               <td><input type="checkbox" data-p="canSpeak" ${m.canSpeak ? "checked" : ""} /></td>
               <td><input type="checkbox" data-p="canUpload" ${m.canUpload ? "checked" : ""} /></td>
               <td><input type="checkbox" data-p="canViewHistory" ${m.canViewHistory ? "checked" : ""} /></td>
-              <td><button class="btn ghost small" data-save="${escapeHtml(m.username)}">保存</button></td>
+              <td><button class="btn ghost small" data-save="${escapeHtml(m.username)}">${t("save")}</button></td>
             </tr>`).join("")}
         </table>`;
       box.querySelectorAll("[data-save]").forEach((btn) => {
@@ -824,7 +1258,7 @@
         await api(`/api/rooms/${encodeURIComponent(store.roomName)}/permissions/${encodeURIComponent(username)}`, {
           method: "PUT", body: JSON.stringify(body),
         });
-        setHint(`已更新 ${username} 的权限`);
+        setHint(tf("permUpdated", { name: username }));
       } catch (err) { setHint(err.message); }
     }
 
@@ -856,11 +1290,11 @@
     }
 
     async function archiveRoom() {
-      if (!confirm("确定归档这个房间？它会从列表中消失，聊天记录可在「归档」里查看，房间名可以再给新房间用。")) return;
+      if (!confirm(t("archiveConfirm"))) return;
       try {
         await api(`/api/rooms/${encodeURIComponent(store.roomName)}/archive`, { method: "POST" });
         $("settings").close();
-        leaveEndedRoom("房间已归档，可在左侧「归档」中查看记录");
+        leaveEndedRoom(t("archivedInList"));
         store.tab = "archive";
         $("tabArchive").classList.add("active");
         $("tabMine").classList.remove("active");
@@ -880,15 +1314,15 @@
     async function refreshAgents() {
       const data = await api("/api/agents");
       const box = $("agentList");
-      if (!data.agents.length) { box.innerHTML = '<div class="hint">还没有 Agent</div>'; return; }
+      if (!data.agents.length) { box.innerHTML = '<div class="hint">' + t("noAgents") + "</div>"; return; }
       box.innerHTML = data.agents.map((a) => `
         <div class="agent-row" data-name="${escapeHtml(a.username)}">
-          <span>${escapeHtml(a.username)} <span class="badge ${a.status === "active" ? "" : "off"}">${a.status === "active" ? "启用中" : "已停用"}</span></span>
+          <span>${escapeHtml(a.username)} <span class="badge ${a.status === "active" ? "" : "off"}">${a.status === "active" ? t("agentActive") : t("agentDisabled")}</span></span>
           <span class="ops">
-            <button class="btn ghost small" data-act="rename">改名</button>
-            <button class="btn ghost small" data-act="rekey">换公钥</button>
-            <button class="btn ghost small" data-act="toggle">${a.status === "active" ? "停用" : "启用"}</button>
-            <button class="btn danger small" data-act="del">删除</button>
+            <button class="btn ghost small" data-act="rename">${t("rename")}</button>
+            <button class="btn ghost small" data-act="rekey">${t("rekey")}</button>
+            <button class="btn ghost small" data-act="toggle">${a.status === "active" ? t("disable") : t("enable")}</button>
+            <button class="btn danger small" data-act="del">${t("del")}</button>
           </span>
         </div>
       `).join("");
@@ -901,8 +1335,8 @@
 
     function resetAgentForm() {
       editingAgent = null;
-      $("agentFormTitle").textContent = "创建 Agent";
-      $("agentSubmit").textContent = "创建";
+      $("agentFormTitle").textContent = t("createAgent");
+      $("agentSubmit").textContent = t("create");
       $("agentCancelEdit").classList.add("hidden");
       $("agentName").disabled = false;
       $("agentName").value = "";
@@ -918,17 +1352,17 @@
     async function submitAgent() {
       const username = $("agentName").value.trim();
       const publicKey = $("agentKey").value.trim();
-      if (!publicKey) return setAgentStatus("请粘贴公钥");
+      if (!publicKey) return setAgentStatus(t("pasteKey"));
       try {
         if (editingAgent) {
           await api(`/api/agents/${encodeURIComponent(editingAgent)}`, {
             method: "PATCH", body: JSON.stringify({ publicKey }),
           });
-          setAgentStatus("公钥已更新", true);
+          setAgentStatus(t("keyUpdated"), true);
         } else {
-          if (!username) return setAgentStatus("请填写 Agent 用户名");
+          if (!username) return setAgentStatus(t("fillAgentName"));
           await api("/api/agents", { method: "POST", body: JSON.stringify({ username, publicKey }) });
-          setAgentStatus("已创建 Agent " + username, true);
+          setAgentStatus(tf("agentCreated", { name: username }), true);
         }
         resetAgentForm();
         await refreshAgents();
@@ -938,13 +1372,13 @@
     async function agentAction(username, act) {
       try {
         if (act === "rename") {
-          const name = prompt("新的 Agent 用户名：", username);
+          const name = prompt(t("newAgentName"), username);
           if (!name || name === username) return;
           await api(`/api/agents/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ username: name.trim() }) });
         } else if (act === "rekey") {
           editingAgent = username;
-          $("agentFormTitle").textContent = `为 ${username} 换公钥`;
-          $("agentSubmit").textContent = "保存公钥";
+          $("agentFormTitle").textContent = tf("rekeyFor", { name: username });
+          $("agentSubmit").textContent = t("saveKey");
           $("agentCancelEdit").classList.remove("hidden");
           $("agentName").value = username;
           $("agentName").disabled = true;
@@ -953,10 +1387,10 @@
           return;
         } else if (act === "toggle") {
           const row = document.querySelector(`.agent-row[data-name="${username}"] .badge`);
-          const next = row.textContent === "启用中" ? "disabled" : "active";
+          const next = row.textContent === t("agentActive") ? "disabled" : "active";
           await api(`/api/agents/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ status: next }) });
         } else if (act === "del") {
-          if (!confirm(`确定删除 Agent「${username}」？`)) return;
+          if (!confirm(tf("deleteAgentConfirm", { name: username }))) return;
           await api(`/api/agents/${encodeURIComponent(username)}`, { method: "DELETE" });
         }
         await refreshAgents();
@@ -969,7 +1403,301 @@
       }[c]));
     }
 
+    // ---------- 语音模块（v2.0 · 浏览器 Web Speech API：ASR + TTS，纯前端） ----------
+    const hasTTS = "speechSynthesis" in window;
+    const voiceSynth = hasTTS ? window.speechSynthesis : null;
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const hasASR = !!SpeechRec;
+    const IS_WECHAT = /MicroMessenger/i.test(navigator.userAgent || "");
+    const VOICE_CFG_KEY = "webharness.voice.v1";
+    const FEMALE_HINT = /ting|mei|hui|yao|xiao|sin|jiao|qian|female|samantha|victoria|karen|moira|tessa|fiona|zoe|ava|allison|kathy|susan|婷婷|美|慧|雅|瑶|晓|倩|丽|娜|芳|莉|静|娇|茜/i;
+
+    const voiceCfg = (() => {
+      const d = { autoRead: true, autoSend: false, rate: 1, lang: "", voiceURI: "" };
+      try {
+        const c = JSON.parse(localStorage.getItem(VOICE_CFG_KEY) || "{}") || {};
+        if (typeof c.autoRead === "boolean") d.autoRead = c.autoRead;
+        if (typeof c.autoSend === "boolean") d.autoSend = c.autoSend;
+        const r = Number(c.rate); if (r >= 0.5 && r <= 2) d.rate = r;
+        if (c.lang) d.lang = c.lang;
+        if (c.voiceURI) d.voiceURI = c.voiceURI;
+      } catch (e) {}
+      return d;
+    })();
+    function saveVoiceCfg() {
+      try { localStorage.setItem(VOICE_CFG_KEY, JSON.stringify(voiceCfg)); } catch (e) {}
+    }
+
+    let voiceList = [];
+    let speaking = false;
+    let speakingMsgId = null;
+    let rec = null;
+    let recListening = false;
+    let recBase = "";
+    let recFinal = "";
+    let recDismissed = false; // 发送成功后忽略本次识别会话剩余的 onresult 写回
+    let recManualStop = false; // 用户手动停止识别（不触发「识别完自动发送」）
+
+    function voiceToast(msg) {
+      let t = $("voiceToast");
+      if (!t) {
+        t = document.createElement("div");
+        t.id = "voiceToast";
+        t.style.cssText =
+          "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#10151d;" +
+          "border:1px solid var(--line);border-radius:10px;padding:9px 16px;font-size:13px;color:var(--text);" +
+          "z-index:99;box-shadow:0 8px 30px rgba(0,0,0,.45);transition:opacity .2s;pointer-events:none";
+        document.body.appendChild(t);
+      }
+      t.textContent = msg;
+      t.style.opacity = "1";
+      clearTimeout(voiceToast._tm);
+      voiceToast._tm = setTimeout(() => { t.style.opacity = "0"; }, 2800);
+    }
+
+    // ---- TTS：发音人加载 / 自动选声 / 朗读 ----
+    function loadVoices() {
+      if (!hasTTS) return;
+      voiceList = voiceSynth.getVoices();
+      const sel = $("vVoice");
+      if (!sel) return;
+      sel.innerHTML = '<option value="">' + t("autoVoice") + "</option>";
+      const byLang = (a, b) =>
+        (a.lang.replace("_", "-").startsWith("zh") ? 0 : 1) - (b.lang.replace("_", "-").startsWith("zh") ? 0 : 1) ||
+        a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name);
+      [...voiceList].sort(byLang).forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v.voiceURI;
+        o.textContent = `${v.name} — ${v.lang}${v.localService ? "" : t("onlineSuffix")}`;
+        sel.appendChild(o);
+      });
+      if (voiceCfg.voiceURI && voiceList.some((v) => v.voiceURI === voiceCfg.voiceURI)) {
+        sel.value = voiceCfg.voiceURI;
+      }
+    }
+
+    function pickVoice() {
+      if (voiceCfg.voiceURI) {
+        const hit = voiceList.find((v) => v.voiceURI === voiceCfg.voiceURI);
+        if (hit) return hit;
+      }
+      /* 自动挑选：中文 100 分 / 英文 10 分，女声词表 +50（同 FXG 参考实现） */
+      let best = null, bestScore = -1;
+      for (const v of voiceList) {
+        const lang = v.lang.replace("_", "-").toLowerCase();
+        let sc = lang.startsWith("zh") ? 100 : (lang.startsWith("en") ? 10 : 0);
+        if (FEMALE_HINT.test(v.name)) sc += 50;
+        if (sc > bestScore) { bestScore = sc; best = v; }
+      }
+      return best;
+    }
+
+    function stripEmoji(text) {
+      return String(text)
+        .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]/gu, "")
+        .trim();
+    }
+
+    function speakText(text, cut, msgId) {
+      if (!hasTTS) return;
+      const clean = stripEmoji(text);
+      if (!clean) return;
+      if (msgId) speakingMsgId = msgId;
+      const target = cut && clean.length > 400 ? clean.slice(0, 400) + t("speakTruncated") : clean;
+      const doSpeak = () => {
+        const u = new SpeechSynthesisUtterance(target);
+        const v = pickVoice();
+        if (v) { u.voice = v; u.lang = v.lang; }
+        if (voiceCfg.lang) u.lang = voiceCfg.lang;
+        u.rate = voiceCfg.rate;
+        u.onstart = () => {
+          speaking = true;
+          /* Chrome 长句约 15 秒后静默停止：周期性 pause/resume 保活 */
+          if (/Chrome/i.test(navigator.userAgent) && voiceSynth.pause) {
+            clearInterval(voiceSynth._keep);
+            voiceSynth._keep = setInterval(() => {
+              if (speaking) { try { voiceSynth.pause(); voiceSynth.resume(); } catch (e) {} }
+            }, 5000);
+          }
+          renderSpeakBtn();
+        };
+        const finish = () => {
+          speaking = false;
+          clearInterval(voiceSynth._keep);
+          renderSpeakBtn();
+        };
+        u.onend = finish;
+        u.onerror = (e) => {
+          finish();
+          if (e.error === "not-allowed") voiceToast(t("ttsBlocked"));
+        };
+        voiceSynth.speak(u);
+      };
+      if (voiceSynth.speaking || voiceSynth.pending) {
+        /* Chrome 已知问题：cancel() 后同帧再 speak() 会被一并取消，须推迟一拍 */
+        voiceSynth.cancel();
+        setTimeout(doSpeak, 80);
+      } else {
+        doSpeak();
+      }
+    }
+
+    function stopSpeaking() {
+      if (!hasTTS) return;
+      voiceSynth.cancel();
+      speaking = false;
+      speakingMsgId = null;
+      clearInterval(voiceSynth._keep);
+      renderSpeakBtn();
+    }
+
+    function handleSpeakClick(id, content) {
+      if (speaking && speakingMsgId === id) { stopSpeaking(); return; }
+      speakingMsgId = id;
+      speakText(content, false);
+    }
+
+    function renderSpeakBtn() {
+      document.querySelectorAll(".speak-btn").forEach((b) => {
+        const on = speaking && b.dataset.msgId === String(speakingMsgId);
+        b.classList.toggle("speaking", on);
+        b.textContent = on ? "⏹" : "🔊";
+      });
+    }
+
+    // ---- ASR：麦克风语音输入 ----
+    function toggleRec() {
+      if (IS_WECHAT) { voiceToast(t("wechatVoice")); return; }
+      if (!hasASR) { voiceToast(t("noASR")); return; }
+      if (recListening) { stopRec(); return; }
+      startRec();
+    }
+
+    function startRec() {
+      recBase = $("content").value.trim();
+      recFinal = "";
+      recDismissed = false;
+      recManualStop = false;
+      try {
+        rec = new SpeechRec();
+        rec.lang = voiceCfg.lang || (navigator.language || "zh-CN").replace("_", "-");
+        rec.interimResults = true;
+        rec.continuous = false;
+        recListening = true;
+        renderMicUI();
+        rec.onstart = renderMicUI;
+        rec.onresult = (e) => {
+          if (recDismissed) return;
+          let final = "", interim = "";
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const r = e.results[i];
+            if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
+          }
+          if (final) recFinal = final;
+          const input = $("content");
+          const tail = final + interim;
+          input.value = recBase ? recBase + " " + tail : tail;
+          resizeComposer();
+        };
+        rec.onerror = (e) => {
+          recListening = false;
+          renderMicUI();
+          if (e.error === "aborted") return;
+          const map = {
+            "no-speech": t("asrNoSpeech"),
+            "audio-capture": t("asrAudio"),
+            "not-allowed": t("asrNotAllowed"),
+            "service-not-allowed": t("asrService"),
+            network: t("asrNetwork"),
+          };
+          voiceToast(map[e.error] || t("asrError") + e.error);
+        };
+        rec.onend = () => {
+          recListening = false;
+          renderMicUI();
+          if (recManualStop) { recManualStop = false; return; }
+          if (voiceCfg.autoSend && recFinal && !recDismissed) sendMessage();
+        };
+        rec.start();
+      } catch (e) {
+        recListening = false;
+        renderMicUI();
+        voiceToast(t("asrStartFail") + e.message);
+      }
+    }
+
+    function stopRec() {
+      recManualStop = true;
+      if (rec) { try { rec.stop(); } catch (e) {} }
+      setTimeout(() => { if (recListening && rec) { try { rec.abort(); } catch (e) {} } }, 600);
+    }
+
+    function renderMicUI() {
+      const b = $("micBtn");
+      if (!b) return;
+      b.classList.toggle("listening", recListening);
+      b.classList.toggle("unsupported", !hasASR || IS_WECHAT);
+      b.textContent = recListening ? "⏹" : "🎤";
+      b.title = recListening ? t("stopRecTitle") : t("micTitle");
+    }
+
+    // ---- 语音设置 UI ----
+    function initVoiceUI() {
+      const toggles = $("voiceToggles");
+      if (toggles) toggles.style.display = hasTTS ? "" : "none";
+      renderAutoReadBtn();
+      renderMicUI();
+      if (hasTTS) { loadVoices(); voiceSynth.onvoiceschanged = loadVoices; }
+    }
+
+    function renderAutoReadBtn() {
+      const b = $("autoReadBtn");
+      if (!b) return;
+      const span = b.querySelector("span");
+      if (span) span.textContent = t("autoRead");
+      b.classList.toggle("voice-on", voiceCfg.autoRead);
+    }
+
+    function toggleAutoRead() {
+      voiceCfg.autoRead = !voiceCfg.autoRead;
+      saveVoiceCfg();
+      renderAutoReadBtn();
+      if (!voiceCfg.autoRead) stopSpeaking(); // 关闭自动朗读时立即停止当前朗读
+      voiceToast(voiceCfg.autoRead ? t("autoReadEnabled") : t("autoReadDisabled"));
+    }
+
+    function openVoiceSettings() {
+      const sel = $("vVoice");
+      if (hasTTS) {
+        if (!sel.options.length) loadVoices();
+      } else {
+        sel.innerHTML = '<option value="">' + t("noTTS") + "</option>";
+      }
+      $("vAutoRead").checked = voiceCfg.autoRead;
+      $("vAutoSend").checked = voiceCfg.autoSend;
+      $("vRate").value = voiceCfg.rate;
+      $("vRateVal").textContent = Number(voiceCfg.rate).toFixed(1);
+      $("vLang").value = voiceCfg.lang || "";
+      $("voiceStatus").textContent = "";
+      $("voiceDlg").showModal();
+    }
+
+    function saveVoiceSettings() {
+      voiceCfg.autoRead = $("vAutoRead").checked;
+      voiceCfg.autoSend = $("vAutoSend").checked;
+      voiceCfg.rate = Math.min(2, Math.max(0.5, Number($("vRate").value) || 1));
+      voiceCfg.lang = $("vLang").value;
+      const vURI = $("vVoice").value;
+      voiceCfg.voiceURI = hasTTS && vURI ? vURI : "";
+      saveVoiceCfg();
+      renderAutoReadBtn();
+      $("voiceDlg").close();
+      voiceToast(t("voiceSaved"));
+    }
+
     (async function boot() {
+      applyI18n();
+      initVoiceUI();
       $("content").addEventListener("paste", (event) => {
         const item = [...(event.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
         if (!item) return;
