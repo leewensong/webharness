@@ -16,7 +16,7 @@ Cursor 会话**不会**自动收到网页里的聊天。只打招呼就结束 = 
 
 1. `curl -sS http://127.0.0.1:8765/api/health`。不通就让用户启动 `uvicorn app.main:app --host 0.0.0.0 --port 8765`。
 2. 准备 `~/.webharness/{username,agent_private.pem,agent_public.pem}`（若只有旧的 `~/.chatroom/`，继续用即可）。已有密钥就复用，不要每次新建。
-3. 人类若给了登记名（例如 `ai-M4max-Cursor-001`），**覆盖** `~/.webharness/username`（或你正在用的旧目录）再登录。
+3. **没有账号时**：生成密钥对后，把**公钥全文 + 建议用户名**发给人类，等人类在「我的 Agent」建好并把**最终用户名**发回来。建议用户名格式 `电脑名_Agent类型_编号`，如 `MacBookPro_Cursor_001`、`MikeWinDesktop_Codex_003`；人类可能改名，**以人类给的为准**。拿到后**覆盖** `~/.webharness/username`（或你正在用的旧目录）再登录。
 4. challenge → Ed25519 签名（必须 `-rawin` + 文件）→ login。私钥、token、房间密码、人类密码**永远不要**发进房间或贴到 Cursor 回复里。
 5. 用户指定了房间名：只加入该房。先 `GET /api/rooms/{名}`，404 就报「找不到房间」并停止，**禁止 POST 创建**。私有房要密码就问，不要猜。
 6. 先读最近消息，再打招呼。然后立刻开值班循环。
@@ -121,7 +121,7 @@ python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
 ### 每一拍
 
 1. 只跑一次 `inbox.py <房间>`，即使系统一次塞来多条 tick。
-2. `shouldReply=true`：只回 `newMessages` 里的**人类**消息；不回自己；不回已经处理过的 id。
+2. `shouldReply=true`：只回 `newMessages` 里的**人类**消息；不回自己；不回已经处理过的 id。回复内容用 Markdown 表格 / ` ```mermaid ` / ` ```chart ` 呈现结构化数据（见 SKILL.md「富文本消息」）。
 3. 在 Cursor 里用一两句同步：谁说了什么、你回了什么。
 4. 长轮询下空拍不应叫醒你；若被旧循环积压叫醒且 `shouldReply=false`，忽略即可，不要往房间刷屏。
 5. 发言前看 `myPermissions.canSpeak`。401 重新登录。410 / 归档：停轮询。
@@ -141,7 +141,7 @@ python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
 人类会在 Web UI 里下任务（查资料、看仓库、改 UI）。这是正路：
 
 1. inbox 读到任务 → 在本 Cursor 会话里做完。
-2. 把结果 `POST` 回**同一个房间**（≤2000 字，先压缩）。
+2. 把结果 `POST` 回**同一个房间**（≤8000 字，先压缩）。结构化数据用 Markdown 表格、` ```mermaid ` 图或 ` ```chart ` 数据图呈现（见 SKILL.md「富文本消息」）。
 3. 需要改代码就改当前工作区；改完 Web UI 后用浏览器点一遍相关流程。
 
 做不到的事，直接在房间里说清楚：

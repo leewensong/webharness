@@ -116,7 +116,7 @@ check "streamIds 能拿到更新" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/messages
 check "结束流式" "$(curl -sS -X POST "$URL/api/rooms/$PUB_ROOM/messages/$SID/stream" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"done":true}')" '"streaming":false'
 check "非作者更新 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/messages/$SID/stream" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"delta":"x"}')" "403"
 check "结束后再追加 409" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/messages/$SID/stream" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"delta":"x"}')" "409"
-python3 -c 'import json;print(json.dumps({"content":"a"*2001}))' > "$TMP/too_long.json"
+python3 -c 'import json;print(json.dumps({"content":"a"*8001}))' > "$TMP/too_long.json"
 check "超长 422" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/messages/stream" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d @"$TMP/too_long.json")" "422"
 
 echo "== 附件 =="
@@ -150,6 +150,58 @@ check "新房 id 不同" "$(python3 -c "print('$NEW_ID'!='$ARCH_ID')")" "True"
 check "旧归档记录仍在" "$(curl -sS "$URL/api/archives/$ARCH_ID/messages" -H "Authorization: Bearer $HTOK")" "归档前留言"
 check "外人看归档 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/archives/$ARCH_ID" -H "Authorization: Bearer $OTOK")" "403"
 check "非房主归档 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/archive" -H "Authorization: Bearer $ATOK")" "403"
+
+echo "== 头像（2D）=="
+JPG_B64='/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='
+printf '%s' "$JPG_B64" | base64 -d > "$TMP/a.jpg"
+python3 -c "open('$TMP/big.jpg','wb').write(open('$TMP/a.jpg','rb').read() + b'\x00'*(1100*1024))"
+printf 'not an image' > "$TMP/bad.jpg"
+AVH="e2e-avatar-$SUF"
+python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":"pass123","avatar":"data:image/jpeg;base64,"+sys.argv[2]}))' "$AVH" "$JPG_B64" > "$TMP/av.json"
+check "注册带头像返回 avatarUrl" "$(curl -sS "$URL/api/users" -H 'Content-Type: application/json' -d @"$TMP/av.json")" "/avatar?v="
+AVTOK=$(curl -sS "$URL/api/login" -H 'Content-Type: application/json' -d @"$TMP/av.json" | J "['token']")
+check "上传的头像按 jpeg 返回" "$(curl -sS -o /dev/null -w '%{content_type}' "$URL/api/users/$AVH/avatar" -H "Authorization: Bearer $AVTOK")" "image/jpeg"
+check "未上传则返回 SVG 缺省头像" "$(curl -sS -o /dev/null -w '%{content_type}' "$URL/api/users/$HUMAN/avatar" -H "Authorization: Bearer $HTOK")" "image/svg+xml"
+check "头像超过 1MB 413" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/avatar" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/big.jpg")" "413"
+check "非图片头像 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/avatar" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/bad.jpg")" "400"
+check "注册头像格式错误 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/users" -H 'Content-Type: application/json' -d '{"username":"e2e-badav-'$SUF'","password":"pass123","avatar":"data:image/jpeg;base64,!!!!"}')" "400"
+check "上传头像 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/avatar" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/a.jpg")" "200"
+check "删除头像后回落 SVG" "$(curl -sS -o /dev/null -X DELETE "$URL/api/me/avatar" -H "Authorization: Bearer $HTOK"; curl -sS -o /dev/null -w '%{content_type}' "$URL/api/users/$HUMAN/avatar" -H "Authorization: Bearer $HTOK")" "image/svg+xml"
+
+echo "== 形象归属（?as=）=="
+check "主人替名下 Agent 传头像 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/avatar?as=$AGENT" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/a.jpg")" "200"
+check "外人替该 Agent 传头像 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/avatar?as=$AGENT" -H "Authorization: Bearer $OTOK" -F "file=@$TMP/a.jpg")" "403"
+check "as= 指向人类账号 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/avatar?as=$OTHER" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/a.jpg")" "403"
+
+echo "== 3D 形象 =="
+printf 'nope' > "$TMP/bad.glb"
+python3 -c "open('$TMP/m.glb','wb').write(b'glTF\x02\x00\x00\x00' + b'\x00'*64)"
+check "非 GLB 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/bad.glb")" "400"
+check "上传 GLB 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/m.glb")" "200"
+check "GLB 下载类型正确" "$(curl -sS -o /dev/null -w '%{content_type}' "$URL/api/users/$HUMAN/model3d" -H "Authorization: Bearer $HTOK")" "model/gltf-binary"
+check "/api/me 读回 model3dUrl" "$(curl -sS "$URL/api/me" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;print(json.load(sys.stdin)['model3dUrl'] or '')")" "/model3d?v="
+check "PUT 外链并标记 ARKit" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"https://cdn.example.com/m.glb","arkit":true}' | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dUrl'],d['model3dArkit'])")" "https://cdn.example.com/m.glb True"
+check "DELETE 清空 3D" "$(curl -sS -X DELETE "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dUrl'],d['model3dArkit'])")" "None False"
+
+echo "== 房间 rules 与 room agent =="
+RULE_ROOM="e2e-rules-$SUF"
+python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"rules":"不许刷屏","roomAgent":sys.argv[2]}))' "$RULE_ROOM" "$AGENT" > "$TMP/rules.json"
+RINFO=$(curl -sS "$URL/api/rooms" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d @"$TMP/rules.json")
+check "建房返回 rules" "$RINFO" "不许刷屏"
+check "建房返回 roomAgent" "$(printf '%s' "$RINFO" | python3 -c "import sys,json;print(json.load(sys.stdin)['roomAgent'])")" "$AGENT"
+check "详情读回 rules" "$(curl -sS "$URL/api/rooms/$RULE_ROOM" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;print(json.load(sys.stdin)['rules'])")" "不许刷屏"
+check "改 rules 生效" "$(curl -sS -X PATCH "$URL/api/rooms/$RULE_ROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"rules":"新规则"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['rules'])")" "新规则"
+check "传空串清空 roomAgent" "$(curl -sS -X PATCH "$URL/api/rooms/$RULE_ROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"roomAgent":""}' | python3 -c "import sys,json;print(json.load(sys.stdin)['roomAgent'])")" "None"
+python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"roomAgent":sys.argv[2]}))' "e2e-rules-x-$SUF" "$AGENT" > "$TMP/rx.json"
+python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"roomAgent":sys.argv[2]}))' "e2e-rules-y-$SUF" "$OTHER" > "$TMP/ry.json"
+check "别人的 Agent 当 roomAgent 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d @"$TMP/rx.json")" "400"
+check "非 Agent 当 roomAgent 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d @"$TMP/ry.json")" "400"
+
+echo "== 头像随消息 / 成员下发 =="
+check "消息带 avatarUrl" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/messages" -H "Authorization: Bearer $HTOK")" "avatarUrl"
+check "成员列表带头像" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/members" -H "Authorization: Bearer $HTOK")" "avatarUrl"
+check "在线列表带头像" "$(curl -sS "$URL/api/rooms/$PUB_ROOM" -H "Authorization: Bearer $HTOK")" "avatarUrl"
+check "Agent 列表带头像" "$(curl -sS "$URL/api/agents" -H "Authorization: Bearer $HTOK")" "avatarUrl"
 
 echo "== Agent 停用 =="
 curl -sS -X PATCH "$URL/api/agents/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"status":"disabled"}' >/dev/null

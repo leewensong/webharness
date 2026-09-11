@@ -86,6 +86,14 @@ def init_db() -> None:
                 owner_id INTEGER REFERENCES users(id),
                 public_key TEXT,
                 status TEXT NOT NULL DEFAULT 'active',
+                avatar BLOB,
+                avatar_mime TEXT,
+                avatar_updated_at TEXT,
+                model3d BLOB,
+                model3d_mime TEXT,
+                model3d_url TEXT,
+                model3d_arkit INTEGER NOT NULL DEFAULT 0,
+                model3d_updated_at TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -107,6 +115,8 @@ def init_db() -> None:
                 muted INTEGER NOT NULL DEFAULT 0,
                 ended_at TEXT,
                 archived_at TEXT,
+                rules TEXT,
+                room_agent_id INTEGER REFERENCES users(id),
                 FOREIGN KEY (created_by) REFERENCES users(id)
             );
 
@@ -149,6 +159,18 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS whisper_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id INTEGER NOT NULL,
+                list_type TEXT NOT NULL CHECK (list_type IN ('allow', 'deny')),
+                priority INTEGER NOT NULL DEFAULT 0,
+                sender TEXT NOT NULL DEFAULT '*',
+                receiver TEXT NOT NULL DEFAULT '*',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+                UNIQUE (room_id, list_type, sender, receiver)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_messages_room_id
                 ON messages(room_id, id DESC);
             """
@@ -159,6 +181,14 @@ def init_db() -> None:
         _add_column_if_missing(conn, "users", "owner_id", "INTEGER REFERENCES users(id)")
         _add_column_if_missing(conn, "users", "public_key", "TEXT")
         _add_column_if_missing(conn, "users", "status", "TEXT NOT NULL DEFAULT 'active'")
+        _add_column_if_missing(conn, "users", "avatar", "BLOB")
+        _add_column_if_missing(conn, "users", "avatar_mime", "TEXT")
+        _add_column_if_missing(conn, "users", "avatar_updated_at", "TEXT")
+        _add_column_if_missing(conn, "users", "model3d", "BLOB")
+        _add_column_if_missing(conn, "users", "model3d_mime", "TEXT")
+        _add_column_if_missing(conn, "users", "model3d_url", "TEXT")
+        _add_column_if_missing(conn, "users", "model3d_arkit", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "users", "model3d_updated_at", "TEXT")
         _add_column_if_missing(conn, "rooms", "password_hash", "TEXT")
         _add_column_if_missing(conn, "rooms", "visibility", "TEXT NOT NULL DEFAULT 'private'")
         _add_column_if_missing(conn, "rooms", "muted", "INTEGER NOT NULL DEFAULT 0")
@@ -171,6 +201,9 @@ def init_db() -> None:
             """
         )
         _rebuild_rooms_if_name_globally_unique(conn)
+        # 重建 rooms 表只搬运显式列出的字段，新增列必须放在重建之后。
+        _add_column_if_missing(conn, "rooms", "rules", "TEXT")
+        _add_column_if_missing(conn, "rooms", "room_agent_id", "INTEGER REFERENCES users(id)")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_live_name
@@ -192,6 +225,7 @@ def init_db() -> None:
                 """
             )
         _add_column_if_missing(conn, "messages", "msg_type", "TEXT NOT NULL DEFAULT 'text'")
+        _add_column_if_missing(conn, "messages", "whisper_to", "INTEGER REFERENCES users(id)")
         _add_column_if_missing(conn, "messages", "attachment_name", "TEXT")
         _add_column_if_missing(conn, "messages", "attachment_path", "TEXT")
         _add_column_if_missing(conn, "messages", "streaming", "INTEGER NOT NULL DEFAULT 0")
@@ -207,6 +241,12 @@ def init_db() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_messages_streaming
                 ON messages(room_id, id) WHERE streaming = 1
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_whisper_rules_room
+                ON whisper_rules(room_id)
             """
         )
 

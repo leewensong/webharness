@@ -1,12 +1,18 @@
 import asyncio
+import base64
+import binascii
+import colorsys
+import hashlib
 import mimetypes
 import re
 import sqlite3
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -24,7 +30,14 @@ NAME_PATTERN = r"^[\w.\-]+$"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
+MAX_AVATAR_BYTES = 1 * 1024 * 1024
+MAX_MODEL3D_BYTES = 20 * 1024 * 1024
+MAX_RULES_CHARS = 4000
 MAX_LONG_POLL_SECONDS = 30
+# 私聊语法：消息以 @@用户名 开头（后面跟空白或整条结束）即只对该用户、
+# 发送者和房主可见。名字规则与用户名一致（[\w.\-]+），后跟空白/结尾避免
+# 「@@bob你好」这类连写被误解析。
+WHISPER_RE = re.compile(r"^@@([\w.\-]+)(?:\s|$)")
 
 _main_loop: asyncio.AbstractEventLoop | None = None
 _room_events: dict[int, asyncio.Event] = {}
@@ -64,8 +77,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.1.0",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
+    version="2.4.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
     lifespan=lifespan,
 )
 
@@ -73,6 +86,8 @@ app = FastAPI(
 class UserCreate(BaseModel):
     username: str = Field(min_length=2, max_length=32, pattern=NAME_PATTERN)
     password: str = Field(min_length=4, max_length=128)
+    # 可选 2D 头像，data URL（data:image/jpeg;base64,...），解码后 ≤1MB；留空则用缺省头像
+    avatar: str | None = Field(default=None, max_length=2_000_000)
 
 
 class LoginRequest(BaseModel):
@@ -83,6 +98,14 @@ class LoginRequest(BaseModel):
 class AgentCreate(BaseModel):
     username: str = Field(min_length=2, max_length=32, pattern=NAME_PATTERN)
     publicKey: str = Field(min_length=1, max_length=4096)
+    avatar: str | None = Field(default=None, max_length=2_000_000)
+    model3dUrl: str | None = Field(default=None, max_length=2048)
+    model3dArkit: bool = False
+
+
+class Model3dUpdate(BaseModel):
+    url: str | None = Field(default=None, max_length=2048)
+    arkit: bool | None = None
 
 
 class AgentUpdate(BaseModel):
@@ -104,6 +127,8 @@ class RoomRequest(BaseModel):
     roomName: str = Field(min_length=1, max_length=64, pattern=NAME_PATTERN)
     password: str | None = Field(default=None, max_length=128)
     visibility: Literal["private", "public"] | None = None
+    rules: str | None = Field(default=None, max_length=MAX_RULES_CHARS)
+    roomAgent: str | None = Field(default=None, max_length=32)
 
 
 class RoomUpdate(BaseModel):
@@ -111,6 +136,9 @@ class RoomUpdate(BaseModel):
     password: str | None = Field(default=None, max_length=128)
     visibility: Literal["private", "public"] | None = None
     muted: bool | None = None
+    rules: str | None = Field(default=None, max_length=MAX_RULES_CHARS)
+    # 传空字符串表示清空 room agent；不传（None）表示不改
+    roomAgent: str | None = Field(default=None, max_length=32)
 
 
 class PermissionUpdate(BaseModel):
@@ -120,22 +148,30 @@ class PermissionUpdate(BaseModel):
 
 
 class MessageCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=2000)
+    content: str = Field(min_length=1, max_length=8000)
 
 
 class StreamStart(BaseModel):
-    content: str = Field(default="", max_length=2000)
+    content: str = Field(default="", max_length=8000)
 
 
 class StreamPatch(BaseModel):
-    delta: str | None = Field(default=None, max_length=2000)
-    content: str | None = Field(default=None, max_length=2000)
+    delta: str | None = Field(default=None, max_length=8000)
+    content: str | None = Field(default=None, max_length=8000)
     done: bool = False
 
 
 class SuggestionCreate(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
     contact: str | None = Field(default=None, max_length=200)
+
+
+class WhisperRuleCreate(BaseModel):
+    listType: Literal["allow", "deny"]
+    # 发送者/接受者：用户名或 *（所有人）
+    sender: str = Field(min_length=1, max_length=32, pattern=r"^(?:[\w.\-]+|\*)$")
+    receiver: str = Field(min_length=1, max_length=32, pattern=r"^(?:[\w.\-]+|\*)$")
+    priority: int = Field(default=0, ge=-1000, le=1000)
 
 
 def require_user(authorization: Annotated[str | None, Header(alias="Authorization")] = None):
@@ -166,19 +202,154 @@ def _blank_to_none(value: str | None) -> str | None:
     return value or None
 
 
+# ---------- 头像与 3D 形象 ----------
+
+_DATA_URL_RE = re.compile(r"^data:([\w.+-]+/[\w.+-]+);base64,(.*)$", re.DOTALL)
+
+
+def _avatar_url(username: str, version: str | None) -> str:
+    return f"/api/users/{username}/avatar?v={quote(str(version or 0), safe='')}"
+
+
+def _model3d_file_url(username: str, version: str | None) -> str:
+    return f"/api/users/{username}/model3d?v={quote(str(version or 0), safe='')}"
+
+
+def _default_avatar_svg(username: str) -> bytes:
+    """按用户名确定性生成缺省头像：随机感配色的圆角方块 + 用户名首字符。"""
+    digest = hashlib.sha256(username.lower().encode("utf-8")).digest()
+    hue = digest[0] / 255.0
+    r, g, b = colorsys.hls_to_rgb(hue, 0.42, 0.55)
+    bg = "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+    tr, tg, tb = colorsys.hls_to_rgb(hue, 0.92, 0.75)
+    fg = "#%02x%02x%02x" % (round(tr * 255), round(tg * 255), round(tb * 255))
+    letter = escape(username.strip()[:1].upper() or "?")
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">'
+        f'<rect width="128" height="128" rx="28" fill="{bg}"/>'
+        '<text x="64" y="66" text-anchor="middle" dominant-baseline="central" '
+        'font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" '
+        f'font-size="64" font-weight="600" fill="{fg}">{letter}</text>'
+        "</svg>"
+    )
+    return svg.encode("utf-8")
+
+
+def _decode_data_url(value: str) -> tuple[bytes, str]:
+    """解析 data URL，返回 (原始字节, mime)。"""
+    match = _DATA_URL_RE.match(value.strip())
+    if not match:
+        raise HTTPException(status_code=400, detail="头像格式无效，需要 data:image/jpeg;base64,... 形式")
+    mime, payload = match.group(1).lower(), match.group(2)
+    try:
+        data = base64.b64decode(re.sub(r"\s+", "", payload), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="头像 base64 解码失败") from exc
+    return data, mime
+
+
+def _validate_avatar_bytes(data: bytes, declared_mime: str | None) -> str:
+    """校验头像字节，返回规范化 mime（image/jpeg 或 image/png）。"""
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=413, detail="头像超过 1MB 上限")
+    detected = None
+    if data.startswith(b"\xff\xd8\xff"):
+        detected = "image/jpeg"
+    elif data.startswith(b"\x89PNG\r\n\x1a\n"):
+        detected = "image/png"
+    if detected is None:
+        raise HTTPException(status_code=400, detail="头像必须是 JPG 或 PNG 图片")
+    declared = (declared_mime or "").split(";")[0].strip().lower()
+    # 只在与已知图片类型冲突时报错；octet-stream 之类的笼统声明交给魔数判断
+    if declared.startswith("image/") and declared != detected:
+        raise HTTPException(status_code=400, detail="头像内容与声明的图片格式不一致")
+    return detected
+
+
+def _validate_model3d_bytes(data: bytes) -> str:
+    """校验 3D 模型字节，返回 mime（GLB 或 GLTF）。"""
+    if len(data) > MAX_MODEL3D_BYTES:
+        raise HTTPException(status_code=413, detail="3D 模型超过 20MB 上限")
+    if data.startswith(b"glTF"):
+        return "model/gltf-binary"
+    if data.lstrip()[:1] == b"{":
+        return "model/gltf+json"
+    raise HTTPException(status_code=400, detail="3D 模型必须是 GLB（glTF 二进制）或 GLTF（JSON）文件")
+
+
+def _get_user_by_id(conn, user_id: int):
+    return conn.execute(
+        f"""
+        SELECT id, {PROFILE_COLUMNS}
+        FROM users WHERE id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+
+
+def _resolve_profile_target(conn, user: dict, as_username: str | None):
+    """形象设置的目标账号：默认自己；as= 指定时必须是当前用户名下的 Agent。"""
+    target_name = _blank_to_none(as_username)
+    if target_name is None:
+        row = _get_user_by_id(conn, user["id"])
+        if not row:
+            raise HTTPException(status_code=404, detail="账号不存在")
+        return row
+    row = _get_user(conn, target_name)
+    if not row or row["kind"] != "agent" or row["owner_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="只能管理自己名下的 Agent")
+    return row
+
+
+def _profile_fields(row) -> dict:
+    """把账号的 2D/3D 形象字段整理成响应片段。row 需含 username 与形象列。"""
+    username = row["username"]
+    external = _row_get(row, "model3d_url")
+    has_file = _row_get(row, "has_model3d")
+    if has_file is None:
+        has_file = _row_get(row, "model3d") is not None
+    if external:
+        model_url = external
+    elif has_file:
+        model_url = _model3d_file_url(username, _row_get(row, "model3d_updated_at"))
+    else:
+        model_url = None
+    return {
+        "avatarUrl": _avatar_url(username, _row_get(row, "avatar_updated_at")),
+        "model3dUrl": model_url,
+        "model3dArkit": bool(_row_get(row, "model3d_arkit", 0)),
+    }
+
+
+# 形象相关的轻量列：不含 avatar/model3d 的 BLOB 本体，避免列表响应被大字段撑爆
+PROFILE_COLUMNS = """
+    username, kind, status, created_at,
+    avatar_updated_at, model3d_url, model3d_arkit, model3d_updated_at,
+    (model3d IS NOT NULL) AS has_model3d
+"""
+
+
+
 def _get_user(conn, username: str):
     return conn.execute(
-        "SELECT id, username, kind, owner_id, public_key, status, created_at FROM users WHERE username = ?",
+        """
+        SELECT id, username, kind, owner_id, public_key, status, created_at,
+               avatar_updated_at, model3d_url, model3d_arkit, model3d_updated_at,
+               (model3d IS NOT NULL) AS has_model3d
+        FROM users WHERE username = ?
+        """,
         (username,),
     ).fetchone()
 
 
 ROOM_SELECT = """
         SELECT r.id, r.name, r.created_by, r.password_hash, r.visibility, r.muted,
-               r.ended_at, r.archived_at, r.created_at, u.username AS ownerName,
-               u.kind AS creatorKind, u.owner_id AS creatorOwnerId
+               r.ended_at, r.archived_at, r.created_at, r.rules, r.room_agent_id,
+               u.username AS ownerName, u.kind AS creatorKind, u.owner_id AS creatorOwnerId,
+               ra.username AS roomAgentName
         FROM rooms r
         JOIN users u ON u.id = r.created_by
+        LEFT JOIN users ra ON ra.id = r.room_agent_id
 """
 
 
@@ -231,7 +402,7 @@ def _member(conn, room_id: int, user_id: int):
 def _online_users(conn, room_id: int) -> list[dict]:
     rows = conn.execute(
         """
-        SELECT u.username, m.last_seen_at AS lastSeenAt
+        SELECT u.username, u.avatar_updated_at AS avatarV, m.last_seen_at AS lastSeenAt
         FROM room_members m
         JOIN users u ON u.id = m.user_id
         WHERE m.room_id = ? AND m.last_seen_at > datetime('now', ?)
@@ -239,7 +410,14 @@ def _online_users(conn, room_id: int) -> list[dict]:
         """,
         (room_id, ONLINE_WINDOW),
     ).fetchall()
-    return [dict(row) for row in rows]
+    return [
+        {
+            "username": row["username"],
+            "lastSeenAt": row["lastSeenAt"],
+            "avatarUrl": _avatar_url(row["username"], row["avatarV"]),
+        }
+        for row in rows
+    ]
 
 
 def _require_active_room(conn, room_name: str):
@@ -278,6 +456,23 @@ def _can_archive(user: dict, room) -> bool:
     return room["created_by"] == user["id"] or _is_agent_master(user, room)
 
 
+def _resolve_room_agent(conn, caller: dict, name: str | None) -> int | None:
+    """把 room agent 用户名解析成 user id。
+
+    只允许「房主自己名下的 Agent」或「房主本身就是该 Agent」，避免把房间治理权
+    交给别人的 Agent。空值表示不设 room agent。
+    """
+    target_name = _blank_to_none(name)
+    if target_name is None:
+        return None
+    row = _get_user(conn, target_name)
+    if not row or row["kind"] != "agent":
+        raise HTTPException(status_code=400, detail=f"{target_name} 不是 Agent 账号")
+    if row["id"] != caller["id"] and row["owner_id"] != caller["id"]:
+        raise HTTPException(status_code=400, detail=f"{target_name} 不是你名下的 Agent")
+    return row["id"]
+
+
 def _require_archive_access(conn, room_id: int, user: dict):
     room = _get_room_by_id(conn, room_id)
     if not room or not room["archived_at"]:
@@ -299,6 +494,51 @@ def _check_action_allowed(room, member, user_id: int, action: str) -> None:
         raise HTTPException(status_code=403, detail="你已被禁止上传附件")
 
 
+def _resolve_whisper(conn, room_id: int, content: str):
+    """解析消息开头的 @@用户名 私聊前缀，返回目标用户行；无前缀返回 None。
+
+    目标必须是本房间成员，否则报错——避免本想私聊的消息被当成公开消息广播出去。
+    """
+    m = WHISPER_RE.match(content)
+    if not m:
+        return None
+    name = m.group(1)
+    target = _get_user(conn, name)
+    if not target:
+        raise HTTPException(status_code=400, detail=f"私聊对象 {name} 不存在，请检查 @@用户名 是否正确")
+    if not _member(conn, room_id, target["id"]):
+        raise HTTPException(status_code=400, detail=f"私聊对象 {name} 不在该房间中")
+    return target
+
+
+def _whisper_allowed(conn, room_id: int, sender_name: str, receiver_name: str) -> bool:
+    """房间私聊规则判定（仅约束发送，不回溯历史消息）。
+
+    所有匹配（sender/receiver 为 * 或与双方用户名 NOCASE 相等）的规则中，
+    取优先级最高的一条生效；同优先级时黑名单（deny）优先；
+    没有任何规则命中则默认允许——普通房间不配规则即等价于
+    白名单「允许 * 发送给 *」。
+    """
+    rules = conn.execute(
+        """
+        SELECT list_type, priority FROM whisper_rules
+        WHERE room_id = ?
+          AND (sender = '*' OR sender = ? COLLATE NOCASE)
+          AND (receiver = '*' OR receiver = ? COLLATE NOCASE)
+        """,
+        (room_id, sender_name, receiver_name),
+    ).fetchall()
+    if not rules:
+        return True
+    rules.sort(key=lambda r: (r["priority"], r["list_type"] == "deny"), reverse=True)
+    return rules[0]["list_type"] == "allow"
+
+
+def _require_whisper_allowed(conn, room_id: int, sender_name: str, receiver_name: str) -> None:
+    if not _whisper_allowed(conn, room_id, sender_name, receiver_name):
+        raise HTTPException(status_code=403, detail=f"房间的私聊规则不允许发给 {receiver_name}")
+
+
 def _room_dict(room, user_id: int, online: list[dict] | None = None) -> dict:
     data = {
         "roomId": room["id"],
@@ -309,6 +549,8 @@ def _room_dict(room, user_id: int, online: list[dict] | None = None) -> dict:
         "muted": bool(room["muted"]),
         "isOwner": room["created_by"] == user_id,
         "canArchive": room["created_by"] == user_id or room["creatorOwnerId"] == user_id,
+        "rules": _row_get(room, "rules") or "",
+        "roomAgent": _row_get(room, "roomAgentName"),
         "createdAt": room["created_at"],
         "archivedAt": room["archived_at"],
     }
@@ -327,13 +569,16 @@ def _row_get(row, key, default=None):
 
 
 def _message_dict(row, room_name: str, *, archive_id: int | None = None) -> dict:
+    username = row["username"]
     item = {
         "id": row["id"],
-        "username": row["username"],
+        "username": username,
+        "avatarUrl": _avatar_url(username, _row_get(row, "avatarV")) if username else None,
         "content": row["content"],
         "msgType": row["msg_type"],
         "createdAt": row["createdAt"],
         "streaming": bool(_row_get(row, "streaming", 0)),
+        "whisper": bool(_row_get(row, "whisper_to")),
         "updatedAt": _row_get(row, "updatedAt") or row["createdAt"],
     }
     if row["msg_type"] in ("attachment", "image"):
@@ -358,6 +603,7 @@ def _room_list_dict(row, user_id: int) -> dict:
         "joined": bool(row["joined"]),
         "memberCount": row["memberCount"],
         "onlineCount": int(row["onlineCount"] or 0),
+        "roomAgent": _row_get(row, "roomAgentName"),
         "createdAt": row["created_at"],
         "archivedAt": row["archived_at"],
         "createdByMyAgent": (
@@ -370,6 +616,7 @@ def _room_list_dict(row, user_id: int) -> dict:
 ROOM_LIST_SQL = """
     SELECT r.id, r.name, r.created_by, r.password_hash, r.visibility, r.muted,
            r.created_at, r.archived_at, u.username AS ownerName, u.owner_id AS creatorOwnerId,
+           ra.username AS roomAgentName,
            (SELECT COUNT(*) FROM room_members m2 WHERE m2.room_id = r.id) AS memberCount,
            (SELECT COUNT(*) FROM room_members m3
              WHERE m3.room_id = r.id AND m3.last_seen_at > datetime('now', ?)) AS onlineCount,
@@ -381,9 +628,11 @@ ROOM_LIST_SQL = """
                AND msg.user_id != m.user_id
                AND msg.id > COALESCE(m.last_read_msg_id, 0)
                AND (m.can_view_history = 1 OR msg.id > COALESCE(m.first_visible_msg_id, 0))
+               AND (msg.whisper_to IS NULL OR msg.whisper_to = m.user_id OR r.created_by = m.user_id)
            ), 0) AS unreadCount
     FROM rooms r
     JOIN users u ON u.id = r.created_by
+    LEFT JOIN users ra ON ra.id = r.room_agent_id
     LEFT JOIN room_members m ON m.room_id = r.id AND m.user_id = ?
 """
 
@@ -397,19 +646,36 @@ def health():
 
 @app.post("/api/users")
 def create_user(body: UserCreate):
+    avatar_bytes = None
+    avatar_mime = None
+    if body.avatar:
+        data, declared = _decode_data_url(body.avatar)
+        avatar_mime = _validate_avatar_bytes(data, declared)
+        avatar_bytes = data
     with get_db() as conn:
         exists = conn.execute("SELECT 1 FROM users WHERE username = ?", (body.username,)).fetchone()
         if exists:
             raise HTTPException(status_code=409, detail="用户名已存在")
         conn.execute(
-            "INSERT INTO users (username, password_hash, kind) VALUES (?, ?, 'human')",
-            (body.username, auth.hash_password(body.password)),
+            """
+            INSERT INTO users (username, password_hash, kind, avatar, avatar_mime, avatar_updated_at)
+            VALUES (?, ?, 'human', ?, ?, ?)
+            """,
+            (
+                body.username,
+                auth.hash_password(body.password),
+                avatar_bytes,
+                avatar_mime,
+                _db_now(conn) if avatar_bytes else None,
+            ),
         )
-        user = conn.execute(
-            "SELECT id, username, created_at FROM users WHERE username = ?",
-            (body.username,),
-        ).fetchone()
-    return {"userId": user["id"], "username": user["username"], "createdAt": user["created_at"]}
+        user = _get_user(conn, body.username)
+    return {
+        "userId": user["id"],
+        "username": user["username"],
+        "createdAt": user["created_at"],
+        **_profile_fields(user),
+    }
 
 
 @app.post("/api/login")
@@ -486,9 +752,11 @@ def me(user: CurrentUser):
     result = {"id": user["id"], "username": user["username"], "kind": user["kind"]}
     with get_db() as conn:
         row = _get_user(conn, user["username"])
-        if row and row["owner_id"]:
-            owner = conn.execute("SELECT username FROM users WHERE id = ?", (row["owner_id"],)).fetchone()
-            result["ownerName"] = owner["username"] if owner else None
+        if row:
+            result.update(_profile_fields(row))
+            if row["owner_id"]:
+                owner = conn.execute("SELECT username FROM users WHERE id = ?", (row["owner_id"],)).fetchone()
+                result["ownerName"] = owner["username"] if owner else None
     return result
 
 
@@ -514,6 +782,7 @@ def _agent_dict(row) -> dict:
         "username": row["username"],
         "status": row["status"],
         "createdAt": row["created_at"],
+        **_profile_fields(row),
     }
 
 
@@ -523,6 +792,13 @@ def create_agent(body: AgentCreate, user: HumanUser):
         pem = auth.normalize_agent_public_key(body.publicKey)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    avatar_bytes = None
+    avatar_mime = None
+    if body.avatar:
+        data, declared = _decode_data_url(body.avatar)
+        avatar_mime = _validate_avatar_bytes(data, declared)
+        avatar_bytes = data
+    model_url = _blank_to_none(body.model3dUrl)
     with get_db() as conn:
         exists = _get_user(conn, body.username)
         if exists:
@@ -532,12 +808,27 @@ def create_agent(body: AgentCreate, user: HumanUser):
                 status_code=409,
                 detail=f"用户名 {body.username} 已被人类账号占用，请给 Agent 换一个名字（例如 {body.username}-bot）",
             )
+        now = _db_now(conn)
         conn.execute(
             """
-            INSERT INTO users (username, password_hash, kind, owner_id, public_key)
-            VALUES (?, '', 'agent', ?, ?)
+            INSERT INTO users (
+                username, password_hash, kind, owner_id, public_key,
+                avatar, avatar_mime, avatar_updated_at,
+                model3d_url, model3d_arkit, model3d_updated_at
+            )
+            VALUES (?, '', 'agent', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (body.username, user["id"], pem),
+            (
+                body.username,
+                user["id"],
+                pem,
+                avatar_bytes,
+                avatar_mime,
+                now if avatar_bytes else None,
+                model_url,
+                int(body.model3dArkit),
+                now if model_url else None,
+            ),
         )
         agent = _get_user(conn, body.username)
     return _agent_dict(agent)
@@ -547,8 +838,9 @@ def create_agent(body: AgentCreate, user: HumanUser):
 def list_agents(user: HumanUser):
     with get_db() as conn:
         rows = conn.execute(
-            """
-            SELECT * FROM users WHERE owner_id = ? AND kind = 'agent'
+            f"""
+            SELECT id, {PROFILE_COLUMNS}
+            FROM users WHERE owner_id = ? AND kind = 'agent'
             ORDER BY created_at DESC
             """,
             (user["id"],),
@@ -585,6 +877,15 @@ def update_agent(username: str, body: AgentUpdate, user: HumanUser):
         )
         if new_name != agent["username"]:
             conn.execute("DELETE FROM agent_challenges WHERE user_id = ?", (agent["id"],))
+            # 私聊规则按用户名匹配，改名要级联，否则规则静默失效
+            conn.execute(
+                "UPDATE whisper_rules SET sender = ? WHERE sender = ? COLLATE NOCASE",
+                (new_name, agent["username"]),
+            )
+            conn.execute(
+                "UPDATE whisper_rules SET receiver = ? WHERE receiver = ? COLLATE NOCASE",
+                (new_name, agent["username"]),
+            )
         agent = _get_user(conn, new_name)
     return _agent_dict(agent)
 
@@ -593,13 +894,156 @@ def update_agent(username: str, body: AgentUpdate, user: HumanUser):
 def delete_agent(username: str, user: HumanUser):
     with get_db() as conn:
         agent = _get_my_agent(conn, user["id"], username)
-        has_messages = conn.execute(
-            "SELECT 1 FROM messages WHERE user_id = ? LIMIT 1", (agent["id"],)
+        has_history = conn.execute(
+            "SELECT 1 FROM messages WHERE user_id = ? OR whisper_to = ? LIMIT 1",
+            (agent["id"], agent["id"]),
         ).fetchone()
-        if has_messages:
-            raise HTTPException(status_code=409, detail="该 Agent 已有聊天记录，请改为停用")
-        conn.execute("DELETE FROM users WHERE id = ?", (agent["id"],))
+        owns_room = conn.execute(
+            "SELECT 1 FROM rooms WHERE created_by = ? LIMIT 1", (agent["id"],)
+        ).fetchone()
+        if has_history or owns_room:
+            raise HTTPException(status_code=409, detail="该 Agent 已有聊天记录或创建过房间，请改为停用")
+        # 私聊规则按用户名匹配，Agent 删除后规则会悬空，一并清掉
+        conn.execute(
+            "DELETE FROM whisper_rules WHERE sender = ? COLLATE NOCASE OR receiver = ? COLLATE NOCASE",
+            (agent["username"], agent["username"]),
+        )
+        try:
+            conn.execute("DELETE FROM users WHERE id = ?", (agent["id"],))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="该 Agent 存在关联记录，请改为停用") from exc
     return {"deleted": True, "username": username}
+
+
+# ---------- 头像 / 3D 形象 ----------
+# 本人用不带 ?as= 的接口；主人替自己名下的 Agent 设置时加 ?as=<agent 用户名>。
+
+@app.get("/api/users/{username}/avatar")
+def get_avatar(username: str, user: CurrentUser):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT username, avatar, avatar_mime FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    headers = {"Cache-Control": "private, max-age=86400"}
+    if row["avatar"]:
+        return Response(row["avatar"], media_type=row["avatar_mime"] or "image/jpeg", headers=headers)
+    return Response(_default_avatar_svg(row["username"]), media_type="image/svg+xml", headers=headers)
+
+
+@app.post("/api/me/avatar")
+async def set_my_avatar(
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    as_username: Annotated[str | None, Query(alias="as")] = None,
+):
+    data = await file.read()
+    mime = _validate_avatar_bytes(data, file.content_type)
+    with get_db() as conn:
+        target = _resolve_profile_target(conn, user, as_username)
+        conn.execute(
+            "UPDATE users SET avatar = ?, avatar_mime = ?, avatar_updated_at = ? WHERE id = ?",
+            (data, mime, _db_now(conn), target["id"]),
+        )
+        row = _get_user_by_id(conn, target["id"])
+    return {"username": row["username"], **_profile_fields(row)}
+
+
+@app.delete("/api/me/avatar")
+def delete_my_avatar(user: CurrentUser, as_username: Annotated[str | None, Query(alias="as")] = None):
+    with get_db() as conn:
+        target = _resolve_profile_target(conn, user, as_username)
+        conn.execute(
+            "UPDATE users SET avatar = NULL, avatar_mime = NULL, avatar_updated_at = NULL WHERE id = ?",
+            (target["id"],),
+        )
+        row = _get_user_by_id(conn, target["id"])
+    return {"username": row["username"], **_profile_fields(row)}
+
+
+@app.get("/api/users/{username}/model3d")
+def get_model3d(username: str, user: CurrentUser):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT model3d, model3d_mime FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    if not row or not row["model3d"]:
+        raise HTTPException(status_code=404, detail="该账号没有上传 3D 模型文件")
+    return Response(
+        row["model3d"],
+        media_type=row["model3d_mime"] or "model/gltf-binary",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@app.post("/api/me/model3d")
+async def set_my_model3d(
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    as_username: Annotated[str | None, Query(alias="as")] = None,
+    arkit: Annotated[bool | None, Query()] = None,
+):
+    data = await file.read()
+    mime = _validate_model3d_bytes(data)
+    with get_db() as conn:
+        target = _resolve_profile_target(conn, user, as_username)
+        arkit_flag = int(target["model3d_arkit"] or 0) if arkit is None else int(arkit)
+        conn.execute(
+            """
+            UPDATE users
+            SET model3d = ?, model3d_mime = ?, model3d_url = NULL,
+                model3d_arkit = ?, model3d_updated_at = ?
+            WHERE id = ?
+            """,
+            (data, mime, arkit_flag, _db_now(conn), target["id"]),
+        )
+        row = _get_user_by_id(conn, target["id"])
+    return {"username": row["username"], **_profile_fields(row)}
+
+
+@app.put("/api/me/model3d")
+def set_my_model3d_url(
+    body: Model3dUpdate,
+    user: CurrentUser,
+    as_username: Annotated[str | None, Query(alias="as")] = None,
+):
+    url = _blank_to_none(body.url)
+    if url is None and body.arkit is None:
+        raise HTTPException(status_code=400, detail="没有需要修改的字段")
+    with get_db() as conn:
+        target = _resolve_profile_target(conn, user, as_username)
+        arkit = int(body.arkit) if body.arkit is not None else int(target["model3d_arkit"] or 0)
+        if url is None:
+            conn.execute("UPDATE users SET model3d_arkit = ? WHERE id = ?", (arkit, target["id"]))
+        else:
+            conn.execute(
+                """
+                UPDATE users SET model3d_url = ?, model3d_arkit = ?,
+                                 model3d = NULL, model3d_mime = NULL, model3d_updated_at = ?
+                WHERE id = ?
+                """,
+                (url, arkit, _db_now(conn), target["id"]),
+            )
+        row = _get_user_by_id(conn, target["id"])
+    return {"username": row["username"], **_profile_fields(row)}
+
+
+@app.delete("/api/me/model3d")
+def delete_my_model3d(user: CurrentUser, as_username: Annotated[str | None, Query(alias="as")] = None):
+    with get_db() as conn:
+        target = _resolve_profile_target(conn, user, as_username)
+        conn.execute(
+            """
+            UPDATE users SET model3d = NULL, model3d_mime = NULL, model3d_url = NULL,
+                             model3d_arkit = 0, model3d_updated_at = NULL
+            WHERE id = ?
+            """,
+            (target["id"],),
+        )
+    return {"username": target["username"], "model3dUrl": None, "model3dArkit": False}
 
 
 # ---------- 房间 ----------
@@ -614,10 +1058,21 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
             raise HTTPException(status_code=410, detail="房间已结束")
         if not room:
             visibility = body.visibility or "private"
+            room_agent_id = _resolve_room_agent(conn, user, body.roomAgent)
             try:
                 conn.execute(
-                    "INSERT INTO rooms (name, created_by, password_hash, visibility) VALUES (?, ?, ?, ?)",
-                    (body.roomName, user["id"], auth.hash_password(password) if password else None, visibility),
+                    """
+                    INSERT INTO rooms (name, created_by, password_hash, visibility, rules, room_agent_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        body.roomName,
+                        user["id"],
+                        auth.hash_password(password) if password else None,
+                        visibility,
+                        _blank_to_none(body.rules),
+                        room_agent_id,
+                    ),
                 )
             except sqlite3.IntegrityError as exc:
                 raise HTTPException(status_code=409, detail="房间名已存在") from exc
@@ -698,7 +1153,14 @@ def room_detail(room_name: str, user: CurrentUser):
 
 @app.patch("/api/rooms/{room_name}")
 def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
-    if body.roomName is None and body.password is None and body.visibility is None and body.muted is None:
+    if (
+        body.roomName is None
+        and body.password is None
+        and body.visibility is None
+        and body.muted is None
+        and body.rules is None
+        and body.roomAgent is None
+    ):
         raise HTTPException(status_code=400, detail="没有需要修改的字段")
     with get_db() as conn:
         room = _require_active_room(conn, room_name)
@@ -718,9 +1180,18 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
             password_hash = auth.hash_password(password) if password else None
         visibility = body.visibility or room["visibility"]
         muted = room["muted"] if body.muted is None else int(body.muted)
+        rules = room["rules"] if body.rules is None else (_blank_to_none(body.rules) or "")
+        if body.roomAgent is None:
+            room_agent_id = room["room_agent_id"]
+        else:
+            room_agent_id = _resolve_room_agent(conn, user, body.roomAgent)
         conn.execute(
-            "UPDATE rooms SET name = ?, password_hash = ?, visibility = ?, muted = ? WHERE id = ?",
-            (new_name, password_hash, visibility, muted, room["id"]),
+            """
+            UPDATE rooms
+            SET name = ?, password_hash = ?, visibility = ?, muted = ?, rules = ?, room_agent_id = ?
+            WHERE id = ?
+            """,
+            (new_name, password_hash, visibility, muted, rules, room_agent_id, room["id"]),
         )
         _touch(conn, room["id"], user["id"])
         room = _get_room(conn, new_name)
@@ -835,6 +1306,7 @@ def _member_dict(row, online_cutoff: str = ONLINE_WINDOW) -> dict:
         "canUpload": bool(row["can_upload"]),
         "canViewHistory": bool(row["can_view_history"]),
         "online": bool(row["online"]),
+        "avatarUrl": _avatar_url(row["username"], _row_get(row, "avatarV")),
     }
 
 
@@ -845,7 +1317,7 @@ def list_members(room_name: str, user: CurrentUser):
         _require_owner(room, user["id"])
         rows = conn.execute(
             """
-            SELECT m.*, u.username, u.kind,
+            SELECT m.*, u.username, u.kind, u.avatar_updated_at AS avatarV,
                    CASE WHEN m.last_seen_at > datetime('now', ?) THEN 1 ELSE 0 END AS online
             FROM room_members m
             JOIN users u ON u.id = m.user_id
@@ -896,13 +1368,95 @@ def set_permissions(room_name: str, username: str, body: PermissionUpdate, user:
     }
 
 
+# ---------- 私聊权限（白名单 / 黑名单，仅房主管理） ----------
+
+WHISPER_RULE_SELECT = """
+            SELECT id, room_id, list_type, priority, sender, receiver, created_at AS createdAt
+            FROM whisper_rules
+"""
+
+
+def _whisper_rule_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "listType": row["list_type"],
+        "priority": row["priority"],
+        "sender": row["sender"],
+        "receiver": row["receiver"],
+        "createdAt": row["createdAt"],
+    }
+
+
+def _require_room_owner_conn(conn, room_name: str, user: dict):
+    room = _require_active_room(conn, room_name)
+    _require_owner(room, user["id"])
+    return room
+
+
+@app.get("/api/rooms/{room_name}/whisper-rules")
+def list_whisper_rules(room_name: str, user: CurrentUser):
+    with get_db() as conn:
+        room = _require_room_owner_conn(conn, room_name, user)
+        rows = conn.execute(
+            WHISPER_RULE_SELECT + " WHERE room_id = ? ORDER BY priority DESC, id ASC",
+            (room["id"],),
+        ).fetchall()
+    return {"roomName": room["name"], "rules": [_whisper_rule_dict(row) for row in rows]}
+
+
+@app.post("/api/rooms/{room_name}/whisper-rules")
+def add_whisper_rule(room_name: str, body: WhisperRuleCreate, user: CurrentUser):
+    def _canonical(name: str) -> str:
+        if name == "*":
+            return "*"
+        u = _get_user(conn, name)
+        if not u:
+            raise HTTPException(status_code=404, detail=f"用户 {name} 不存在")
+        return u["username"]
+
+    with get_db() as conn:
+        room = _require_room_owner_conn(conn, room_name, user)
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO whisper_rules (room_id, list_type, priority, sender, receiver)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    room["id"],
+                    body.listType,
+                    body.priority,
+                    _canonical(body.sender),
+                    _canonical(body.receiver),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="相同的规则已存在") from exc
+        row = conn.execute(WHISPER_RULE_SELECT + " WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _whisper_rule_dict(row)
+
+
+@app.delete("/api/rooms/{room_name}/whisper-rules/{rule_id}")
+def delete_whisper_rule(room_name: str, rule_id: int, user: CurrentUser):
+    with get_db() as conn:
+        room = _require_room_owner_conn(conn, room_name, user)
+        cur = conn.execute(
+            "DELETE FROM whisper_rules WHERE id = ? AND room_id = ?",
+            (rule_id, room["id"]),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="规则不存在")
+    return {"deleted": True, "id": rule_id}
+
+
 # ---------- 消息与附件 ----------
 
 MESSAGE_SELECT = """
             SELECT m.id, m.content, m.msg_type, m.attachment_name, m.created_at AS createdAt,
                    COALESCE(m.streaming, 0) AS streaming,
                    COALESCE(m.updated_at, m.created_at) AS updatedAt,
-                   u.username
+                   m.user_id, m.whisper_to,
+                   u.username, u.avatar_updated_at AS avatarV
             FROM messages m JOIN users u ON u.id = m.user_id
 """
 
@@ -940,6 +1494,31 @@ def _finalize_stale_streams(conn, room_id: int) -> None:
     )
 
 
+def _visible_rows(rows, room, user_id: int) -> list[dict]:
+    """私聊可见性：只有发送者、接收者、房主能看到内容。
+
+    其余请求者拿到的行被抹成“空行”——保留 id 让增量游标（afterId）不乱，
+    但不泄露发送者与内容；UI 端忽略空行不渲染。
+    """
+    result = []
+    for row in rows:
+        item = dict(row)
+        if (
+            item.get("whisper_to") is not None
+            and user_id not in (item["user_id"], item["whisper_to"], room["created_by"])
+        ):
+            item["content"] = ""
+            item["username"] = ""
+            item["avatarV"] = None
+            item["msg_type"] = "text"
+            item["streaming"] = 0
+            item["attachment_name"] = None
+            item["attachment_path"] = None
+            item["whisper_to"] = None
+        result.append(item)
+    return result
+
+
 def _fetch_messages(
     conn,
     room,
@@ -972,7 +1551,7 @@ def _fetch_messages(
             """,
             (room["id"], *history_params, limit),
         ).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        return _visible_rows(reversed(rows), room, user_id)
 
     stream_ids = stream_ids or []
     extra_sql = ""
@@ -993,7 +1572,7 @@ def _fetch_messages(
         """,
         (room["id"], after_id, *extra_params, *history_params, limit),
     ).fetchall()
-    return [dict(row) for row in rows]
+    return _visible_rows(rows, room, user_id)
 
 
 @app.get("/api/rooms/{room_name}/messages")
@@ -1040,10 +1619,14 @@ def send_message(room_name: str, body: MessageCreate, user: CurrentUser):
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
         _check_action_allowed(room, member, user["id"], "speak")
+        target = _resolve_whisper(conn, room["id"], body.content)
+        if target is not None:
+            _require_whisper_allowed(conn, room["id"], user["username"], target["username"])
+        whisper_to = target["id"] if target else None
         now = _db_now(conn)
         conn.execute(
-            "INSERT INTO messages (room_id, user_id, content, updated_at) VALUES (?, ?, ?, ?)",
-            (room["id"], user["id"], body.content, now),
+            "INSERT INTO messages (room_id, user_id, content, whisper_to, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (room["id"], user["id"], body.content, whisper_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
         room_id = room["id"]
@@ -1059,13 +1642,17 @@ def start_stream(room_name: str, user: CurrentUser, body: StreamStart = StreamSt
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
         _check_action_allowed(room, member, user["id"], "speak")
+        target = _resolve_whisper(conn, room["id"], payload.content or "")
+        if target is not None:
+            _require_whisper_allowed(conn, room["id"], user["username"], target["username"])
+        whisper_to = target["id"] if target else None
         now = _db_now(conn)
         conn.execute(
             """
-            INSERT INTO messages (room_id, user_id, content, streaming, updated_at)
-            VALUES (?, ?, ?, 1, ?)
+            INSERT INTO messages (room_id, user_id, content, whisper_to, streaming, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?)
             """,
-            (room["id"], user["id"], payload.content or "", now),
+            (room["id"], user["id"], payload.content or "", whisper_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
         room_id = room["id"]
@@ -1085,7 +1672,7 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
         room, member = _require_membership(conn, room_name, user["id"])
         _finalize_stale_streams(conn, room["id"])
         row = conn.execute(
-            "SELECT id, user_id, content, msg_type, streaming FROM messages WHERE id = ? AND room_id = ?",
+            "SELECT id, user_id, content, msg_type, streaming, whisper_to FROM messages WHERE id = ? AND room_id = ?",
             (message_id, room["id"]),
         ).fetchone()
         if not row:
@@ -1102,16 +1689,24 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
             content = body.content
         elif body.delta is not None:
             content = content + body.delta
-        if len(content) > 2000:
-            raise HTTPException(status_code=400, detail="消息超过 2000 字上限")
+        if len(content) > 8000:
+            raise HTTPException(status_code=400, detail="消息超过 8000 字上限")
+        # 内容变化时重解析 @@ 前缀：新增前缀要重新过私聊规则并改写接收者；
+        # 去掉前缀时保留原私聊属性（可见性只紧不松），防止私聊内容被公开广播
+        target = _resolve_whisper(conn, room["id"], content)
+        if target is not None:
+            _require_whisper_allowed(conn, room["id"], user["username"], target["username"])
+            whisper_to = target["id"]
+        else:
+            whisper_to = row["whisper_to"]
         streaming = 0 if body.done else 1
         conn.execute(
             """
             UPDATE messages
-            SET content = ?, streaming = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+            SET content = ?, whisper_to = ?, streaming = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
             WHERE id = ?
             """,
-            (content, streaming, message_id),
+            (content, whisper_to, streaming, message_id),
         )
         row = _load_message(conn, message_id)
         room_id = room["id"]

@@ -2,6 +2,8 @@
 
 本文件供 Mac 版 ChatGPT/Codex Agent 会话使用。聊天室网页消息不会自动进入当前对话；应使用本机长轮询 watcher，在有新的人类消息时再唤醒 Agent。
 
+协议与接口以同目录 `SKILL.md` / `http://127.0.0.1:8765/skill.md` 为准；回复内容格式（Markdown 表格 / ` ```mermaid ` / ` ```chart `）见 SKILL.md「富文本消息」。
+
 ## 推荐链路
 
 人类网页消息 → 服务端 `GET /api/rooms/{room}/messages?afterId=...&wait=25` 返回 → `watch.py` 输出 `AGENT_LOOP_TICK_chatroom` → 宿主通过终端输出匹配或后台任务完成通知唤醒当前 Agent → Agent 运行 `inbox.py` 并回复。
@@ -28,7 +30,7 @@ pattern: ^AGENT_LOOP_TICK_(webharness|chatroom)
 
 1. 只运行一次 `inbox.py <房间名>`，不要使用 `--peek`，让共享水位推进。
 2. 只处理其他用户的新消息，不回复自己的消息。
-3. 能流式时使用同一条消息的 `start → delta → done`；首块尽快发送。
+3. 能流式时使用同一条消息的 `start → delta → done`；首块尽快发送。回复内容用 Markdown 表格 / ` ```mermaid ` / ` ```chart ` 呈现结构化数据（见 SKILL.md「富文本消息」）。
 4. 回复完成后不要重新启动第二个 watcher，原 watcher 会继续等待。
 
 ## 延迟与边界

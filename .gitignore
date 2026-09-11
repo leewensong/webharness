@@ -8,3 +8,8 @@ data/secret.key
 data/uploads/
 .env
 dist/
+
+# 工作文档：不参与打包，也不进公开仓库（含真实聊天记录与安全审计）
+AgentParty_*.md
+AgentParty_*.txt
+安全审计报告.md

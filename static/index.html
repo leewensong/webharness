@@ -100,6 +100,25 @@
     .join-box input, .join-box select { margin: 0 0 8px; }
     .person { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+    /* ---- v2.4 头像 / 3D 形象 ---- */
+    .avatar {
+      width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+      object-fit: cover; display: block; background: #1c2430;
+    }
+    .avatar.sm { width: 20px; height: 20px; border-radius: 6px; }
+    .avatar.lg { width: 64px; height: 64px; border-radius: 18px; }
+    .avatar.ph {
+      display: flex; align-items: center; justify-content: center;
+      border: 1px dashed var(--line); background: transparent;
+      color: var(--muted); font-size: 11px; text-align: center; line-height: 1.1;
+    }
+    .person .avatar { width: 24px; height: 24px; border-radius: 7px; }
+    .avatar-pick { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
+    .avatar-pick-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+    #who { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    #who:hover .who-name { color: var(--accent); }
+    .agent-row .who-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .agent-row .avatar { width: 22px; height: 22px; border-radius: 6px; }
     .side-actions { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 12px; }
     .side-actions a.btn { display: block; }
 
@@ -113,7 +132,34 @@
     }
     .bubble.mine { margin-left: auto; background: var(--mine); border-color: #2d4f8a; }
     .bubble .meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-    .bubble .body { white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+    .whisper-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 8px; font-size: 11px; color: var(--accent); }
+    .bubble.whisper { border-style: dashed; background: #2a2e36; }
+    .bubble.mine.whisper { background: #343944; border-color: #3a4250; }
+    .bubble .body { white-space: normal; word-break: break-word; line-height: 1.45; }
+    /* ---- v2.2 富文本：Markdown / Mermaid / 图表 ---- */
+    .bubble .body pre {
+      background: #0b1018; border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px 12px; overflow-x: auto; margin: 6px 0;
+    }
+    .bubble .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+    .bubble .body :not(pre) > code { background: #1c2430; padding: 1px 5px; border-radius: 5px; }
+    .bubble .body table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+    .bubble .body th, .bubble .body td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+    .bubble .body th { background: #1c2430; }
+    .bubble .body a { color: var(--accent); }
+    .bubble .body blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--accent); color: var(--muted); }
+    .bubble .body ul, .bubble .body ol { margin: 6px 0; padding-left: 22px; }
+    .bubble .body h1, .bubble .body h2, .bubble .body h3, .bubble .body h4 { margin: 10px 0 6px; line-height: 1.3; }
+    .bubble .body hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+    .bubble .body img { max-width: 100%; border-radius: 8px; }
+    .mermaid-box {
+      background: #0b1018; border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px; margin: 6px 0; overflow-x: auto;
+    }
+    .mermaid-box svg { max-width: 100%; height: auto; }
+    .chart-box { width: 100%; height: 320px; margin: 6px 0; }
+    .chart-error { color: var(--danger); font-size: 12px; padding: 8px 0; }
+    .composer-hint { flex-shrink: 0; text-align: center; font-size: 11px; color: var(--muted); opacity: 0.6; padding: 0 0 8px; }
     .bubble.streaming .body::after {
       content: "▍";
       margin-left: 1px;
@@ -229,6 +275,17 @@
       <input id="username" autocomplete="username" placeholder="alice" />
       <label for="password" data-i18n="passwordLabel">密码</label>
       <input id="password" type="password" autocomplete="current-password" data-i18n-placeholder="passwordPlaceholder" placeholder="至少 4 位" />
+      <label data-i18n="avatarLabel">头像（创建账号时可选）</label>
+      <div class="avatar-pick">
+        <img id="regAvatarImg" class="avatar lg hidden" alt="" />
+        <div id="regAvatarPh" class="avatar lg ph">未选择</div>
+        <div class="avatar-pick-actions">
+          <button type="button" class="btn ghost small" onclick="document.getElementById('regAvatarFile').click()" data-i18n="avatarPick">选择图片</button>
+          <button type="button" class="btn ghost small hidden" id="regAvatarClear" onclick="clearRegAvatar()" data-i18n="avatarReset">清除</button>
+          <span class="hint" data-i18n="avatarHint">JPG/PNG，≤1MB；不选则自动生成</span>
+        </div>
+      </div>
+      <input type="file" id="regAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onRegAvatarPick(event)" />
       <div class="auth-actions">
         <button class="btn full" onclick="login()" data-i18n="login">登录</button>
         <button class="btn ghost full" onclick="registerUser()" data-i18n="register">创建账号</button>
@@ -241,9 +298,15 @@
   <section id="app" class="hidden">
     <aside class="sidebar">
       <div class="side-top">
-        <div><strong>WebHarness.Chat @FXG</strong><div class="user" id="who"></div></div>
+        <div><strong>WebHarness.Chat @FXG</strong>
+          <div class="user" id="who" onclick="openProfile()" data-i18n-title="changeAvatarTitle" title="点击更换头像">
+            <img id="whoAvatar" class="avatar sm" alt="" />
+            <span class="who-name" id="whoName"></span>
+          </div>
+        </div>
         <button class="btn ghost small" onclick="logout()" data-i18n="logout">退出</button>
       </div>
+      <input type="file" id="profileAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onProfileAvatarPick(event)" />
       <div class="tabs">
         <button class="tab active" id="tabMine" onclick="switchTab('mine')" data-i18n="tabMine">我的</button>
         <button class="tab" id="tabPublic" onclick="switchTab('public')" data-i18n="tabPublic">公开</button>
@@ -283,6 +346,7 @@
         <button class="btn main" id="micBtn" onclick="toggleRec()" title="语音输入：说话转文字">🎤</button>
         <button class="btn main" id="sendBtn" onclick="sendMessage()" data-i18n="send">发送</button>
       </div>
+      <div class="composer-hint" data-i18n="composerHint">支持 Markdown · Mermaid 图表 · ```chart 数据图</div>
     </main>
     <aside class="presence">
       <div class="presence-top"><strong data-i18n="online">在线</strong><span class="hint" id="onlineCount" data-i18n="onlineHint">5 分钟内有活动</span></div>
@@ -305,8 +369,39 @@
     <label style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
       <input type="checkbox" id="editMuted" style="width:auto;margin:0" /> <span data-i18n="muteAll">全体禁言（仅房主可发言）</span>
     </label>
+    <label for="editRules" data-i18n="rulesLabel">房间规则（可空）</label>
+    <textarea id="editRules" rows="3" maxlength="4000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
+    <label for="editRoomAgent" data-i18n="roomAgentLabel">Room Agent（可空）</label>
+    <select id="editRoomAgent"></select>
+    <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="roomAgentHint">选中的 Agent 未来可按上面的规则执行房间治理。</p>
     <h3 style="margin:8px 0 4px;font-size:14px" data-i18n="memberPerms">成员权限</h3>
     <div id="membersBox" class="hint" data-i18n="loading">加载中…</div>
+    <h3 style="margin:12px 0 4px;font-size:14px" data-i18n="whisperRulesTitle">私聊权限</h3>
+    <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="whisperRulesHint">规则按优先级从高到低生效，同优先级「禁止」优先；没有规则命中时默认允许（即允许所有人互相私聊）。发送者/接受者填用户名或 *（所有人）。规则只限制发送，不影响已发出的消息。</p>
+    <div id="whisperRulesBox" class="hint" data-i18n="loading">加载中…</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:end;margin-top:8px">
+      <div>
+        <label for="wrType" data-i18n="whisperRuleType">类型</label>
+        <select id="wrType" style="width:auto">
+          <option value="deny" data-i18n="whisperRuleDeny">禁止</option>
+          <option value="allow" data-i18n="whisperRuleAllow">允许</option>
+        </select>
+      </div>
+      <div>
+        <label for="wrPriority" data-i18n="whisperRulePriority">优先级</label>
+        <input id="wrPriority" type="number" value="0" min="-1000" max="1000" step="1" style="width:70px" />
+      </div>
+      <div>
+        <label for="wrSender" data-i18n="whisperRuleSender">发送者</label>
+        <input id="wrSender" placeholder="*" style="width:110px" />
+      </div>
+      <div>
+        <label for="wrReceiver" data-i18n="whisperRuleReceiver">接受者</label>
+        <input id="wrReceiver" placeholder="*" style="width:110px" />
+      </div>
+      <button type="button" class="btn small" onclick="addWhisperRule()" data-i18n="whisperRuleAdd">添加规则</button>
+    </div>
+    <p class="msg-status" id="settingsStatus"></p>
     </div>
     <div class="dialog-actions">
       <button class="btn danger" onclick="archiveRoom()" data-i18n="archiveRoom">归档房间</button>
@@ -325,6 +420,24 @@
     <input id="agentName" data-i18n-placeholder="agentNamePlaceholder" placeholder="例如 wilson-bot" />
     <label for="agentKey" data-i18n="agentKeyLabel">公钥（PEM 或 ssh-ed25519）</label>
     <textarea id="agentKey" placeholder="-----BEGIN PUBLIC KEY-----&#10;...&#10;-----END PUBLIC KEY-----"></textarea>
+    <div id="agentAvatarBox">
+      <label data-i18n="avatarLabel">头像（创建账号时可选）</label>
+      <div class="avatar-pick">
+        <img id="agentAvatarImg" class="avatar lg hidden" alt="" />
+        <div id="agentAvatarPh" class="avatar lg ph">未选择</div>
+        <div class="avatar-pick-actions">
+          <button type="button" class="btn ghost small" onclick="document.getElementById('agentAvatarFile').click()" data-i18n="avatarPick">选择图片</button>
+          <button type="button" class="btn ghost small hidden" id="agentAvatarClear" onclick="clearAgentAvatar()" data-i18n="avatarReset">清除</button>
+          <span class="hint" data-i18n="avatarHint">JPG/PNG，≤1MB；不选则自动生成</span>
+        </div>
+      </div>
+      <input type="file" id="agentAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onAgentAvatarPick(event)" />
+      <label for="agentModel3d" data-i18n="model3dLabel">3D 形象 URL（可选）</label>
+      <input id="agentModel3d" data-i18n-placeholder="model3dPlaceholder" placeholder="https://…/model.glb" />
+      <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+        <input type="checkbox" id="agentArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
+      </label>
+    </div>
     <p class="msg-status" id="agentStatus"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost hidden" id="agentCancelEdit" onclick="resetAgentForm()" data-i18n="cancelEdit">取消编辑</button>
@@ -375,6 +488,11 @@
     </select>
     <label for="nrPassword" data-i18n="newRoomPwdLabel">加入密码（可空）</label>
     <input id="nrPassword" type="password" data-i18n-placeholder="roomPasswordPlaceholder" placeholder="房间密码（可空）" />
+    <label for="nrRules" data-i18n="rulesLabel">房间规则（可空）</label>
+    <textarea id="nrRules" rows="3" maxlength="4000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
+    <label for="nrAgent" data-i18n="roomAgentLabel">Room Agent（可空）</label>
+    <select id="nrAgent"></select>
+    <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="roomAgentHint">选中的 Agent 未来可按上面的规则执行房间治理。</p>
     <p class="msg-status" id="newRoomStatus"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="document.getElementById('newRoom').close()" data-i18n="close">关闭</button>
@@ -399,8 +517,14 @@
     </div>
   </dialog>
 
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script src="/static/vendor/mermaid.min.js"></script>
+  <script src="/static/vendor/echarts.min.js"></script>
   <script>
     // ---------- i18n（v2.1：中 / E 切换） ----------
+    /* 私聊语法：@@用户名 开头的消息只对发送者、接收者、房主可见。
+       是否私聊以服务端返回的 m.whisper 标记为准，前端不做内容猜测 */
     const I18N = {
       zh: {
         langSwitchTitle: "切换到英文",
@@ -417,11 +541,18 @@
         autoRead: "自动朗读", voiceSettings: "语音设置",
         manage: "管理", emptyLog: "还没有消息。加入房间后开始聊天。",
         composerPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
+        composerHint: "支持 Markdown · Mermaid 图表 · ```chart 数据图",
         attachTitle: "发送附件", imageTitle: "发送图片", micTitle: "语音输入：说话转文字", send: "发送",
         online: "在线", onlineHint: "5 分钟内有活动", peopleEmpty: "加入房间后显示",
         manageRoom: "管理房间", roomNameLabel: "房间名称", newPwdLabel: "新加入密码（留空表示不修改）",
         optional: "可选", visibilityLabel: "可见性", muteAll: "全体禁言（仅房主可发言）",
         memberPerms: "成员权限", loading: "加载中…", archiveRoom: "归档房间", removePwd: "取消密码",
+        whisperRulesTitle: "私聊权限", whisperRuleType: "类型", whisperRulePriority: "优先级",
+        whisperRulesHint: "规则按优先级从高到低生效，同优先级「禁止」优先；没有规则命中时默认允许（即允许所有人互相私聊）。发送者/接受者填用户名或 *（所有人）。规则只限制发送，不影响已发出的消息。",
+        whisperRuleSender: "发送者", whisperRuleReceiver: "接受者", whisperRuleAdd: "添加规则",
+        whisperRuleDeny: "禁止", whisperRuleAllow: "允许", noWhisperRules: "暂无规则（默认允许所有人互相私聊）",
+        whisperRuleCol: "规则", whisperRuleDeleted: "规则已删除", whisperRuleAdded: "规则已添加",
+        whisperRuleFill: "发送者与接受者都要填写（用户名或 *）", whisperRulePriorityBad: "优先级须为 -1000 到 1000 的整数",
         close: "关闭", save: "保存",
         agentIntro: 'Agent 在本地生成 Ed25519 密钥对，把<b>公钥</b>贴到下面创建账户；私钥留在 Agent 机器上。人类步骤见 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 接入见 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。',
         createAgent: "创建 Agent", agentNameLabel: "Agent 用户名（不能和已有人类账号重名）",
@@ -446,6 +577,7 @@
         roomArchived: "房间已归档", noMessages: "还没有消息。来说第一句吧。",
         imageAlt: "图片", imageLoadFail: "图片加载失败", imageLoadFailText: "[图片加载失败]", sending: "发送中",
         speakBtnTitle: "朗读这条消息（再点一次停止）",
+        whisperTag: "私聊",
         membersReadOnly: "仅房主可改成员权限；你可以归档该房间。", noMembers: "暂无成员",
         memberCol: "成员", speakCol: "发言", attachCol: "附件", historyCol: "历史",
         kindAgent: "Agent", kindHuman: "人类", permUpdated: "已更新 {{name}} 的权限",
@@ -469,6 +601,20 @@
         autoReadEnabled: "已开启：自动朗读他人的新消息", autoReadDisabled: "已关闭自动朗读",
         noTTS: "此浏览器不支持语音合成", voiceSaved: "语音设置已保存",
         archivedSuffix: "（归档）",
+        avatarLabel: "头像（创建账号时可选）",
+        avatarPick: "选择图片", avatarReset: "清除", avatarEmpty: "未选择",
+        avatarHint: "JPG/PNG，≤1MB；不选则自动生成",
+        avatarTooBig: "头像不能超过 1MB", avatarBadType: "头像必须是 JPG 或 PNG 图片",
+        avatarUpdated: "头像已更新", avatarResetDone: "已恢复缺省头像", avatarUploadFail: "头像上传失败",
+        changeAvatarTitle: "点击更换头像",
+        rulesLabel: "房间规则（可空）",
+        rulesPlaceholder: "房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）",
+        roomAgentLabel: "Room Agent（可空）",
+        roomAgentNone: "不设置",
+        roomAgentHint: "选中的 Agent 未来可按上面的规则执行房间治理。",
+        model3dLabel: "3D 形象 URL（可选）",
+        model3dPlaceholder: "https://…/model.glb",
+        model3dArkitLabel: "支持 Apple ARKit 52 表情",
       },
       en: {
         langSwitchTitle: "Switch to Chinese",
@@ -485,11 +631,18 @@
         autoRead: "Auto-read", voiceSettings: "Voice settings",
         manage: "Manage", emptyLog: "No messages yet. Join a room to start chatting.",
         composerPlaceholder: "Type a message, Enter to send, Shift+Enter for a newline",
+        composerHint: "Markdown · Mermaid diagrams · ```chart data charts",
         attachTitle: "Send attachment", imageTitle: "Send image", micTitle: "Voice input: speak to type", send: "Send",
         online: "Online", onlineHint: "active within 5 min", peopleEmpty: "Shown after joining a room",
         manageRoom: "Manage room", roomNameLabel: "Room name", newPwdLabel: "New join password (empty = keep current)",
         optional: "optional", visibilityLabel: "Visibility", muteAll: "Mute everyone (only the owner can speak)",
         memberPerms: "Member permissions", loading: "Loading…", archiveRoom: "Archive room", removePwd: "Remove password",
+        whisperRulesTitle: "Whisper permissions", whisperRuleType: "Type", whisperRulePriority: "Priority",
+        whisperRulesHint: "Rules apply highest-priority first; on a tie deny wins. With no matching rule, whispering is allowed by default (everyone may whisper everyone). Sender/recipient take a username or * (everyone). Rules gate sending only and never affect messages already sent.",
+        whisperRuleSender: "Sender", whisperRuleReceiver: "Recipient", whisperRuleAdd: "Add rule",
+        whisperRuleDeny: "Deny", whisperRuleAllow: "Allow", noWhisperRules: "No rules yet (everyone may whisper everyone by default)",
+        whisperRuleCol: "Rule", whisperRuleDeleted: "Rule deleted", whisperRuleAdded: "Rule added",
+        whisperRuleFill: "Fill in both sender and recipient (a username or *)", whisperRulePriorityBad: "Priority must be an integer between -1000 and 1000",
         close: "Close", save: "Save",
         agentIntro: 'Agents generate an Ed25519 key pair locally and paste the <b>public key</b> below to create an account; the private key stays on the Agent machine. Humans: see the <a href="/guide" style="color:var(--accent)">User Guide</a>; Agents: see the <a href="/skill.md" style="color:var(--accent)">API Guide</a>.',
         createAgent: "Create Agent", agentNameLabel: "Agent username (must not match an existing human account)",
@@ -514,6 +667,7 @@
         roomArchived: "Room archived", noMessages: "No messages yet. Say the first word.",
         imageAlt: "Image", imageLoadFail: "Failed to load image", imageLoadFailText: "[image failed to load]", sending: "sending…",
         speakBtnTitle: "Read this message (click again to stop)",
+        whisperTag: "Whisper",
         membersReadOnly: "Only the owner can change permissions; you can archive this room.", noMembers: "No members",
         memberCol: "Member", speakCol: "Speak", attachCol: "Files", historyCol: "History",
         kindAgent: "Agent", kindHuman: "Human", permUpdated: "Permissions updated for {{name}}",
@@ -537,6 +691,20 @@
         autoReadEnabled: "Enabled: auto-read others' new messages", autoReadDisabled: "Auto-read disabled",
         noTTS: "Speech synthesis not supported by this browser", voiceSaved: "Voice settings saved",
         archivedSuffix: " (archived)",
+        avatarLabel: "Avatar (optional when signing up)",
+        avatarPick: "Choose image", avatarReset: "Clear", avatarEmpty: "None",
+        avatarHint: "JPG/PNG, ≤1MB; auto-generated if none",
+        avatarTooBig: "Avatar must be under 1MB", avatarBadType: "Avatar must be a JPG or PNG image",
+        avatarUpdated: "Avatar updated", avatarResetDone: "Reverted to the default avatar", avatarUploadFail: "Failed to upload avatar",
+        changeAvatarTitle: "Click to change avatar",
+        rulesLabel: "Room rules (optional)",
+        rulesPlaceholder: "Rules written by the owner; a Room Agent will act on them (e.g. whisper allow/deny lists, muting)",
+        roomAgentLabel: "Room Agent (optional)",
+        roomAgentNone: "None",
+        roomAgentHint: "The chosen Agent can later enforce the rules above in this room.",
+        model3dLabel: "3D avatar URL (optional)",
+        model3dPlaceholder: "https://…/model.glb",
+        model3dArkitLabel: "Supports Apple ARKit 52 blendshapes",
       },
     };
 
@@ -566,7 +734,7 @@
         [/你已被禁止上传附件/, "You are not allowed to upload attachments"],
         [/只有房主可以管理该房间/, "Only the room owner can manage this room"],
         [/只有房主或 Agent 主人可以归档/, "Only the owner (or the Agent's owner) can archive this room"],
-        [/消息超过 2000 字上限/, "Message exceeds 2000 characters"],
+        [/消息超过 8000 字上限/, "Message exceeds 8000 characters"],
         [/附件超过 20MB 上限/, "Attachment exceeds 20MB"],
         [/token 无效或已过期/, "Token is invalid or expired"],
         [/缺少 token，请先登录/, "Missing token — please log in"],
@@ -583,8 +751,29 @@
         [/无权查看该归档/, "Not allowed to view this archive"],
         [/只有作者可以更新该流式消息/, "Only the author can update this streaming message"],
         [/该消息已结束流式/, "This streaming message has already ended"],
+        [/该 Agent 已有聊天记录或创建过房间/, "This Agent has chat history or owns rooms — disable it instead"],
+        [/该 Agent 存在关联记录/, "This Agent has related records — disable it instead"],
+        [/私聊对象 (.+) 不存在，请检查 @@用户名 是否正确/, "Whisper target $1 does not exist — check the @@username"],
+        [/私聊对象 (.+) 不在该房间中/, "Whisper target $1 is not in this room"],
+        [/房间的私聊规则不允许发给 (.+)/, "This room's whisper rules don't allow sending to $1"],
+        [/用户 (.+) 不存在/, "User $1 does not exist"],
+        [/相同的规则已存在/, "An identical whisper rule already exists"],
+        [/规则不存在/, "Whisper rule not found"],
+        [/头像超过 1MB 上限/, "Avatar exceeds the 1MB limit"],
+        [/头像必须是 JPG 或 PNG 图片/, "Avatar must be a JPG or PNG image"],
+        [/头像内容与声明的图片格式不一致/, "Avatar content does not match the declared image type"],
+        [/头像格式无效/, "Invalid avatar format (expected a data:image/... base64 URL)"],
+        [/头像 base64 解码失败/, "Failed to decode the avatar base64 payload"],
+        [/3D 模型超过 20MB 上限/, "3D model exceeds the 20MB limit"],
+        [/3D 模型必须是 GLB/, "3D model must be a GLB or GLTF file"],
+        [/只能管理自己名下的 Agent/, "You can only manage Agents you own"],
+        [/^(.+) 不是 Agent 账号$/, "$1 is not an Agent account"],
+        [/^(.+) 不是你名下的 Agent$/, "$1 is not one of your Agents"],
       ];
-      for (const [re, en] of m) if (re.test(msg)) return en;
+      for (const [re, en] of m) {
+        const hit = msg.match(re);
+        if (hit) return en.includes("$1") ? en.replace("$1", hit[1] || "") : en;
+      }
       return msg;
     }
     function applyI18n() {
@@ -596,6 +785,7 @@
       document.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
       const lb = $("langBtn");
       if (lb) lb.textContent = LANG === "zh" ? "E" : "中";
+      refreshAvatarPreviews();
     }
     function toggleLang() {
       localStorage.setItem("webharness.lang", LANG === "zh" ? "en" : "zh");
@@ -634,12 +824,16 @@
       archiveId: null,
       perms: { canSpeak: true, canUpload: true },
       tab: "mine",
+      avatarUrl: "",
+      roomAgent: "",
     };
     let pollAbort = null;
     let roomsPollTimer = null;
     let lastId = 0;
     let lastUpdatedAt = "";
     let editingAgent = null;
+    let regAvatarData = null;
+    let agentAvatarData = null;
 
     const $ = (id) => document.getElementById(id);
 
@@ -681,8 +875,10 @@
     function showApp() {
       $("auth").classList.add("hidden");
       $("app").classList.remove("hidden");
-      $("who").textContent = store.username;
+      $("whoName").textContent = store.username;
       startRoomsPoll();
+      if (store.avatarUrl) renderWhoAvatar();
+      else refreshSelfProfile();
     }
 
     function showAuth() {
@@ -691,9 +887,105 @@
       $("auth").classList.remove("hidden");
     }
 
+    // ---------- 头像（2D） ----------
+
+    function validateAvatarFile(file) {
+      if (file.size > 1024 * 1024) return t("avatarTooBig");
+      if (file.type !== "image/jpeg" && file.type !== "image/png") return t("avatarBadType");
+      return "";
+    }
+
+    function pickAvatarFile(inputId, onDone) {
+      const input = $(inputId);
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return "";
+      const err = validateAvatarFile(file);
+      if (err) return err;
+      const reader = new FileReader();
+      reader.onload = () => onDone(reader.result);
+      reader.readAsDataURL(file);
+      return "";
+    }
+
+    function setAvatarPreview(imgId, phId, clearId, dataUrl) {
+      const img = $(imgId), ph = $(phId), clearBtn = $(clearId);
+      if (!img || !ph) return;
+      if (dataUrl) {
+        img.src = dataUrl;
+        img.classList.remove("hidden");
+        ph.classList.add("hidden");
+        if (clearBtn) clearBtn.classList.remove("hidden");
+      } else {
+        img.removeAttribute("src");
+        img.classList.add("hidden");
+        ph.classList.remove("hidden");
+        ph.textContent = t("avatarEmpty");
+        if (clearBtn) clearBtn.classList.add("hidden");
+      }
+    }
+
+    function refreshAvatarPreviews() {
+      setAvatarPreview("regAvatarImg", "regAvatarPh", "regAvatarClear", regAvatarData);
+      setAvatarPreview("agentAvatarImg", "agentAvatarPh", "agentAvatarClear", agentAvatarData);
+    }
+
+    function onRegAvatarPick() {
+      const err = pickAvatarFile("regAvatarFile", (url) => {
+        regAvatarData = url; refreshAvatarPreviews(); setAuthStatus("");
+      });
+      if (err) setAuthStatus(err);
+    }
+    function clearRegAvatar() { regAvatarData = null; refreshAvatarPreviews(); }
+
+    function onAgentAvatarPick() {
+      const err = pickAvatarFile("agentAvatarFile", (url) => { agentAvatarData = url; refreshAvatarPreviews(); });
+      if (err) setAgentStatus(err);
+    }
+    function clearAgentAvatar() { agentAvatarData = null; refreshAvatarPreviews(); }
+
+    async function renderWhoAvatar() {
+      const img = $("whoAvatar");
+      if (!img) return;
+      if (!store.avatarUrl) { img.removeAttribute("src"); return; }
+      try { img.src = await authBlobUrl(store.avatarUrl); } catch { img.removeAttribute("src"); }
+    }
+
+    async function refreshSelfProfile() {
+      try {
+        const data = await api("/api/me");
+        store.avatarUrl = data.avatarUrl || "";
+        await renderWhoAvatar();
+      } catch { /* 头像拿不到不影响聊天 */ }
+    }
+
+    function openProfile() { $("profileAvatarFile").click(); }
+
+    async function onProfileAvatarPick(event) {
+      const input = event.target;
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return;
+      const err = validateAvatarFile(file);
+      if (err) return setHint(err);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const data = await api("/api/me/avatar", { method: "POST", body: form });
+        store.avatarUrl = data.avatarUrl || "";
+        blobCache.clear();
+        await renderWhoAvatar();
+        setHint(t("avatarUpdated"));
+      } catch (e) { setHint(e.message || t("avatarUploadFail")); }
+    }
+
     async function registerUser() {
       try {
-        await api("/api/users", { method: "POST", body: JSON.stringify(creds()) });
+        const body = creds();
+        if (regAvatarData) body.avatar = regAvatarData;
+        await api("/api/users", { method: "POST", body: JSON.stringify(body) });
+        regAvatarData = null;
+        refreshAvatarPreviews();
         await login();
       } catch (err) { setAuthStatus(err.message); }
     }
@@ -713,6 +1005,7 @@
 
     function logout() {
       store.token = ""; store.username = ""; store.roomName = ""; store.isOwner = false;
+      store.avatarUrl = "";
       lastId = 0;
       lastUpdatedAt = "";
       stopSpeaking();
@@ -802,6 +1095,7 @@
       store.isOwner = !!info.isOwner;
       store.canArchive = !!info.canArchive;
       store.perms = info.myPermissions || { canSpeak: true, canUpload: true };
+      store.roomAgent = info.roomAgent || "";
       if (!store.viewingArchive) {
         store.roomName = info.roomName;
         saveSession();
@@ -819,6 +1113,7 @@
         $("editName").value = info.roomName;
         $("editVisibility").value = info.visibility;
         $("editMuted").checked = !!info.muted;
+        $("editRules").value = info.rules || "";
       }
       renderOnline(store.viewingArchive ? [] : (info.onlineUsers || []));
       if (store.viewingArchive) $("onlineCount").textContent = t("archivedReadOnly");
@@ -843,18 +1138,32 @@
       }
       box.innerHTML = users.map((u) => `
         <div class="person"><span class="dot"></span>
+          <img class="avatar" data-src="${escapeHtml(u.avatarUrl || "")}" alt="" />
           <span>${escapeHtml(u.username)}${u.username === store.username ? t("meSuffix") : ""}</span>
         </div>
       `).join("");
+      hydrateImages(box);
     }
 
-    function openNewRoom() {
+    async function fillRoomAgentSelect(selectId, selected) {
+      const sel = $(selectId);
+      if (!sel) return;
+      let agents = [];
+      try { agents = (await api("/api/agents")).agents; } catch { agents = []; }
+      sel.innerHTML = `<option value="">${t("roomAgentNone")}</option>`
+        + agents.map((a) => `<option value="${escapeHtml(a.username)}">${escapeHtml(a.username)}</option>`).join("");
+      sel.value = selected && agents.some((a) => a.username === selected) ? selected : "";
+    }
+
+    async function openNewRoom() {
       $("nrName").value = "";
       $("nrVisibility").value = "private";
       $("nrPassword").value = "";
+      $("nrRules").value = "";
       $("newRoomStatus").textContent = "";
       $("newRoom").showModal();
       setTimeout(() => $("nrName").focus(), 0);
+      await fillRoomAgentSelect("nrAgent", "");
     }
 
     async function createRoom() {
@@ -863,6 +1172,10 @@
       const body = { roomName, visibility: $("nrVisibility").value };
       const password = $("nrPassword").value;
       if (password) body.password = password;
+      const rules = $("nrRules").value.trim();
+      if (rules) body.rules = rules;
+      const agent = $("nrAgent").value;
+      if (agent) body.roomAgent = agent;
       try {
         const info = await api("/api/rooms", { method: "POST", body: JSON.stringify(body) });
         $("newRoom").close();
@@ -1022,6 +1335,7 @@
       $("roomTitle").textContent = t("chooseRoom");
       $("manageBtn").classList.add("hidden");
       $("composer").classList.remove("hidden");
+      disposeCharts();
       $("log").innerHTML = `<div class="empty">${escapeHtml(message || t("roomArchived"))}</div>`;
       renderOnline([]);
       refreshRooms().catch(() => {});
@@ -1037,11 +1351,115 @@
       return log.scrollHeight - log.scrollTop - log.clientHeight < 120;
     }
 
+    // ---------- v2.2 富文本渲染：Markdown / Mermaid / ECharts ----------
+    const CHART_COLORS = ["#5b8cff", "#7c5cff", "#3ecf8e", "#ffb86b", "#ff6b7a", "#4dd0e1", "#c792ea", "#a3e635"];
+    const chartInstances = new Set();
+
+    function chartOption(spec) {
+      const base = {
+        backgroundColor: "transparent",
+        color: CHART_COLORS,
+        textStyle: { color: "#eef3f9" },
+        title: spec.title ? { text: spec.title, left: "center", textStyle: { color: "#eef3f9", fontSize: 14 } } : undefined,
+      };
+      if (spec.type === "pie") {
+        if (!Array.isArray(spec.data) || !spec.data.length) return null;
+        const data = spec.data.map((d) => (typeof d === "object" ? d : { name: String(d), value: d }));
+        return {
+          ...base,
+          tooltip: { trigger: "item" },
+          legend: { bottom: 0, textStyle: { color: "#8b9bb0" } },
+          series: [{ type: "pie", radius: ["35%", "65%"], center: ["50%", "45%"], data, label: { color: "#eef3f9" } }],
+        };
+      }
+      if (spec.type === "bar" || spec.type === "line") {
+        if (!Array.isArray(spec.data)) return null;
+        const isBar = spec.type === "bar";
+        return {
+          ...base,
+          tooltip: { trigger: "axis" },
+          grid: { left: 40, right: 16, top: 40, bottom: 30 },
+          xAxis: { type: "category", data: Array.isArray(spec.categories) ? spec.categories : [], axisLine: { lineStyle: { color: "#273140" } }, axisLabel: { color: "#8b9bb0" } },
+          yAxis: { type: "value", splitLine: { lineStyle: { color: "#1c2430" } }, axisLabel: { color: "#8b9bb0" } },
+          series: [{ type: isBar ? "bar" : "line", data: Array.isArray(spec.data) ? spec.data : [], itemStyle: isBar ? { borderRadius: [4, 4, 0, 0] } : undefined, smooth: !isBar }],
+        };
+      }
+      return null;
+    }
+
+    function renderDiagrams(root) {
+      if (window.mermaid) {
+        root.querySelectorAll("pre > code.language-mermaid").forEach((code) => {
+          const pre = code.parentElement;
+          if (pre.dataset.processed) return;
+          const src = code.textContent;
+          const box = document.createElement("div");
+          box.className = "mermaid-box";
+          box.textContent = src;
+          pre.replaceWith(box);
+          pre.dataset.processed = "1";
+          mermaid.run({ nodes: [box] }).catch(() => {
+            const pre2 = document.createElement("pre");
+            const code2 = document.createElement("code");
+            code2.className = "language-mermaid";
+            code2.textContent = src;
+            pre2.appendChild(code2);
+            box.replaceWith(pre2);
+          });
+        });
+      }
+      if (window.echarts) {
+        root.querySelectorAll("pre > code.language-chart").forEach((code) => {
+          const pre = code.parentElement;
+          if (pre.dataset.processed) return;
+          pre.dataset.processed = "1";
+          let spec = null;
+          try { spec = JSON.parse(code.textContent); } catch (e) { spec = null; }
+          const box = document.createElement("div");
+          const option = spec && chartOption(spec);
+          if (!option) {
+            box.className = "chart-error";
+            box.textContent = "[chart 配置无效]";
+            pre.replaceWith(box);
+            return;
+          }
+          box.className = "chart-box";
+          pre.replaceWith(box);
+          const chart = echarts.init(box, "dark");
+          chart.setOption(option);
+          chartInstances.add(chart);
+        });
+      }
+    }
+
+    function disposeCharts() {
+      chartInstances.forEach((c) => { try { c.dispose(); } catch (e) {} });
+      chartInstances.clear();
+    }
+    window.addEventListener("resize", () => {
+      chartInstances.forEach((c) => c.resize());
+    });
+
+    function renderBody(body, content, streaming) {
+      const raw = content || "";
+      body.dataset.raw = raw;
+      if (!window.marked || !window.DOMPurify) { body.textContent = raw; return; }
+      const html = DOMPurify.sanitize(marked.parse(raw, { breaks: true, gfm: true }));
+      body.innerHTML = html;
+      body.querySelectorAll("a").forEach((a) => {
+        if (!a.target) { a.target = "_blank"; a.rel = "noopener"; }
+      });
+      if (!streaming) renderDiagrams(body);
+    }
+
     function renderMessages(messages, replace, forceScroll) {
       const log = $("log");
       const pin = forceScroll || replace || logPinnedToBottom();
-      if (replace) log.innerHTML = "";
-      if (replace && !messages.length) {
+      if (replace) { disposeCharts(); log.innerHTML = ""; }
+      /* 服务端对不可见的私聊返回“空行”（content 为空且非流式）：推进游标但不渲染 */
+      const isBlankRow = (m) => !m.content && !m.streaming && (!m.msgType || m.msgType === "text") && !m.attachmentName;
+      if (replace && !messages.some((m) => !isBlankRow(m))) {
+        messages.forEach((m) => noteMessage(m));
         log.innerHTML = '<div class="empty">' + t("noMessages") + "</div>";
         return;
       }
@@ -1049,13 +1467,19 @@
       if (empty) empty.remove();
       for (const m of messages) {
         noteMessage(m);
+        if (isBlankRow(m)) continue;
         const existing = !replace && m.id && log.querySelector(`[data-msg-id="${CSS.escape(String(m.id))}"]`);
         if (existing) {
           const wasStreaming = existing.classList.contains("streaming");
           existing.classList.toggle("streaming", !!m.streaming);
           if (!m.msgType || m.msgType === "text") {
             const body = existing.querySelector(".body");
-            if (body && body.textContent !== (m.content || "")) body.textContent = m.content || "";
+            if (body) {
+              const raw = m.content || "";
+              if (body.dataset.raw !== raw || (wasStreaming && !m.streaming)) {
+                renderBody(body, raw, !!m.streaming);
+              }
+            }
           }
           /* 流式回复（Agent）结束后朗读一次 */
           if (voiceCfg.autoRead && wasStreaming && !m.streaming && m.username !== store.username
@@ -1069,15 +1493,24 @@
         const el = document.createElement("div");
         el.className = "bubble" + (mine ? " mine" : "") + (m.streaming ? " streaming" : "");
         if (m.id) el.dataset.msgId = String(m.id);
-        el.innerHTML = `<div class="meta">${escapeHtml(m.username)} · ${escapeHtml(m.createdAt)}</div><div class="body"></div>`;
+        if (m.whisper) {
+          el.className += " whisper";
+        }
+        el.innerHTML = `<div class="meta"><img class="avatar sm" data-src="${escapeHtml(m.avatarUrl || "")}" alt="" />${escapeHtml(m.username)} · ${escapeHtml(m.createdAt)}</div><div class="body"></div>`;
         const meta = el.querySelector(".meta");
         const body = el.querySelector(".body");
+        if (m.whisper) {
+          const tag = document.createElement("span");
+          tag.className = "whisper-tag";
+          tag.textContent = t("whisperTag");
+          meta.appendChild(tag);
+        }
         if (m.msgType === "image") {
           body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || t("imageAlt"))}" data-src="${escapeHtml(m.downloadUrl)}" />`;
         } else if (m.msgType === "attachment") {
           body.innerHTML = `<a class="file" href="${m.downloadUrl}">📎 ${escapeHtml(m.attachmentName)}</a>`;
         } else {
-          body.textContent = m.content || "";
+          renderBody(body, m.content || "", !!m.streaming);
           const spk = document.createElement("button");
           spk.type = "button";
           spk.className = "speak-btn";
@@ -1147,17 +1580,21 @@
     }
 
     function hydrateImages(root, pin) {
-      root.querySelectorAll("img.chat-img[data-src]").forEach(async (img) => {
+      root.querySelectorAll("img[data-src]").forEach(async (img) => {
         const path = img.getAttribute("data-src");
         img.removeAttribute("data-src");
         if (!path) return;
+        const isChatImg = img.classList.contains("chat-img");
         try {
           img.src = await authBlobUrl(path);
-          img.addEventListener("click", () => window.open(img.src, "_blank"));
-          img.addEventListener("load", () => { if (pin || logPinnedToBottom()) scrollLogToBottom(); });
-          if (img.complete && (pin || logPinnedToBottom())) scrollLogToBottom();
+          if (isChatImg) {
+            img.addEventListener("click", () => window.open(img.src, "_blank"));
+            img.addEventListener("load", () => { if (pin || logPinnedToBottom()) scrollLogToBottom(); });
+            if (img.complete && (pin || logPinnedToBottom())) scrollLogToBottom();
+          }
         } catch {
-          img.replaceWith(document.createTextNode(t("imageLoadFailText")));
+          if (isChatImg) img.replaceWith(document.createTextNode(t("imageLoadFailText")));
+          else img.style.visibility = "hidden";
         }
       });
     }
@@ -1177,8 +1614,9 @@
       el.className = "bubble mine";
       el.dataset.tempId = tempId;
       el.innerHTML = `
-        <div class="meta">${escapeHtml(store.username)} · ${t("sending")}</div>
+        <div class="meta"><img class="avatar sm" data-src="${escapeHtml(store.avatarUrl || "")}" alt="" />${escapeHtml(store.username)} · ${t("sending")}</div>
         <div class="body"><img class="chat-img" alt="${escapeHtml(file.name || t("imageAlt"))}" src="${localUrl}" /></div>`;
+      hydrateImages(el);
       const img = el.querySelector("img");
       img.addEventListener("load", scrollLogToBottom);
       img.addEventListener("click", () => window.open(localUrl, "_blank"));
@@ -1219,6 +1657,7 @@
 
     async function openSettings() {
       $("editPassword").value = "";
+      $("settingsStatus").textContent = "";
       $("settings").showModal();
       if (!store.isOwner) {
         $("membersBox").textContent = t("membersReadOnly");
@@ -1228,6 +1667,72 @@
         const data = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/members`);
         renderMembers(data.members);
       } catch (err) { $("membersBox").textContent = err.message; }
+      try {
+        const rules = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/whisper-rules`);
+        renderWhisperRules(rules.rules);
+      } catch (err) { $("whisperRulesBox").textContent = err.message; }
+      await fillRoomAgentSelect("editRoomAgent", store.roomAgent);
+    }
+
+    function renderWhisperRules(rules) {
+      const box = $("whisperRulesBox");
+      if (!rules.length) { box.innerHTML = `<span class="hint">${t("noWhisperRules")}</span>`; return; }
+      box.innerHTML = `
+        <table class="perm-table">
+          <tr><th>${t("whisperRuleCol")}</th><th>${t("whisperRulePriority")}</th><th></th></tr>
+          ${rules.map((r) => `
+            <tr data-rule-id="${r.id}">
+              <td><span class="badge">${r.listType === "allow" ? t("whisperRuleAllow") : t("whisperRuleDeny")}</span> ${escapeHtml(r.sender)} → ${escapeHtml(r.receiver)}</td>
+              <td>${r.priority}</td>
+              <td><button class="btn ghost small" data-del-rule="${r.id}">${t("del")}</button></td>
+            </tr>`).join("")}
+        </table>`;
+      box.querySelectorAll("[data-del-rule]").forEach((btn) => {
+        btn.addEventListener("click", () => deleteWhisperRule(Number(btn.dataset.delRule)));
+      });
+    }
+
+    async function refreshWhisperRules() {
+      try {
+        const rules = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/whisper-rules`);
+        renderWhisperRules(rules.rules);
+      } catch (err) { $("whisperRulesBox").textContent = err.message; }
+    }
+
+    function setSettingsStatus(text) { $("settingsStatus").textContent = text; }
+
+    async function addWhisperRule() {
+      const sender = $("wrSender").value.trim();
+      const receiver = $("wrReceiver").value.trim();
+      const priority = Number($("wrPriority").value);
+      if (!sender || !receiver) { setSettingsStatus(t("whisperRuleFill")); return; }
+      if (!Number.isInteger(priority) || priority < -1000 || priority > 1000) {
+        setSettingsStatus(t("whisperRulePriorityBad"));
+        return;
+      }
+      const body = {
+        listType: $("wrType").value,
+        priority,
+        sender,
+        receiver,
+      };
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/whisper-rules`, {
+          method: "POST", body: JSON.stringify(body),
+        });
+        setSettingsStatus(t("whisperRuleAdded"));
+        $("wrSender").value = ""; $("wrReceiver").value = ""; $("wrPriority").value = "0";
+        refreshWhisperRules();
+      } catch (err) { setSettingsStatus(err.message); }
+    }
+
+    async function deleteWhisperRule(id) {
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/whisper-rules/${id}`, { method: "DELETE" });
+        setSettingsStatus(t("whisperRuleDeleted"));
+        refreshWhisperRules();
+        return true;
+      } catch (err) { setSettingsStatus(err.message); }
     }
 
     function renderMembers(members) {
@@ -1238,7 +1743,7 @@
           <tr><th>${t("memberCol")}</th><th>${t("speakCol")}</th><th>${t("attachCol")}</th><th>${t("historyCol")}</th><th></th></tr>
           ${members.map((m) => `
             <tr data-name="${escapeHtml(m.username)}">
-              <td>${escapeHtml(m.username)} ${m.online ? "🟢" : ""} <span class="badge">${m.kind === "agent" ? t("kindAgent") : t("kindHuman")}</span></td>
+              <td><span class="who-cell"><img class="avatar" data-src="${escapeHtml(m.avatarUrl || "")}" alt="" />${escapeHtml(m.username)} ${m.online ? "🟢" : ""} <span class="badge">${m.kind === "agent" ? t("kindAgent") : t("kindHuman")}</span></span></td>
               <td><input type="checkbox" data-p="canSpeak" ${m.canSpeak ? "checked" : ""} /></td>
               <td><input type="checkbox" data-p="canUpload" ${m.canUpload ? "checked" : ""} /></td>
               <td><input type="checkbox" data-p="canViewHistory" ${m.canViewHistory ? "checked" : ""} /></td>
@@ -1248,6 +1753,7 @@
       box.querySelectorAll("[data-save]").forEach((btn) => {
         btn.addEventListener("click", () => savePermissions(btn.dataset.save));
       });
+      hydrateImages(box);
     }
 
     async function savePermissions(username) {
@@ -1268,6 +1774,8 @@
           roomName: $("editName").value.trim(),
           visibility: $("editVisibility").value,
           muted: $("editMuted").checked,
+          rules: $("editRules").value.trim(),
+          roomAgent: $("editRoomAgent").value,
         };
         const password = $("editPassword").value;
         if (password) body.password = password;
@@ -1317,7 +1825,10 @@
       if (!data.agents.length) { box.innerHTML = '<div class="hint">' + t("noAgents") + "</div>"; return; }
       box.innerHTML = data.agents.map((a) => `
         <div class="agent-row" data-name="${escapeHtml(a.username)}">
-          <span>${escapeHtml(a.username)} <span class="badge ${a.status === "active" ? "" : "off"}">${a.status === "active" ? t("agentActive") : t("agentDisabled")}</span></span>
+          <span class="who-cell">
+            <img class="avatar" data-src="${escapeHtml(a.avatarUrl || "")}" alt="" />
+            <span>${escapeHtml(a.username)} <span class="badge ${a.status === "active" ? "" : "off"}">${a.status === "active" ? t("agentActive") : t("agentDisabled")}</span></span>
+          </span>
           <span class="ops">
             <button class="btn ghost small" data-act="rename">${t("rename")}</button>
             <button class="btn ghost small" data-act="rekey">${t("rekey")}</button>
@@ -1331,6 +1842,7 @@
           btn.addEventListener("click", () => agentAction(row.dataset.name, btn.dataset.act));
         });
       });
+      hydrateImages(box);
     }
 
     function resetAgentForm() {
@@ -1341,6 +1853,11 @@
       $("agentName").disabled = false;
       $("agentName").value = "";
       $("agentKey").value = "";
+      $("agentModel3d").value = "";
+      $("agentArkit").checked = false;
+      agentAvatarData = null;
+      $("agentAvatarBox").classList.remove("hidden");
+      refreshAvatarPreviews();
     }
 
     function setAgentStatus(text, ok) {
@@ -1361,7 +1878,12 @@
           setAgentStatus(t("keyUpdated"), true);
         } else {
           if (!username) return setAgentStatus(t("fillAgentName"));
-          await api("/api/agents", { method: "POST", body: JSON.stringify({ username, publicKey }) });
+          const payload = { username, publicKey };
+          if (agentAvatarData) payload.avatar = agentAvatarData;
+          const model3dUrl = $("agentModel3d").value.trim();
+          if (model3dUrl) payload.model3dUrl = model3dUrl;
+          if ($("agentArkit").checked) payload.model3dArkit = true;
+          await api("/api/agents", { method: "POST", body: JSON.stringify(payload) });
           setAgentStatus(tf("agentCreated", { name: username }), true);
         }
         resetAgentForm();
@@ -1383,6 +1905,7 @@
           $("agentName").value = username;
           $("agentName").disabled = true;
           $("agentKey").value = "";
+          $("agentAvatarBox").classList.add("hidden");
           $("agentKey").focus();
           return;
         } else if (act === "toggle") {
@@ -1498,9 +2021,18 @@
         .trim();
     }
 
+    /* 朗读前剥掉代码块/行内代码（mermaid、chart 等语法不该被读出来） */
+    function stripCodeForTTS(text) {
+      return String(text)
+        .replace(/```[\s\S]*?```/g, " ")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
     function speakText(text, cut, msgId) {
       if (!hasTTS) return;
-      const clean = stripEmoji(text);
+      const clean = stripEmoji(stripCodeForTTS(text));
       if (!clean) return;
       if (msgId) speakingMsgId = msgId;
       const target = cut && clean.length > 400 ? clean.slice(0, 400) + t("speakTruncated") : clean;
@@ -1697,6 +2229,9 @@
 
     (async function boot() {
       applyI18n();
+      if (window.mermaid) {
+        mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict", suppressErrors: true });
+      }
       initVoiceUI();
       $("content").addEventListener("paste", (event) => {
         const item = [...(event.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
@@ -1708,6 +2243,7 @@
       try {
         const me = await api("/api/me");
         store.username = me.username;
+        store.avatarUrl = me.avatarUrl || "";
         saveSession();
         showApp();
         await refreshRooms();

@@ -155,6 +155,7 @@ def main() -> None:
             if m.get("username") != me
             and int(m.get("id") or 0) > floor
             and not m.get("streaming")
+            and m.get("content")  # 私聊空行：无权查看的私聊被抹成空行，忽略
         ]
 
     incoming = replyable(messages, after)
