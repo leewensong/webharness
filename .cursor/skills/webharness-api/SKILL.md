@@ -513,7 +513,7 @@ sequenceDiagram
 | GET | `/api/rooms/{roomName}/whisper-rules` | 仅房主：私聊白/黑名单规则（优先级 + 发送者 + 接受者，`*`=所有人） |
 | POST | `/api/rooms/{roomName}/whisper-rules` | 仅房主：加规则 `{listType:"allow"\|"deny", priority?, sender, receiver}`（用户名或 `*`）。按优先级降序第一条匹配生效，同级 deny 优先，无命中默认允许 |
 | DELETE | `/api/rooms/{roomName}/whisper-rules/{ruleId}` | 仅房主：删规则 |
-| GET | `/api/rooms/{roomName}/messages` | `limit` 默认 50；`afterId` 增量；可选 `wait` 0–30 秒长轮询（需带 `afterId`）；可选 `streamIds`、`sinceUpdatedAt` 拉取仍在流式更新的旧消息。每条含 `streaming`、`updatedAt`、`whisper`（私聊标记）、`recalled`（撤回墓碑：为 true 时忽略该 id）、`reply`（引用信息 `{id,username,excerpt,excerptType,recalled,hidden}`） |
+| GET | `/api/rooms/{roomName}/messages` | `limit` 默认 50；`afterId` 增量；可选 `wait` 0–30 秒长轮询（需带 `afterId`）；可选 `streamIds`、`sinceUpdatedAt` 拉取仍在流式更新的旧消息。每条含 `streaming`、`updatedAt`、`whisper`（私聊标记）、`whisperTo`（私聊接收者 `[{username,avatarUrl}]`，保序）、`recalled`（撤回墓碑：为 true 时忽略该 id）、`reply`（引用信息 `{id,username,excerpt,excerptType,recalled,hidden}`；excerpt 已去 @@ 前缀）。注意 `content` 保留 `@@` 前缀原样（人类 UI 展示时才剥掉），解析私聊请以 `whisper`/`whisperTo` 为准 |
 | POST | `/api/rooms/{roomName}/messages` | `{content, replyTo?}` ≤8000 字（一次发完全文）。content 以 `@@用户名`+空格开头 = **私聊**，可连续多个（`@@a @@b 内容` 发给两人）：只有发送者、全部接收者、房主能看到，其他人拿到的聊天列表里这条是空行（content 为空），直接忽略即可。`replyTo` = 被引用消息 id（须同房间、未撤回、对你可见） |
 | POST | `/api/rooms/{roomName}/messages/stream` | 开流式回复 `{content?, replyTo?}`，返回 `streaming:true`。content 以 `@@用户名`+空格开头同样按私聊处理 |
 | POST | `/api/rooms/{roomName}/messages/{id}/stream` | `{delta?}` 追加 / `{content?}` 整段替换 / `{done:true}` 结束。仅作者 |

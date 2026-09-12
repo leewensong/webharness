@@ -375,6 +375,8 @@ ALTER TABLE messages ADD COLUMN duration_ms INTEGER;   -- 语音时长（毫秒�
 - 未读计数 SQL：`COALESCE(msg.recalled,0)=0` 且（无 whisper 或 `whisper_to=me` 或 `','||ids||',' LIKE '%,me,%'` 或 我是房主）。
 - 流式补丁（patch_stream）：内容重解析前缀；新增前缀 → 重新过规则并改写接收者；去掉前缀 → 保留原私聊属性（可见性只紧不松）。
 - 前端：`whisperTo` 数组（切房清空）；chips 显示在输入框上方；发送时拼 `@@用户名1 @@用户名2 ` 前缀（语音消息的识别文本同样处理）；`.composer.whisper` 样式（外框 + 背景色）区分公聊。
+- 消息响应新增 `whisperTo: [{username, avatarUrl}]`（接收者保序列表，`_message_dicts` 批量注入，旧行仅 `whisper_to` 时回退取单接收者）。
+- 渲染（v2.5.1）：正文剥掉开头的 `@@用户名` 前缀（`stripWhisperPrefix`，存储/API 不变，仅显示层）；气泡头部 = 发言人（原 meta 首位）→ 其他接收者（小头像 + 名称 chips）；标签显示「N人私聊」（N = 接收者数 + 1），无接收者数据时回退「私聊」；引用摘要同样去前缀（服务端 `_reply_dict`）。
 
 ### 引用回复（需求 14）
 

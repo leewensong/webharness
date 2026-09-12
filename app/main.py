@@ -91,7 +91,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.5.0",
+    version="2.5.1",
     description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
     lifespan=lifespan,
 )
@@ -555,6 +555,46 @@ def _whisper_ids(row) -> set[int]:
     return ids
 
 
+def _whisper_ordered_ids(row) -> list[int]:
+    """接收者 id（保序去重）：whisper_to 打头，其后是 whisper_to_ids 列表。"""
+    ordered: list[int] = []
+    single = _row_get(row, "whisper_to")
+    if single:
+        ordered.append(int(single))
+    for part in str(_row_get(row, "whisper_to_ids") or "").split(","):
+        part = part.strip()
+        if part.isdigit() and int(part) not in ordered:
+            ordered.append(int(part))
+    return ordered
+
+
+def _whisper_users_map(conn, rows) -> dict[int, dict]:
+    """批量取私聊接收者的用户名与头像；_message_dicts 用它组装 whisperTo。"""
+    ids: set[int] = set()
+    for row in rows:
+        ids.update(_whisper_ordered_ids(row))
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    out: dict[int, dict] = {}
+    for r in conn.execute(
+        f"SELECT id, username, avatar_updated_at FROM users WHERE id IN ({placeholders})",
+        tuple(ids),
+    ):
+        out[r["id"]] = {"username": r["username"], "avatarUrl": _avatar_url(r["username"], r["avatar_updated_at"])}
+    return out
+
+
+def _strip_whisper_prefix(content: str) -> str:
+    """去掉开头的 @@用户名 前缀（仅用于渲染与引用摘要；存储与 API 内容保持原样）。"""
+    text = content or ""
+    while True:
+        m = WHISPER_RE.match(text)
+        if not m:
+            return text
+        text = text[m.end():]
+
+
 def _whisper_columns(targets: list) -> tuple[int | None, str | None]:
     """由目标列表生成 (whisper_to, whisper_to_ids)：whisper_to 恒为第一个接收者。"""
     if not targets:
@@ -669,7 +709,7 @@ def _reply_dict(row, room, user_id: int | None) -> dict | None:
         excerpt = _row_get(row, "replyAttachment") or ""
         excerpt_type = reply_type
     else:
-        excerpt = re.sub(r"\s+", " ", _row_get(row, "replyContent") or "").strip()[:120]
+        excerpt = re.sub(r"\s+", " ", _strip_whisper_prefix(_row_get(row, "replyContent") or "")).strip()[:120]
         excerpt_type = "text"
     return {
         "id": reply_id,
@@ -681,7 +721,8 @@ def _reply_dict(row, room, user_id: int | None) -> dict | None:
     }
 
 
-def _message_dict(row, room_name: str, *, room=None, user_id: int | None = None, archive_id: int | None = None) -> dict:
+def _message_dict(row, room_name: str, *, room=None, user_id: int | None = None, archive_id: int | None = None,
+                  whisper_users: dict | None = None) -> dict:
     username = row["username"]
     item = {
         "id": row["id"],
@@ -695,6 +736,10 @@ def _message_dict(row, room_name: str, *, room=None, user_id: int | None = None,
         "recalled": bool(_row_get(row, "recalled", 0)),
         "updatedAt": _row_get(row, "updatedAt") or row["createdAt"],
     }
+    if item["whisper"] and whisper_users:
+        recipients = [whisper_users[i] for i in _whisper_ordered_ids(row) if i in whisper_users]
+        if recipients:
+            item["whisperTo"] = recipients
     reply = _reply_dict(row, room, user_id)
     if reply is not None:
         item["reply"] = reply
@@ -707,6 +752,16 @@ def _message_dict(row, room_name: str, *, room=None, user_id: int | None = None,
         else:
             item["downloadUrl"] = f"/api/rooms/{room_name}/attachments/{row['id']}"
     return item
+
+
+def _message_dicts(conn, rows, room_name: str, *, room=None, user_id: int | None = None,
+                   archive_id: int | None = None) -> list[dict]:
+    """批量组装消息响应（私聊接收者一次查库后统一注入 whisperTo，避免逐条 N+1）。"""
+    whisper_users = _whisper_users_map(conn, rows)
+    return [
+        _message_dict(row, room_name, room=room, user_id=user_id, archive_id=archive_id, whisper_users=whisper_users)
+        for row in rows
+    ]
 
 
 def _room_list_dict(row, user_id: int) -> dict:
@@ -1398,10 +1453,11 @@ def archive_messages(
         rows = _fetch_messages(
             conn, room, member, user["id"], limit, after_id, skip_history=_can_archive(user, room)
         )
+        items = _message_dicts(conn, rows, room["name"], room=room, user_id=user["id"], archive_id=room["id"])
     return {
         "roomId": room["id"],
         "roomName": room["name"],
-        "messages": [_message_dict(row, room["name"], room=room, user_id=user["id"], archive_id=room["id"]) for row in rows],
+        "messages": items,
     }
 
 
@@ -1745,6 +1801,7 @@ async def recent_messages(
             stream_ids=wanted_ids, since_updated=since,
         )
         _mark_room_read(conn, room["id"], user["id"])
+        items = _message_dicts(conn, rows, room["name"], room=room, user_id=user["id"])
         room_id = room["id"]
         room_label = room["name"]
     if wait and after_id is not None and not rows:
@@ -1760,8 +1817,9 @@ async def recent_messages(
                 stream_ids=wanted_ids, since_updated=since,
             )
             _mark_room_read(conn, room["id"], user["id"])
+            items = _message_dicts(conn, rows, room["name"], room=room, user_id=user["id"])
             room_label = room["name"]
-    return {"roomName": room_label, "messages": [_message_dict(row, room_label, room=room, user_id=user["id"]) for row in rows]}
+    return {"roomName": room_label, "messages": items}
 
 
 @app.post("/api/rooms/{room_name}/messages")
@@ -1782,10 +1840,10 @@ def send_message(room_name: str, body: MessageCreate, user: CurrentUser):
             (room["id"], user["id"], body.content, whisper_to, whisper_to_ids, reply_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
+        item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
-        room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label, room=room, user_id=user["id"])
+    return item
 
 
 @app.post("/api/rooms/{room_name}/messages/stream")
@@ -1808,10 +1866,10 @@ def start_stream(room_name: str, user: CurrentUser, body: StreamStart = StreamSt
             (room["id"], user["id"], payload.content or "", whisper_to, whisper_to_ids, reply_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
+        item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
-        room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label, room=room, user_id=user["id"])
+    return item
 
 
 @app.post("/api/rooms/{room_name}/messages/{message_id}/stream")
@@ -1863,10 +1921,10 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
             (content, whisper_to, whisper_to_ids, streaming, message_id),
         )
         row = _load_message(conn, message_id)
+        item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
-        room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label, room=room, user_id=user["id"])
+    return item
 
 
 @app.delete("/api/rooms/{room_name}/messages/{message_id}")
@@ -1910,10 +1968,10 @@ def recall_message(room_name: str, message_id: int, user: CurrentUser):
                 (message_id,),
             )
         row = _load_message(conn, message_id)
+        item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
-        room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label, room=room, user_id=user["id"])
+    return item
 
 
 _SAFE_FILENAME = re.compile(r"[^\w.\-]+")
@@ -2009,10 +2067,10 @@ async def upload_attachment(room_name: str, user: CurrentUser, file: UploadFile 
         dest.write_bytes(data)
         conn.execute("UPDATE messages SET attachment_path = ? WHERE id = ?", (rel_path, message_id))
         row = _load_message(conn, message_id)
+        item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
-        room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label, room=room, user_id=user["id"])
+    return item
 
 
 @app.post("/api/rooms/{room_name}/voice")
@@ -2063,10 +2121,10 @@ async def send_voice(
         dest.write_bytes(data)
         conn.execute("UPDATE messages SET attachment_path = ? WHERE id = ?", (rel_path, message_id))
         row = _load_message(conn, message_id)
+        item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
-        room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label, room=room, user_id=user["id"])
+    return item
 
 
 @app.get("/api/rooms/{room_name}/attachments/{message_id}")

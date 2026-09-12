@@ -140,6 +140,10 @@
     .bubble.mine { margin-left: auto; background: var(--mine); border-color: #2d4f8a; }
     .bubble .meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
     .whisper-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 8px; font-size: 11px; color: var(--accent); white-space: nowrap; flex-shrink: 0; }
+    .whisper-members { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: 6px; }
+    .whisper-member { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .whisper-member .avatar { width: 16px; height: 16px; border-radius: 50%; }
+    .whisper-arrow { color: var(--muted); font-size: 11px; }
     .bubble.whisper { border-style: dashed; background: #2a2e36; }
     .bubble.mine.whisper { background: #343944; border-color: #3a4250; }
     .bubble .body { white-space: normal; word-break: break-word; line-height: 1.45; }
@@ -698,6 +702,7 @@
         imageAlt: "图片", imageLoadFail: "图片加载失败", imageLoadFailText: "[图片加载失败]", sending: "发送中",
         speakBtnTitle: "朗读这条消息（再点一次停止）",
         whisperTag: "私聊",
+        whisperTagN: "{{n}}人私聊",
         membersReadOnly: "仅房主可改成员权限；你可以归档该房间。", noMembers: "暂无成员",
         memberCol: "成员", speakCol: "发言", attachCol: "附件", historyCol: "历史",
         kindAgent: "Agent", kindHuman: "人类", permUpdated: "已更新 {{name}} 的权限",
@@ -832,6 +837,7 @@
         imageAlt: "Image", imageLoadFail: "Failed to load image", imageLoadFailText: "[image failed to load]", sending: "sending…",
         speakBtnTitle: "Read this message (click again to stop)",
         whisperTag: "Whisper",
+        whisperTagN: "{{n}}-person whisper",
         membersReadOnly: "Only the owner can change permissions; you can archive this room.", noMembers: "No members",
         memberCol: "Member", speakCol: "Speak", attachCol: "Files", historyCol: "History",
         kindAgent: "Agent", kindHuman: "Human", permUpdated: "Permissions updated for {{name}}",
@@ -1819,7 +1825,7 @@
           if (!m.msgType || m.msgType === "text") {
             const body = existing.querySelector(".body");
             if (body) {
-              const raw = m.content || "";
+              const raw = displayContent(m);
               if (body.dataset.raw !== raw || (wasStreaming && !m.streaming)) {
                 renderBody(body, raw, !!m.streaming);
               }
@@ -1827,8 +1833,8 @@
           }
           /* 流式回复（Agent）结束后朗读一次 */
           if (voiceCfg.autoRead && wasStreaming && !m.streaming && m.username !== store.username
-              && (!m.msgType || m.msgType === "text") && m.content) {
-            speakText(m.content, true, m.id);
+              && (!m.msgType || m.msgType === "text") && displayContent(m)) {
+            speakText(displayContent(m), true, m.id);
           }
           continue;
         }
@@ -1844,10 +1850,15 @@
         const meta = el.querySelector(".meta");
         const body = el.querySelector(".body");
         if (m.whisper) {
+          /* 接收者（排除自己，避免自聊时重复）；发言人已在 meta 首位 */
+          const members = Array.isArray(m.whisperTo)
+            ? m.whisperTo.filter((u) => u && u.username && u.username !== m.username)
+            : [];
           const tag = document.createElement("span");
           tag.className = "whisper-tag";
-          tag.textContent = t("whisperTag");
+          tag.textContent = members.length ? tf("whisperTagN", { n: members.length + 1 }) : t("whisperTag");
           meta.appendChild(tag);
+          if (members.length) meta.insertBefore(buildWhisperMembers(members), tag);
         }
         const menuBtn = document.createElement("button");
         menuBtn.type = "button";
@@ -1877,8 +1888,8 @@
           const main = document.createElement("div");
           main.className = "voice-main";
           const txt = document.createElement("div");
-          txt.className = "voice-text" + (m.content ? "" : " muted");
-          txt.textContent = m.content || t("voiceEmpty");
+          txt.className = "voice-text" + (displayContent(m) ? "" : " muted");
+          txt.textContent = displayContent(m) || t("voiceEmpty");
           const dur = document.createElement("div");
           dur.className = "voice-dur";
           dur.textContent = fmtVoiceDur(m.durationMs);
@@ -1888,21 +1899,21 @@
           wrap.appendChild(main);
           body.appendChild(wrap);
         } else {
-          renderBody(body, m.content || "", !!m.streaming);
+          renderBody(body, displayContent(m), !!m.streaming);
           const spk = document.createElement("button");
           spk.type = "button";
           spk.className = "speak-btn";
           spk.dataset.msgId = String(m.id);
           spk.textContent = "🔊";
           spk.title = t("speakBtnTitle");
-          spk.addEventListener("click", () => handleSpeakClick(m.id, m.content || ""));
+          spk.addEventListener("click", () => handleSpeakClick(m.id, displayContent(m)));
           meta.appendChild(spk);
         }
         log.appendChild(el);
         hydrateImages(el, pin);
         /* 自动朗读：仅增量到达的他人新文本消息（初次加载 replace=true 不读） */
-        if (!replace && voiceCfg.autoRead && m.username !== store.username && isText && !m.streaming && m.content) {
-          speakText(m.content, true, m.id);
+        if (!replace && voiceCfg.autoRead && m.username !== store.username && isText && !m.streaming && displayContent(m)) {
+          speakText(displayContent(m), true, m.id);
         }
       }
       if (pin) scrollLogToBottom();
@@ -2306,6 +2317,42 @@
       }[c]));
     }
 
+    /* ---- v2.5.1：私聊消息渲染（正文去 @@ 前缀；头部显示发言人 + 其他接收者） ---- */
+    const WHISPER_PREFIX_RE = /^@@[\p{L}\p{N}_.\-]+(?:\s+|$)/u;
+    function stripWhisperPrefix(text) {
+      let out = String(text || "");
+      while (WHISPER_PREFIX_RE.test(out)) out = out.replace(WHISPER_PREFIX_RE, "");
+      return out;
+    }
+    /* 显示用正文：私聊消息剥掉开头的 @@用户名（存储与 API 响应保持原样） */
+    function displayContent(m) {
+      return m.whisper ? stripWhisperPrefix(m.content || "") : (m.content || "");
+    }
+    /* 气泡头部：发言人（已有的头像+名称）之后 → 其他接收者（头像+名称） */
+    function buildWhisperMembers(members) {
+      const wrap = document.createElement("span");
+      wrap.className = "whisper-members";
+      const arrow = document.createElement("span");
+      arrow.className = "whisper-arrow";
+      arrow.textContent = "→";
+      wrap.appendChild(arrow);
+      members.forEach((u) => {
+        const chip = document.createElement("span");
+        chip.className = "whisper-member";
+        chip.title = u.username;
+        const img = document.createElement("img");
+        img.className = "avatar";
+        img.setAttribute("data-src", u.avatarUrl || "");
+        img.alt = "";
+        const name = document.createElement("span");
+        name.textContent = u.username;
+        chip.appendChild(img);
+        chip.appendChild(name);
+        wrap.appendChild(chip);
+      });
+      return wrap;
+    }
+
     // ---------- v2.5：弹出菜单（在线用户 / 消息操作共用） ----------
     let popMenuOpenedAt = 0;
 
@@ -2385,7 +2432,7 @@
       if (tpe === "image") return t("quoteImage");
       if (tpe === "voice") return t("quoteVoice");
       if (tpe === "attachment") return tf("quoteFile", { name: m.attachmentName || "" });
-      return (m.content || "").replace(/\s+/g, " ").slice(0, 120);
+      return displayContent(m).replace(/\s+/g, " ").slice(0, 120);
     }
     function renderReplyBar() {
       const on = !!replyTarget;
