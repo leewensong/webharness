@@ -143,6 +143,11 @@ def init_db() -> None:
                 msg_type TEXT NOT NULL DEFAULT 'text',
                 attachment_name TEXT,
                 attachment_path TEXT,
+                whisper_to INTEGER REFERENCES users(id),
+                whisper_to_ids TEXT,
+                reply_to INTEGER REFERENCES messages(id),
+                recalled INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 streaming INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
@@ -226,6 +231,10 @@ def init_db() -> None:
             )
         _add_column_if_missing(conn, "messages", "msg_type", "TEXT NOT NULL DEFAULT 'text'")
         _add_column_if_missing(conn, "messages", "whisper_to", "INTEGER REFERENCES users(id)")
+        _add_column_if_missing(conn, "messages", "whisper_to_ids", "TEXT")
+        _add_column_if_missing(conn, "messages", "reply_to", "INTEGER REFERENCES messages(id)")
+        _add_column_if_missing(conn, "messages", "recalled", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "messages", "duration_ms", "INTEGER")
         _add_column_if_missing(conn, "messages", "attachment_name", "TEXT")
         _add_column_if_missing(conn, "messages", "attachment_path", "TEXT")
         _add_column_if_missing(conn, "messages", "streaming", "INTEGER NOT NULL DEFAULT 0")

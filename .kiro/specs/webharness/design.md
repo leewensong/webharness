@@ -158,11 +158,13 @@ Agent ◀────── {token, username, userId} ──────
 | GET | `/api/rooms/{roomName}/members` | 成员及权限列表 | 成员（含权限字段仅房主可见? 简化为房主） |
 | PUT | `/api/rooms/{roomName}/permissions/{username}` | 设置成员权限 | 房主 |
 | GET | `/api/rooms/{roomName}/messages` | `limit` / `afterId` / `wait` / `streamIds` / `sinceUpdatedAt` | 成员 + 历史权限 |
-| POST | `/api/rooms/{roomName}/messages` | 发文本消息（一次全文） | 成员 + 发言权限 + 禁言 |
-| POST | `/api/rooms/{roomName}/messages/stream` | 开流式文本消息 | 成员 + 发言权限 + 禁言 |
+| POST | `/api/rooms/{roomName}/messages` | 发文本消息（一次全文），可带 `replyTo` | 成员 + 发言权限 + 禁言 |
+| DELETE | `/api/rooms/{roomName}/messages/{id}` | 撤回自己 30 秒内的消息（墓碑化） | 作者 + 时间窗 |
+| POST | `/api/rooms/{roomName}/messages/stream` | 开流式文本消息（可带 `replyTo`） | 成员 + 发言权限 + 禁言 |
 | POST | `/api/rooms/{roomName}/messages/{id}/stream` | 追加 / 替换 / 结束流式 | 仅作者 + 发言权限 |
+| POST | `/api/rooms/{roomName}/voice` | multipart 上传语音消息（音频 + 识别文本） | 成员 + 发言权限 + 禁言 |
 | POST | `/api/rooms/{roomName}/attachments` | multipart 上传 → 附件消息 | 成员 + 上传权限 + 禁言 |
-| GET | `/api/rooms/{roomName}/attachments/{messageId}` | 下载附件 | 成员 |
+| GET | `/api/rooms/{roomName}/attachments/{messageId}` | 下载附件 / 语音（voice 内联返回音频） | 成员 |
 
 ## 权限判定顺序（发言/上传/历史）
 
@@ -349,3 +351,50 @@ body {content: string ≤5000, contact?: string ≤200}
 
 - SKILL.md 方案 C 与接口表说明 Agent 提交方式（带 token `POST /api/suggestions`），作为监听唤醒做法的官方提交渠道（替代 github issues）。
 - guide.html / HUMAN.md 第 5 步同步该表述。
+
+## v2.5 设计（私聊模式 / 引用回复 / 撤回 / 语音消息；头像复核）
+
+### 数据模型变更（messages，迁移只增）
+
+```sql
+ALTER TABLE messages ADD COLUMN whisper_to_ids TEXT;   -- 多人私聊接收者 id，逗号分隔（如 "5,9"）
+ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id);
+ALTER TABLE messages ADD COLUMN recalled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE messages ADD COLUMN duration_ms INTEGER;   -- 语音时长（毫秒），仅 voice 使用
+```
+
+- `whisper_to` 保留 = 第一个接收者（旧行只有它）；接收者全集 = `{whisper_to} ∪ split(whisper_to_ids)`。
+- `msg_type` 增加 `voice`（既有表无 CHECK 约束，无需重建）。
+- 撤回 = 墓碑：content / 附件 / whisper / reply 清空、附件文件 unlink、`recalled=1`、`updated_at` 刷新；保留 id 与 created_at 维持 `afterId` 游标与 `streamIds` 增量同步（空行机制天然兼容）。
+
+### 多人私聊（需求 13）
+
+- 前缀解析：循环匹配开头的 `@@用户名`（后跟空白或结束，`[\w.\-]+`），逐个校验是房间成员，否则 400。
+- 可见性（`_visible_rows`）：请求者不在「发送者 + 接收者全集 + 房主」→ 抹成空行（沿用既有实现，含 whisper_to_ids 合并）。
+- 私聊规则：对每个接收者分别执行 `_whisper_allowed`，任一拒绝 → 403。
+- 未读计数 SQL：`COALESCE(msg.recalled,0)=0` 且（无 whisper 或 `whisper_to=me` 或 `','||ids||',' LIKE '%,me,%'` 或 我是房主）。
+- 流式补丁（patch_stream）：内容重解析前缀；新增前缀 → 重新过规则并改写接收者；去掉前缀 → 保留原私聊属性（可见性只紧不松）。
+- 前端：`whisperTo` 数组（切房清空）；chips 显示在输入框上方；发送时拼 `@@用户名1 @@用户名2 ` 前缀（语音消息的识别文本同样处理）；`.composer.whisper` 样式（外框 + 背景色）区分公聊。
+
+### 引用回复（需求 14）
+
+- 写入：`replyTo` 必须存在于本房间、未撤回、对发送者可见（否则 404 / 400 / 403）。
+- 读取：`MESSAGE_SELECT` LEFT JOIN 原消息（`rp`）与原作者（`ru`）；`_reply_dict` 生成 `{id, username, excerpt, excerptType, recalled, hidden}`。
+  - 原消息是私聊且请求者不在接收者/发送者/房主 → `hidden=true`（占位，不泄露内容）。
+  - text 摘要取前 120 字（压缩空白）；image / attachment / voice 返回 `excerptType`，前端本地化占位（`[图片]` / `[文件] name` / `[语音]`）。
+- 前端：点气泡空白处或「⋯」打开消息菜单（通用 `showPopMenu`，与在线用户菜单共用）；引用块 `.quote` 灰色小字，点击 `scrollIntoView` + `.flash` 高亮；不在 DOM 时 toast。
+
+### 撤回（需求 15）
+
+- 窗口 30 秒：服务端按 `created_at`（julianday 差值）判定；客户端菜单按 `createdAt`（视为 UTC）判断，超时 403 兜底。
+- 客户端同步：`msgArrival`（id → 本地到达时间）记录渲染过的消息；轮询把 35 秒内到达的 id 并入 `streamIds`（服务端解析上限 20 → 60）配合 `sinceUpdatedAt` 拿到 `recalled` 行 → 删除气泡；墓碑行对从未见过的客户端是空行（不渲染）。
+- 撤回的语音 / 附件：unlink 对应 uploads 文件。
+
+### 语音消息（需求 16）
+
+- 前端采集：`getUserMedia` + `MediaRecorder`（`audio/webm;codecs=opus` → `audio/webm` → `audio/mp4` → 默认）与 `SpeechRecognition(continuous=true)` 并行；识别 final 文本跨会话累积显示在输入框；SR 静默结束自动重启（≤5 次，不中断录音）；`autoSend=true` 时识别自然结束直接停止并发送。
+- 上限与取消：60 秒自动停止并发送；<1 秒或空音频视为误触取消；「取消」丢弃并恢复输入框原文本。
+- 上传：`POST /api/rooms/{name}/voice`，multipart `{file, text, replyTo?, durationMs?}`；`msg_type=voice`，`content`=识别文本（含 @@ 前缀）；落盘 `data/uploads/<room_id>/<message_id>-voice-<ts>.<ext>`；文件校验（≤10MB，content-type 或魔数）。
+- 播放：`authBlobUrl` 拉取（Bearer）→ `Audio` 播放；发送方本地 blob 预热 `blobCache` 即时回放；全局单实例（新播放打断旧播放）；时长直接用 `durationMs` 渲染，不逐条拉音频读元数据。
+- 渲染：语音气泡 = 播放按钮 + ASR 文本（纯文本，不走 Markdown）+ 时长；文本为空显示「[语音]」。
+- 麦克风按钮语义修订：需求 9.2/9.3 的「识别进输入框」被本需求的「录音发送」取代（识别文本仍实时预览）；`autoSend` 复用为「说完即发」。

@@ -112,6 +112,13 @@
       border: 1px dashed var(--line); background: transparent;
       color: var(--muted); font-size: 11px; text-align: center; line-height: 1.1;
     }
+    .file-ph {
+      width: 64px; height: 64px; border-radius: 18px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; text-align: center;
+      border: 1px dashed var(--line); color: var(--muted);
+      font-size: 10px; line-height: 1.25; padding: 6px;
+      word-break: break-all; overflow: hidden;
+    }
     .person .avatar { width: 24px; height: 24px; border-radius: 7px; }
     .avatar-pick { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
     .avatar-pick-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
@@ -132,7 +139,7 @@
     }
     .bubble.mine { margin-left: auto; background: var(--mine); border-color: #2d4f8a; }
     .bubble .meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-    .whisper-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 8px; font-size: 11px; color: var(--accent); }
+    .whisper-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 8px; font-size: 11px; color: var(--accent); white-space: nowrap; flex-shrink: 0; }
     .bubble.whisper { border-style: dashed; background: #2a2e36; }
     .bubble.mine.whisper { background: #343944; border-color: #3a4250; }
     .bubble .body { white-space: normal; word-break: break-word; line-height: 1.45; }
@@ -232,7 +239,7 @@
     }
     .bubble .meta { display: flex; align-items: center; gap: 6px; }
     .speak-btn {
-      margin-left: auto; background: none; border: 0; cursor: pointer;
+      margin-left: 6px; background: none; border: 0; cursor: pointer;
       font-size: 12px; line-height: 1; padding: 0 2px; opacity: 0.65; flex-shrink: 0;
     }
     .speak-btn:hover { opacity: 1; }
@@ -241,6 +248,69 @@
     #voiceDlg input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); cursor: pointer;
     }
+
+    /* ---- v2.5 私聊模式 / 引用回复 / 消息菜单 / 语音消息 ---- */
+    .composer { flex-direction: column; gap: 8px; align-items: stretch; }
+    .composer-row { display: flex; gap: 8px; align-items: flex-end; }
+    .composer.whisper {
+      background: linear-gradient(180deg, rgba(124, 92, 255, 0.13), rgba(124, 92, 255, 0.04));
+      border: 1px solid var(--accent-2); border-radius: 16px;
+    }
+    .composer.whisper .composer-input textarea { border-color: var(--accent-2); background: #141126; }
+    .chip-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+    .chip-bar-label { flex-shrink: 0; color: var(--muted); }
+    .chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+    .wchip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px 2px 3px;
+      border: 1px solid var(--accent-2); background: rgba(124, 92, 255, 0.14);
+      border-radius: 999px; color: var(--text); font-size: 12px; max-width: 180px;
+    }
+    .wchip .avatar { width: 18px; height: 18px; border-radius: 50%; }
+    .wchip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 2px; line-height: 1; }
+    .chip-x:hover { color: var(--danger); }
+    .chip-quote { max-width: min(60%, 420px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); opacity: 0.85; }
+    #replyBar .avatar { width: 18px; height: 18px; border-radius: 50%; }
+    .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); animation: micPulse 1.4s infinite; flex-shrink: 0; }
+    #recBar { color: var(--danger); }
+    #recTime { color: var(--text); }
+    .person { cursor: pointer; }
+    .person:hover { background: #1c2430; }
+    .pop-menu {
+      position: fixed; z-index: 60; min-width: 132px; padding: 4px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
+    }
+    .pop-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+    .pop-item:hover { background: #243044; }
+    .msg-menu-btn { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px; opacity: 0.6; flex-shrink: 0; }
+    .msg-menu-btn:hover { opacity: 1; }
+    .bubble .quote {
+      border-left: 3px solid var(--accent); background: rgba(91, 140, 255, 0.09);
+      border-radius: 6px; padding: 4px 8px; margin: 0 0 6px; font-size: 12px;
+      color: var(--muted); cursor: pointer; line-height: 1.4;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .bubble .quote:hover { background: rgba(91, 140, 255, 0.18); }
+    .bubble .quote.muted { cursor: default; opacity: 0.75; }
+    .bubble .quote .quote-name { color: var(--accent); margin-right: 6px; }
+    .bubble.flash { animation: bubbleFlash 1.6s ease; }
+    @keyframes bubbleFlash {
+      0%, 55% { box-shadow: 0 0 0 3px var(--accent); }
+      100% { box-shadow: 0 0 0 0 rgba(91, 140, 255, 0); }
+    }
+    .voice-msg { display: flex; align-items: flex-start; gap: 10px; min-width: 180px; }
+    .voice-play {
+      width: 38px; height: 38px; flex-shrink: 0; border-radius: 50%;
+      border: 1px solid var(--line); background: #243044; color: var(--text);
+      font-size: 14px; line-height: 1;
+    }
+    .voice-play:hover { border-color: var(--accent); }
+    .voice-play.playing { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .voice-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .voice-dur { font-size: 11px; color: var(--muted); }
+    .voice-text { white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+    .voice-text.muted { color: var(--muted); }
 
     @media (max-width: 900px) {
       #app { grid-template-columns: 220px 1fr; }
@@ -275,20 +345,9 @@
       <input id="username" autocomplete="username" placeholder="alice" />
       <label for="password" data-i18n="passwordLabel">密码</label>
       <input id="password" type="password" autocomplete="current-password" data-i18n-placeholder="passwordPlaceholder" placeholder="至少 4 位" />
-      <label data-i18n="avatarLabel">头像（创建账号时可选）</label>
-      <div class="avatar-pick">
-        <img id="regAvatarImg" class="avatar lg hidden" alt="" />
-        <div id="regAvatarPh" class="avatar lg ph">未选择</div>
-        <div class="avatar-pick-actions">
-          <button type="button" class="btn ghost small" onclick="document.getElementById('regAvatarFile').click()" data-i18n="avatarPick">选择图片</button>
-          <button type="button" class="btn ghost small hidden" id="regAvatarClear" onclick="clearRegAvatar()" data-i18n="avatarReset">清除</button>
-          <span class="hint" data-i18n="avatarHint">JPG/PNG，≤1MB；不选则自动生成</span>
-        </div>
-      </div>
-      <input type="file" id="regAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onRegAvatarPick(event)" />
       <div class="auth-actions">
         <button class="btn full" onclick="login()" data-i18n="login">登录</button>
-        <button class="btn ghost full" onclick="registerUser()" data-i18n="register">创建账号</button>
+        <button class="btn ghost full" onclick="openRegister()" data-i18n="register">创建账号</button>
       </div>
       <p class="msg-status" id="authStatus"></p>
       <p class="suggest-link"><a href="javascript:void(0)" onclick="openSuggestion()" data-i18n="suggest">建议反馈</a></p>
@@ -336,15 +395,34 @@
       <div class="composer" id="composer">
         <input type="file" id="fileInput" class="hidden" onchange="sendFileFromInput('fileInput')" />
         <input type="file" id="imageInput" class="hidden" accept="image/*" onchange="sendFileFromInput('imageInput')" />
-        <div class="composer-input">
-          <textarea id="content" rows="1" data-i18n-placeholder="composerPlaceholder" placeholder="输入消息，Enter 发送，Shift+Enter 换行" onkeydown="onComposerKey(event)" oninput="resizeComposer()"></textarea>
-          <div class="composer-attach">
-            <button id="attachBtn" onclick="document.getElementById('fileInput').click()" title="发送附件" data-i18n-title="attachTitle">📎</button>
-            <button id="imageBtn" onclick="document.getElementById('imageInput').click()" title="发送图片" data-i18n-title="imageTitle">🖼</button>
-          </div>
+        <div class="chip-bar hidden" id="whisperBar">
+          <span class="chip-bar-label" data-i18n="whisperToLabel">私聊 →</span>
+          <span class="chips" id="whisperChips"></span>
+          <button type="button" class="btn ghost small" onclick="clearWhisper()" data-i18n="whisperClear">退出私聊</button>
         </div>
-        <button class="btn main" id="micBtn" onclick="toggleRec()" title="语音输入：说话转文字">🎤</button>
-        <button class="btn main" id="sendBtn" onclick="sendMessage()" data-i18n="send">发送</button>
+        <div class="chip-bar hidden" id="replyBar">
+          <span class="chip-bar-label" data-i18n="replyLabel">回复</span>
+          <img class="avatar sm hidden" id="replyAvatar" alt="" />
+          <span class="chip-quote" id="replyPreview"></span>
+          <button type="button" class="chip-x" onclick="clearReply()" data-i18n-title="quoteCancelTitle" title="取消引用">×</button>
+        </div>
+        <div class="chip-bar hidden" id="recBar">
+          <span class="rec-dot"></span>
+          <span data-i18n="recording">录音中</span>
+          <span id="recTime" class="mono">0:00</span>
+          <button type="button" class="btn ghost small" onclick="cancelRec()" data-i18n="cancel">取消</button>
+        </div>
+        <div class="composer-row">
+          <div class="composer-input">
+            <textarea id="content" rows="1" data-i18n-placeholder="composerPlaceholder" placeholder="输入消息，Enter 发送，Shift+Enter 换行" onkeydown="onComposerKey(event)" oninput="resizeComposer()"></textarea>
+            <div class="composer-attach">
+              <button id="attachBtn" onclick="document.getElementById('fileInput').click()" title="发送附件" data-i18n-title="attachTitle">📎</button>
+              <button id="imageBtn" onclick="document.getElementById('imageInput').click()" title="发送图片" data-i18n-title="imageTitle">🖼</button>
+            </div>
+          </div>
+          <button class="btn main" id="micBtn" onclick="toggleRec()" title="录制语音消息：点击开始，再点结束并发送">🎤</button>
+          <button class="btn main" id="sendBtn" onclick="sendMessage()" data-i18n="send">发送</button>
+        </div>
       </div>
       <div class="composer-hint" data-i18n="composerHint">支持 Markdown · Mermaid 图表 · ```chart 数据图</div>
     </main>
@@ -353,6 +431,46 @@
       <div class="people" id="people"><div class="empty" style="margin-top:32px" data-i18n="peopleEmpty">加入房间后显示</div></div>
     </aside>
   </section>
+
+  <dialog id="register" onkeydown="if (event.key === 'Enter' && event.target.tagName === 'INPUT' && (event.target.type === 'text' || event.target.type === 'password')) { event.preventDefault(); registerUser(); }">
+    <h2 style="margin:0 0 4px;font-size:18px" data-i18n="registerTitle">创建账号</h2>
+    <p class="hint" style="white-space:normal;margin:0 0 14px" data-i18n="regIntro">填写下面的信息创建人类账号；创建成功后会自动登录。</p>
+    <label for="regUsername" data-i18n="usernameLabel">用户名</label>
+    <input id="regUsername" maxlength="32" autocomplete="username" data-i18n-placeholder="regUsernamePlaceholder" placeholder="2–32 位字母、数字、_ . -" />
+    <label for="regPassword" data-i18n="passwordLabel">密码</label>
+    <input id="regPassword" type="password" autocomplete="new-password" data-i18n-placeholder="passwordPlaceholder" placeholder="至少 4 位" />
+    <label for="regPassword2" data-i18n="confirmPasswordLabel">确认密码</label>
+    <input id="regPassword2" type="password" autocomplete="new-password" data-i18n-placeholder="confirmPasswordPlaceholder" placeholder="再输入一遍" />
+    <label data-i18n="avatarLabel">头像（创建账号时可选）</label>
+    <div class="avatar-pick">
+      <img id="regAvatarImg" class="avatar lg hidden" alt="" />
+      <div id="regAvatarPh" class="avatar lg ph">未选择</div>
+      <div class="avatar-pick-actions">
+        <button type="button" class="btn ghost small" onclick="document.getElementById('regAvatarFile').click()" data-i18n="avatarPick">选择图片</button>
+        <button type="button" class="btn ghost small hidden" id="regAvatarClear" onclick="clearRegAvatar()" data-i18n="avatarReset">清除</button>
+        <span class="hint" data-i18n="avatarHint">JPG/PNG，≤1MB；不选则自动生成</span>
+      </div>
+    </div>
+    <input type="file" id="regAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onRegAvatarPick(event)" />
+    <label data-i18n="model3dFileLabel">3D 形象文件（可选）</label>
+    <div class="avatar-pick">
+      <div id="regModel3dPh" class="file-ph">未选择</div>
+      <div class="avatar-pick-actions">
+        <button type="button" class="btn ghost small" onclick="document.getElementById('regModel3dFile').click()" data-i18n="filePick">选择文件</button>
+        <button type="button" class="btn ghost small hidden" id="regModel3dClear" onclick="clearRegModel3d()" data-i18n="avatarReset">清除</button>
+        <span class="hint" data-i18n="model3dFileHint">GLB / GLTF，≤20MB；不选则不设 3D 形象</span>
+      </div>
+    </div>
+    <input type="file" id="regModel3dFile" class="hidden" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onchange="onRegModel3dPick(event)" />
+    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
+      <input type="checkbox" id="regArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
+    </label>
+    <p class="msg-status" id="regStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="closeRegister()" data-i18n="cancel">取消</button>
+      <button type="button" class="btn" id="regSubmit" onclick="registerUser()" data-i18n="register">创建账号</button>
+    </div>
+  </dialog>
 
   <dialog id="settings">
     <h2 style="margin:0 0 16px;font-size:18px" data-i18n="manageRoom">管理房间</h2>
@@ -517,6 +635,8 @@
     </div>
   </dialog>
 
+  <div id="popMenu" class="pop-menu hidden"></div>
+
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
   <script src="/static/vendor/mermaid.min.js"></script>
@@ -559,7 +679,7 @@
         agentNamePlaceholder: "例如 wilson-bot", agentKeyLabel: "公钥（PEM 或 ssh-ed25519）",
         cancelEdit: "取消编辑", create: "创建",
         vAutoReadLabel: "自动朗读新消息（他人的，流式结束后读一次）",
-        vAutoSendLabel: "语音识别完自动发送（说完即发，无需再点发送）",
+        vAutoSendLabel: "语音消息说完即发（识别自然结束时自动发送）",
         voiceLabel: "发音人", rateLabel: "语速", langLabel: "识别 / 朗读语言",
         followBrowser: "跟随浏览器", stopReading: "停止朗读",
         suggestTitle: "建议反馈", suggestDesc: "告诉我们你的建议、想法或遇到的困难，我们会认真阅读每一条。",
@@ -596,7 +716,7 @@
         asrNoSpeech: "没听到声音，请对着麦克风说话", asrAudio: "未检测到麦克风设备",
         asrNotAllowed: "麦克风权限被拒绝，请在浏览器设置中允许", asrService: "语音识别服务不可用",
         asrNetwork: "语音识别网络服务不可用", asrError: "语音识别出错：", asrStartFail: "语音识别启动失败：",
-        stopRecTitle: "结束语音输入",
+        stopRecTitle: "结束录音并发送",
         autoReadOn: "🔊 自动朗读：开", autoReadOff: "🔊 自动朗读：关",
         autoReadEnabled: "已开启：自动朗读他人的新消息", autoReadDisabled: "已关闭自动朗读",
         noTTS: "此浏览器不支持语音合成", voiceSaved: "语音设置已保存",
@@ -615,6 +735,50 @@
         model3dLabel: "3D 形象 URL（可选）",
         model3dPlaceholder: "https://…/model.glb",
         model3dArkitLabel: "支持 Apple ARKit 52 表情",
+        personMenuTitle: "点击可与该成员私聊",
+        whisperToLabel: "私聊 →",
+        whisperAdd: "加入私聊",
+        whisperRemove: "移出私聊",
+        whisperClear: "退出私聊",
+        replyLabel: "回复",
+        replyAdd: "引用回复",
+        replyRecalled: "原消息已撤回",
+        replyHidden: "（私聊消息）",
+        quoteImage: "[图片]",
+        quoteVoice: "[语音]",
+        quoteFile: "[文件] {{name}}",
+        quoteMissing: "原始消息不在当前视图",
+        quoteJumpTitle: "点击跳到原消息",
+        quoteCancelTitle: "取消引用",
+        msgMenuTitle: "消息操作：引用 / 撤回",
+        recall: "撤回",
+        recallDone: "已撤回",
+        voicePlayTitle: "播放语音",
+        voiceEmpty: "[语音]",
+        recording: "录音中",
+        cancel: "取消",
+        recCancelled: "已取消录音",
+        recTooShort: "录音太短，已取消",
+        recMaxReached: "已达 60 秒上限，自动发送",
+        noRecApi: "当前浏览器不支持录音（MediaRecorder）",
+        micRecTitle: "录制语音消息：点击开始，再点结束并发送",
+        voicePlayFail: "语音播放失败",
+        registerTitle: "创建账号",
+        regIntro: "填写下面的信息创建人类账号；创建成功后会自动登录。",
+        regUsernamePlaceholder: "2–32 位字母、数字、_ . -",
+        confirmPasswordLabel: "确认密码",
+        confirmPasswordPlaceholder: "再输入一遍",
+        filePick: "选择文件",
+        model3dFileLabel: "3D 形象文件（可选）",
+        model3dFileHint: "GLB / GLTF，≤20MB；不选则不设 3D 形象",
+        model3dTooBig: "3D 模型不能超过 20MB",
+        model3dBadType: "3D 模型必须是 .glb 或 .gltf 文件",
+        model3dUploaded: "3D 形象已上传",
+        model3dUploadFail: "账号已创建，但 3D 形象上传失败（可稍后重试）",
+        regUsernameEmpty: "请填写用户名",
+        regUsernameBad: "用户名只能用字母、数字、下划线、点、连字符（2–32 位）",
+        regPasswordShort: "密码至少 4 位",
+        regPwdMismatch: "两次输入的密码不一致",
       },
       en: {
         langSwitchTitle: "Switch to Chinese",
@@ -649,7 +813,7 @@
         agentNamePlaceholder: "e.g. wilson-bot", agentKeyLabel: "Public key (PEM or ssh-ed25519)",
         cancelEdit: "Cancel edit", create: "Create",
         vAutoReadLabel: "Auto-read new messages (others'; read once after streaming)",
-        vAutoSendLabel: "Auto-send after speech recognition (send right away)",
+        vAutoSendLabel: "Voice messages send as soon as speech ends (auto-send)",
         voiceLabel: "Voice", rateLabel: "Speed", langLabel: "Recognition / reading language",
         followBrowser: "Follow browser", stopReading: "Stop reading",
         suggestTitle: "Feedback & Suggestions", suggestDesc: "Tell us your suggestions, ideas, or problems — we read every one.",
@@ -686,7 +850,7 @@
         asrNoSpeech: "No speech detected — speak into the microphone", asrAudio: "No microphone detected",
         asrNotAllowed: "Microphone permission denied — allow it in your browser settings", asrService: "Speech recognition service unavailable",
         asrNetwork: "Speech recognition network service unavailable", asrError: "Speech recognition error: ", asrStartFail: "Failed to start speech recognition: ",
-        stopRecTitle: "Stop voice input",
+        stopRecTitle: "Stop recording and send",
         autoReadOn: "🔊 Auto-read: On", autoReadOff: "🔊 Auto-read: Off",
         autoReadEnabled: "Enabled: auto-read others' new messages", autoReadDisabled: "Auto-read disabled",
         noTTS: "Speech synthesis not supported by this browser", voiceSaved: "Voice settings saved",
@@ -705,6 +869,50 @@
         model3dLabel: "3D avatar URL (optional)",
         model3dPlaceholder: "https://…/model.glb",
         model3dArkitLabel: "Supports Apple ARKit 52 blendshapes",
+        personMenuTitle: "Click to whisper this member",
+        whisperToLabel: "Whisper →",
+        whisperAdd: "Add to whisper",
+        whisperRemove: "Remove from whisper",
+        whisperClear: "Exit whisper",
+        replyLabel: "Reply",
+        replyAdd: "Quote reply",
+        replyRecalled: "Original message was recalled",
+        replyHidden: "(whisper message)",
+        quoteImage: "[image]",
+        quoteVoice: "[voice]",
+        quoteFile: "[file] {{name}}",
+        quoteMissing: "The original message is not in the current view",
+        quoteJumpTitle: "Click to jump to the original message",
+        quoteCancelTitle: "Cancel quote",
+        msgMenuTitle: "Message actions: quote / recall",
+        recall: "Recall",
+        recallDone: "Message recalled",
+        voicePlayTitle: "Play voice message",
+        voiceEmpty: "[voice]",
+        recording: "Recording",
+        cancel: "Cancel",
+        recCancelled: "Recording cancelled",
+        recTooShort: "Recording too short — cancelled",
+        recMaxReached: "60s limit reached — sending",
+        noRecApi: "Recording (MediaRecorder) is not supported by this browser",
+        micRecTitle: "Record a voice message: click to start, click again to send",
+        voicePlayFail: "Failed to play the voice message",
+        registerTitle: "Create account",
+        regIntro: "Fill in the form to create a human account; you will be logged in automatically afterwards.",
+        regUsernamePlaceholder: "2–32 letters, digits, _ . -",
+        confirmPasswordLabel: "Confirm password",
+        confirmPasswordPlaceholder: "Type it again",
+        filePick: "Choose file",
+        model3dFileLabel: "3D model file (optional)",
+        model3dFileHint: "GLB / GLTF, ≤20MB; leave empty for no 3D model",
+        model3dTooBig: "3D model must be under 20MB",
+        model3dBadType: "3D model must be a .glb or .gltf file",
+        model3dUploaded: "3D model uploaded",
+        model3dUploadFail: "Account created, but the 3D model upload failed — you can retry later",
+        regUsernameEmpty: "Please enter a username",
+        regUsernameBad: "Username may only contain letters, digits, _ . - (2–32 chars)",
+        regPasswordShort: "Password must be at least 4 characters",
+        regPwdMismatch: "The two passwords do not match",
       },
     };
 
@@ -769,6 +977,16 @@
         [/只能管理自己名下的 Agent/, "You can only manage Agents you own"],
         [/^(.+) 不是 Agent 账号$/, "$1 is not an Agent account"],
         [/^(.+) 不是你名下的 Agent$/, "$1 is not one of your Agents"],
+        [/只能撤回自己发送的消息/, "You can only recall your own messages"],
+        [/消息发出超过 30 秒，无法撤回/, "More than 30 seconds have passed — cannot recall"],
+        [/引用的消息不存在/, "The quoted message does not exist"],
+        [/引用的消息已撤回，不能引用/, "The quoted message was recalled"],
+        [/引用的消息对你不可见/, "The quoted message is not visible to you"],
+        [/该附件属于私聊消息，对你不可见/, "This file belongs to a whisper message and is not visible to you"],
+        [/语音超过 10MB 上限/, "Voice message exceeds the 10MB limit"],
+        [/语音内容为空/, "The voice message is empty"],
+        [/语音必须是音频文件/, "The voice message must be an audio file (webm/ogg/mp4/mp3/wav/aac)"],
+        [/语音识别文本超过 8000 字上限/, "Voice transcript exceeds 8000 characters"],
       ];
       for (const [re, en] of m) {
         const hit = msg.match(re);
@@ -833,7 +1051,15 @@
     let lastUpdatedAt = "";
     let editingAgent = null;
     let regAvatarData = null;
+    let regModel3dFile = null;   // 注册弹窗里选的 3D 模型文件（注册成功后上传）
     let agentAvatarData = null;
+
+    /* ---- v2.5 状态：私聊模式 / 引用 / 撤回 ---- */
+    let whisperTo = [];             // 私聊模式选中的成员 [{username, avatarUrl}]
+    let replyTarget = null;         // 引用目标 {id, username, avatarUrl, excerpt}
+    const msgIndex = new Map();     // id -> 消息对象（消息菜单）
+    const msgArrival = new Map();   // id -> 本地到达时间（撤回窗口 / streamIds 新鲜度）
+    const MAX_CLIENT_STREAM_IDS = 50;
 
     const $ = (id) => document.getElementById(id);
 
@@ -928,15 +1154,35 @@
     function refreshAvatarPreviews() {
       setAvatarPreview("regAvatarImg", "regAvatarPh", "regAvatarClear", regAvatarData);
       setAvatarPreview("agentAvatarImg", "agentAvatarPh", "agentAvatarClear", agentAvatarData);
+      const ph = $("regModel3dPh");
+      if (ph) {
+        ph.textContent = regModel3dFile ? regModel3dFile.name : t("avatarEmpty");
+        $("regModel3dClear").classList.toggle("hidden", !regModel3dFile);
+      }
     }
 
     function onRegAvatarPick() {
       const err = pickAvatarFile("regAvatarFile", (url) => {
-        regAvatarData = url; refreshAvatarPreviews(); setAuthStatus("");
+        regAvatarData = url; refreshAvatarPreviews(); setRegStatus("");
       });
-      if (err) setAuthStatus(err);
+      if (err) setRegStatus(err);
     }
     function clearRegAvatar() { regAvatarData = null; refreshAvatarPreviews(); }
+
+    function setRegStatus(text) { $("regStatus").textContent = text || ""; }
+
+    function onRegModel3dPick(event) {
+      const input = event.target;
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return;
+      if (file.size > 20 * 1024 * 1024) return setRegStatus(t("model3dTooBig"));
+      if (!/\.(glb|gltf)$/i.test(file.name || "")) return setRegStatus(t("model3dBadType"));
+      regModel3dFile = file;
+      refreshAvatarPreviews();
+      setRegStatus("");
+    }
+    function clearRegModel3d() { regModel3dFile = null; refreshAvatarPreviews(); }
 
     function onAgentAvatarPick() {
       const err = pickAvatarFile("agentAvatarFile", (url) => { agentAvatarData = url; refreshAvatarPreviews(); });
@@ -979,15 +1225,64 @@
       } catch (e) { setHint(e.message || t("avatarUploadFail")); }
     }
 
+    /* ---- v2.5：创建账号弹窗（与登录表单分离） ---- */
+    function openRegister() {
+      $("regUsername").value = $("username").value.trim();
+      $("regPassword").value = "";
+      $("regPassword2").value = "";
+      regAvatarData = null;
+      regModel3dFile = null;
+      $("regArkit").checked = false;
+      refreshAvatarPreviews();
+      setRegStatus("");
+      $("register").showModal();
+      setTimeout(() => ($("regUsername").value ? $("regPassword").focus() : $("regUsername").focus()), 0);
+    }
+
+    function closeRegister() { $("register").close(); }
+
     async function registerUser() {
+      const username = $("regUsername").value.trim();
+      const password = $("regPassword").value;
+      const password2 = $("regPassword2").value;
+      if (!username) return setRegStatus(t("regUsernameEmpty"));
+      /* 与后端一致：Unicode 字母/数字/下划线/点/连字符，2–32 位 */
+      if (username.length < 2 || !/^[\p{L}\p{N}_.\-]+$/u.test(username)) return setRegStatus(t("regUsernameBad"));
+      if (password.length < 4) return setRegStatus(t("regPasswordShort"));
+      if (password !== password2) return setRegStatus(t("regPwdMismatch"));
+      const modelFile = regModel3dFile;
+      const arkit = $("regArkit").checked;
+      $("regSubmit").disabled = true;
       try {
-        const body = creds();
+        const body = { username, password };
         if (regAvatarData) body.avatar = regAvatarData;
         await api("/api/users", { method: "POST", body: JSON.stringify(body) });
         regAvatarData = null;
-        refreshAvatarPreviews();
+        regModel3dFile = null;
+        /* 注册成功 → 自动登录（登录表单填上刚注册的凭据） */
+        $("username").value = username;
+        $("password").value = password;
+        closeRegister();
         await login();
-      } catch (err) { setAuthStatus(err.message); }
+        if (modelFile && store.token) await uploadRegModel3d(modelFile, arkit);
+      } catch (err) {
+        setRegStatus(err.message);
+      } finally {
+        $("regSubmit").disabled = false;
+      }
+    }
+
+    async function uploadRegModel3d(file, arkit) {
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        await api(`/api/me/model3d${arkit ? "?arkit=true" : ""}`, { method: "POST", body: form });
+        voiceToast(t("model3dUploaded"));
+      } catch (e) {
+        /* 账号已创建成功，只是 3D 形象没传上 */
+        setHint(t("model3dUploadFail"));
+        voiceToast(t("model3dUploadFail"));
+      }
     }
 
     async function login() {
@@ -1008,8 +1303,13 @@
       store.avatarUrl = "";
       lastId = 0;
       lastUpdatedAt = "";
+      msgIndex.clear();
+      msgArrival.clear();
       stopSpeaking();
-      stopRec();
+      abortRec(true);
+      clearWhisper();
+      clearReply();
+      stopVoicePlay();
       ["webharness.token", "webharness.username", "webharness.roomName",
        "chatroom.token", "chatroom.username", "chatroom.roomName"].forEach((k) => localStorage.removeItem(k));
       stopPoll();
@@ -1137,12 +1437,24 @@
         return;
       }
       box.innerHTML = users.map((u) => `
-        <div class="person"><span class="dot"></span>
+        <div class="person" data-name="${escapeHtml(u.username)}" data-avatar="${escapeHtml(u.avatarUrl || "")}"
+             title="${u.username === store.username ? "" : escapeHtml(t("personMenuTitle"))}"><span class="dot"></span>
           <img class="avatar" data-src="${escapeHtml(u.avatarUrl || "")}" alt="" />
           <span>${escapeHtml(u.username)}${u.username === store.username ? t("meSuffix") : ""}</span>
         </div>
       `).join("");
       hydrateImages(box);
+      box.querySelectorAll(".person").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          const name = el.dataset.name;
+          if (!name || name === store.username) return;
+          if (whisperIndex(name) >= 0) {
+            showPopMenu([{ label: t("whisperRemove"), action: () => removeWhisperTarget(name) }], e.clientX, e.clientY);
+          } else {
+            showPopMenu([{ label: t("whisperAdd"), action: () => addWhisperTarget(name, el.dataset.avatar) }], e.clientX, e.clientY);
+          }
+        });
+      });
     }
 
     async function fillRoomAgentSelect(selectId, selected) {
@@ -1232,7 +1544,12 @@
       saveCurrentDraft();
       lastId = 0;
       lastUpdatedAt = "";
-      stopRec();
+      msgIndex.clear();
+      msgArrival.clear();
+      abortRec(true);
+      clearWhisper();
+      clearReply();
+      stopVoicePlay();
       store.viewingArchive = false;
       store.archiveId = null;
       applyRoom(info);
@@ -1256,6 +1573,12 @@
         saveCurrentDraft();
         lastId = 0;
         lastUpdatedAt = "";
+        msgIndex.clear();
+        msgArrival.clear();
+        abortRec(true);
+        clearWhisper();
+        clearReply();
+        stopVoicePlay();
         store.roomName = "";
         $("content").value = "";
         resizeComposer();
@@ -1293,11 +1616,14 @@
     }
 
     function messageQuery() {
-      const ids = [...document.querySelectorAll("#log .bubble.streaming")]
+      /* streamIds：流式气泡（Agent 逐字回复）+ 近 35 秒内到达的消息（撤回靠它同步删除） */
+      const ids = new Set([...document.querySelectorAll("#log .bubble.streaming")]
         .map((el) => el.dataset.msgId)
-        .filter(Boolean);
+        .filter(Boolean));
+      const freshCutoff = Date.now() - 35000;
+      for (const [id, ts] of msgArrival) if (ts >= freshCutoff) ids.add(String(id));
       const parts = lastId ? [`afterId=${lastId}`, "wait=25"] : ["limit=80"];
-      if (ids.length) parts.push(`streamIds=${ids.join(",")}`);
+      if (ids.size) parts.push(`streamIds=${[...ids].slice(0, MAX_CLIENT_STREAM_IDS).join(",")}`);
       if (lastUpdatedAt) parts.push(`sinceUpdatedAt=${encodeURIComponent(lastUpdatedAt)}`);
       return parts.join("&");
     }
@@ -1309,6 +1635,8 @@
 
     async function poll(signal) {
       if (!store.roomName || store.viewingArchive) return;
+      const staleCutoff = Date.now() - 60000;
+      for (const [id, ts] of msgArrival) if (ts < staleCutoff) msgArrival.delete(id);
       try {
         const query = messageQuery();
         const msg = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/messages?${query}`, { signal });
@@ -1329,8 +1657,13 @@
 
     function leaveEndedRoom(message) {
       stopPoll();
+      abortRec(true);
+      clearWhisper();
+      clearReply();
+      stopVoicePlay();
       store.roomName = ""; store.isOwner = false; store.canArchive = false;
       store.viewingArchive = false; store.archiveId = null; lastId = 0; lastUpdatedAt = "";
+      msgIndex.clear(); msgArrival.clear();
       saveSession();
       $("roomTitle").textContent = t("chooseRoom");
       $("manageBtn").classList.add("hidden");
@@ -1467,7 +1800,18 @@
       if (empty) empty.remove();
       for (const m of messages) {
         noteMessage(m);
-        if (isBlankRow(m)) continue;
+        if (m.id) {
+          const key = String(m.id);
+          if (m.recalled) {          // 撤回：所有端移除该气泡（服务端已清空内容，只留墓碑行）
+            msgIndex.delete(key);
+            msgArrival.delete(key);
+            removeBubble(m.id);
+            continue;
+          }
+          if (isBlankRow(m)) { msgIndex.delete(key); continue; }
+          msgIndex.set(key, m);
+          if (!msgArrival.has(key)) msgArrival.set(key, Date.now());
+        }
         const existing = !replace && m.id && log.querySelector(`[data-msg-id="${CSS.escape(String(m.id))}"]`);
         if (existing) {
           const wasStreaming = existing.classList.contains("streaming");
@@ -1505,10 +1849,44 @@
           tag.textContent = t("whisperTag");
           meta.appendChild(tag);
         }
+        const menuBtn = document.createElement("button");
+        menuBtn.type = "button";
+        menuBtn.className = "msg-menu-btn";
+        menuBtn.textContent = "⋯";
+        menuBtn.title = t("msgMenuTitle");
+        menuBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const r = menuBtn.getBoundingClientRect();
+          openMessageMenu(msgIndex.get(String(m.id)) || m, r.left, r.bottom + 4);
+        });
+        meta.appendChild(menuBtn);
+        if (m.reply) meta.after(buildQuote(m.reply));
         if (m.msgType === "image") {
           body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || t("imageAlt"))}" data-src="${escapeHtml(m.downloadUrl)}" />`;
         } else if (m.msgType === "attachment") {
           body.innerHTML = `<a class="file" href="${m.downloadUrl}">📎 ${escapeHtml(m.attachmentName)}</a>`;
+        } else if (m.msgType === "voice") {
+          const wrap = document.createElement("div");
+          wrap.className = "voice-msg";
+          const play = document.createElement("button");
+          play.type = "button";
+          play.className = "voice-play";
+          play.textContent = "▶";
+          play.title = t("voicePlayTitle");
+          play.addEventListener("click", (e) => { e.stopPropagation(); toggleVoicePlay(play, m.downloadUrl); });
+          const main = document.createElement("div");
+          main.className = "voice-main";
+          const txt = document.createElement("div");
+          txt.className = "voice-text" + (m.content ? "" : " muted");
+          txt.textContent = m.content || t("voiceEmpty");
+          const dur = document.createElement("div");
+          dur.className = "voice-dur";
+          dur.textContent = fmtVoiceDur(m.durationMs);
+          main.appendChild(txt);
+          main.appendChild(dur);
+          wrap.appendChild(play);
+          wrap.appendChild(main);
+          body.appendChild(wrap);
         } else {
           renderBody(body, m.content || "", !!m.streaming);
           const spk = document.createElement("button");
@@ -1549,18 +1927,20 @@
 
     async function sendMessage() {
       if (store.viewingArchive) return;
+      if (recListening) return;   // 录音中不发送文本
       const input = $("content");
       const content = input.value.trim();
       if (!content || !store.roomName) return;
+      const payload = { content: whisperTo.length ? `${whisperPrefix()} ${content}` : content };
+      if (replyTarget) payload.replyTo = replyTarget.id;
       try {
         const sent = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/messages`, {
-          method: "POST", body: JSON.stringify({ content }),
+          method: "POST", body: JSON.stringify(payload),
         });
         input.value = "";
         resizeComposer();
         clearDraft(store.roomName);
-        recDismissed = true; // 防止识别会话剩余的 onresult 把文本写回
-        if (recListening) stopRec();
+        clearReply();
         renderMessages([sent], false, true);
       } catch (err) {
         if (err.status === 410) leaveEndedRoom(err.message);
@@ -1926,6 +2306,222 @@
       }[c]));
     }
 
+    // ---------- v2.5：弹出菜单（在线用户 / 消息操作共用） ----------
+    let popMenuOpenedAt = 0;
+
+    function showPopMenu(items, x, y) {
+      const menu = $("popMenu");
+      menu.innerHTML = "";
+      items.forEach((item) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "pop-item";
+        b.textContent = item.label;
+        b.addEventListener("click", () => { hidePopMenu(); item.action(); });
+        menu.appendChild(b);
+      });
+      menu.classList.remove("hidden");
+      menu.style.left = "0px";
+      menu.style.top = "0px";
+      const rect = menu.getBoundingClientRect();
+      menu.style.left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)) + "px";
+      menu.style.top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)) + "px";
+      popMenuOpenedAt = Date.now();
+    }
+
+    function hidePopMenu() { $("popMenu").classList.add("hidden"); }
+
+    document.addEventListener("click", (e) => {
+      const menu = $("popMenu");
+      if (!menu || menu.classList.contains("hidden")) return;
+      if (e.target.closest("#popMenu")) return;
+      if (Date.now() - popMenuOpenedAt < 80) return;   // 打开菜单的那一次点击本身
+      hidePopMenu();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hidePopMenu(); });
+
+    // ---------- v2.5：私聊模式（@@ 前缀 + chips） ----------
+    function whisperPrefix() { return whisperTo.map((u) => "@@" + u.username).join(" "); }
+    function whisperIndex(name) {
+      const key = String(name).toLowerCase();
+      return whisperTo.findIndex((u) => u.username.toLowerCase() === key);
+    }
+    function addWhisperTarget(username, avatarUrl) {
+      if (!username || username === store.username || whisperIndex(username) >= 0) return;
+      whisperTo.push({ username, avatarUrl: avatarUrl || "" });
+      renderWhisperBar();
+    }
+    function removeWhisperTarget(username) {
+      const i = whisperIndex(username);
+      if (i >= 0) { whisperTo.splice(i, 1); renderWhisperBar(); }
+    }
+    function clearWhisper() { whisperTo = []; renderWhisperBar(); }
+    function renderWhisperBar() {
+      const on = whisperTo.length > 0;
+      $("whisperBar").classList.toggle("hidden", !on);
+      $("composer").classList.toggle("whisper", on);
+      if (!on) return;
+      const chips = $("whisperChips");
+      chips.innerHTML = whisperTo.map((u) => `
+        <span class="wchip"><img class="avatar sm" data-src="${escapeHtml(u.avatarUrl || "")}" alt="" />
+          <span>${escapeHtml(u.username)}</span>
+          <button type="button" class="chip-x" data-wremove="${escapeHtml(u.username)}" title="${escapeHtml(t("whisperRemove"))}">×</button>
+        </span>`).join("");
+      hydrateImages(chips);
+      chips.querySelectorAll("[data-wremove]").forEach((b) => {
+        b.addEventListener("click", () => removeWhisperTarget(b.dataset.wremove));
+      });
+    }
+
+    // ---------- v2.5：引用回复 ----------
+    function setReplyTarget(m) {
+      replyTarget = { id: m.id, username: m.username, avatarUrl: m.avatarUrl || "", excerpt: quoteExcerptFor(m) };
+      renderReplyBar();
+      $("content").focus();
+    }
+    function clearReply() { replyTarget = null; renderReplyBar(); }
+    function quoteExcerptFor(m) {
+      const tpe = !m.msgType || m.msgType === "text" ? "text" : m.msgType;
+      if (tpe === "image") return t("quoteImage");
+      if (tpe === "voice") return t("quoteVoice");
+      if (tpe === "attachment") return tf("quoteFile", { name: m.attachmentName || "" });
+      return (m.content || "").replace(/\s+/g, " ").slice(0, 120);
+    }
+    function renderReplyBar() {
+      const on = !!replyTarget;
+      $("replyBar").classList.toggle("hidden", !on);
+      if (!on) return;
+      const img = $("replyAvatar");
+      if (replyTarget.avatarUrl) {
+        img.setAttribute("data-src", replyTarget.avatarUrl);
+        img.classList.remove("hidden");
+        hydrateImages($("replyBar"));
+      } else {
+        img.classList.add("hidden");
+      }
+      $("replyPreview").innerHTML =
+        `<span class="quote-name">${escapeHtml(replyTarget.username)}</span>${escapeHtml(replyTarget.excerpt)}`;
+    }
+    function replyText(reply) {
+      if (reply.recalled) return t("replyRecalled");
+      if (reply.hidden) return t("replyHidden");
+      if (reply.excerptType === "image") return t("quoteImage");
+      if (reply.excerptType === "voice") return t("quoteVoice");
+      if (reply.excerptType === "attachment") return tf("quoteFile", { name: reply.excerpt || "" });
+      return reply.excerpt || "";
+    }
+    function buildQuote(reply) {
+      const muted = reply.recalled || reply.hidden;
+      const q = document.createElement("div");
+      q.className = "quote" + (muted ? " muted" : "");
+      q.dataset.quoteId = String(reply.id);
+      if (!muted) q.title = t("quoteJumpTitle");
+      q.innerHTML = `<span class="quote-name">${escapeHtml(reply.username || "")}</span><span class="quote-text">${escapeHtml(replyText(reply))}</span>`;
+      if (!muted) {
+        q.addEventListener("click", (e) => { e.stopPropagation(); scrollToMessage(reply.id); });
+      }
+      return q;
+    }
+    function scrollToMessage(id) {
+      const el = $("log").querySelector(`[data-msg-id="${CSS.escape(String(id))}"]`);
+      if (!el) { voiceToast(t("quoteMissing")); return; }
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), 1700);
+    }
+
+    // ---------- v2.5：消息撤回 ----------
+    function parseServerTime(s) {
+      if (!s) return 0;
+      const d = new Date(String(s).replace(" ", "T") + "Z");   // 服务端时间为 UTC
+      return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+    }
+    function canRecall(m) {
+      if (!m || m.username !== store.username || store.viewingArchive) return false;
+      const base = parseServerTime(m.createdAt) || msgArrival.get(String(m.id)) || 0;
+      return !!base && Date.now() - base <= 29000;
+    }
+    async function recallMessage(id) {
+      if (!store.roomName || store.viewingArchive) return;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/messages/${id}`, { method: "DELETE" });
+        removeBubble(id);
+        msgIndex.delete(String(id));
+        msgArrival.delete(String(id));
+        voiceToast(t("recallDone"));
+      } catch (err) {
+        if (err.status !== 401) voiceToast(err.message);
+      }
+    }
+    function removeBubble(id) {
+      const el = $("log").querySelector(`[data-msg-id="${CSS.escape(String(id))}"]`);
+      if (!el) return;
+      if (playingVoiceBtn && el.contains(playingVoiceBtn)) stopVoicePlay();   // 正播放的语音随气泡一起停
+      el.remove();
+    }
+    function openMessageMenu(msg, x, y) {
+      if (!msg || !msg.id) return;
+      const items = [{ label: t("replyAdd"), action: () => setReplyTarget(msg) }];
+      if (canRecall(msg)) items.push({ label: t("recall"), action: () => recallMessage(msg.id) });
+      showPopMenu(items, x, y);
+    }
+
+    /* 点击消息气泡空白处 → 消息菜单（引用 / 撤回）；交互元素与选中文本不触发 */
+    $("log").addEventListener("click", (e) => {
+      const bubble = e.target.closest(".bubble");
+      if (!bubble || !bubble.dataset.msgId) return;
+      if (e.target.closest("a, button, img, audio, .quote, .mermaid-box, .chart-box")) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && String(sel).length) return;
+      openMessageMenu(msgIndex.get(bubble.dataset.msgId), e.clientX, e.clientY);
+    });
+
+    // ---------- v2.5：语音消息播放 ----------
+    let playingAudio = null;
+    let playingVoiceBtn = null;
+    function fmtVoiceDur(ms) {
+      const s = Math.round((Number(ms) || 0) / 1000);
+      if (!s) return "";
+      return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    }
+    function setVoiceBtn(btn, icon) {
+      btn.textContent = icon;
+      btn.classList.toggle("playing", icon === "⏸");
+    }
+    function stopVoicePlay() {
+      if (playingAudio) { try { playingAudio.pause(); } catch (e) {} }
+      if (playingVoiceBtn) setVoiceBtn(playingVoiceBtn, "▶");
+      playingAudio = null;
+      playingVoiceBtn = null;
+    }
+    async function toggleVoicePlay(btn, url) {
+      if (playingAudio && playingVoiceBtn === btn) {
+        if (playingAudio.paused) {
+          try { await playingAudio.play(); setVoiceBtn(btn, "⏸"); } catch (e) { stopVoicePlay(); }
+        } else {
+          playingAudio.pause();
+          setVoiceBtn(btn, "▶");
+        }
+        return;
+      }
+      stopVoicePlay();
+      if (!url) { voiceToast(t("voicePlayFail")); return; }
+      try {
+        const src = await authBlobUrl(url);
+        const audio = new Audio(src);
+        playingAudio = audio;
+        playingVoiceBtn = btn;
+        audio.addEventListener("ended", () => {
+          if (playingVoiceBtn === btn) { setVoiceBtn(btn, "▶"); playingAudio = null; playingVoiceBtn = null; }
+        });
+        await audio.play();
+        setVoiceBtn(btn, "⏸");
+      } catch (e) {
+        stopVoicePlay();
+        voiceToast(t("voicePlayFail"));
+      }
+    }
+
     // ---------- 语音模块（v2.0 · 浏览器 Web Speech API：ASR + TTS，纯前端） ----------
     const hasTTS = "speechSynthesis" in window;
     const voiceSynth = hasTTS ? window.speechSynthesis : null;
@@ -1954,12 +2550,24 @@
     let voiceList = [];
     let speaking = false;
     let speakingMsgId = null;
-    let rec = null;
-    let recListening = false;
-    let recBase = "";
-    let recFinal = "";
-    let recDismissed = false; // 发送成功后忽略本次识别会话剩余的 onresult 写回
-    let recManualStop = false; // 用户手动停止识别（不触发「识别完自动发送」）
+    /* v2.5 语音消息：MediaRecorder 录音 + SpeechRecognition 并行识别 */
+    const hasRecApi = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+    const REC_MAX_MS = 60000;
+    let recSR = null;            // 当前 SpeechRecognition 实例
+    let mediaRec = null;         // MediaRecorder
+    let recStream = null;        // MediaStream
+    let recChunks = [];
+    let recTimer = null;
+    let recListening = false;    // 是否正在录音
+    let recStarting = false;     // getUserMedia 授权等待中（防双击竞态）
+    let recStartMs = 0;
+    let recCancelled = false;
+    let recSilentCancel = false; // 切房/登出触发的取消不弹提示
+    let recRestarts = 0;
+    let recAsrDead = false;      // ASR 出错后不再重启
+    let recBase = "";            // 开始录音时输入框里的文本（拼进语音消息文本）
+    let recBaseRoom = "";        // 开始录音时的房间（切房后结果作废）
+    let recAsrFinal = "";        // 本次录音累计的识别文本
 
     function voiceToast(msg) {
       let t = $("voiceToast");
@@ -2097,80 +2705,226 @@
       });
     }
 
-    // ---- ASR：麦克风语音输入 ----
+    // ---- v2.5：语音消息（MediaRecorder 录音 + ASR 实时识别，停止即发送） ----
+    function pickAudioMime() {
+      if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return "";
+      const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+      for (const c of candidates) { try { if (MediaRecorder.isTypeSupported(c)) return c; } catch (e) {} }
+      return "";
+    }
+
     function toggleRec() {
       if (IS_WECHAT) { voiceToast(t("wechatVoice")); return; }
-      if (!hasASR) { voiceToast(t("noASR")); return; }
-      if (recListening) { stopRec(); return; }
+      if (recListening) { finishRec(false); return; }   // 再点一次 = 结束并发送
       startRec();
     }
 
-    function startRec() {
-      recBase = $("content").value.trim();
-      recFinal = "";
-      recDismissed = false;
-      recManualStop = false;
+    async function startRec() {
+      if (!hasRecApi) { voiceToast(t("noRecApi")); return; }
+      if (recStarting || recListening) return;
+      if (!store.roomName || store.viewingArchive) return;
+      if (!store.isOwner && !store.perms.canSpeak) { voiceToast(t("mutedPlaceholder")); return; }
+      recStarting = true;
+      recCancelled = false;
+      recSilentCancel = false;
+      let stream = null;
       try {
-        rec = new SpeechRec();
-        rec.lang = voiceCfg.lang || (navigator.language || "zh-CN").replace("_", "-");
-        rec.interimResults = true;
-        rec.continuous = false;
-        recListening = true;
-        renderMicUI();
-        rec.onstart = renderMicUI;
-        rec.onresult = (e) => {
-          if (recDismissed) return;
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        const denied = e && (e.name === "NotAllowedError" || e.name === "SecurityError");
+        voiceToast(denied ? t("asrNotAllowed") : t("asrAudio"));
+        return;
+      } finally {
+        recStarting = false;
+      }
+      if (recCancelled) {   // 等待授权期间被取消（切房 / 登出）
+        try { stream.getTracks().forEach((tk) => tk.stop()); } catch (e) {}
+        return;
+      }
+      recStream = stream;
+      recBase = $("content").value.trim();
+      recBaseRoom = store.roomName;
+      recAsrFinal = "";
+      recChunks = [];
+      recRestarts = 0;
+      recAsrDead = !hasASR;
+      const mime = pickAudioMime();
+      try {
+        mediaRec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      } catch (e) {
+        releaseRecStream();
+        voiceToast(t("noRecApi"));
+        return;
+      }
+      mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+      mediaRec.onstop = onRecStopped;
+      try {
+        mediaRec.start(250);
+      } catch (e) {
+        releaseRecStream();
+        voiceToast(t("noRecApi"));
+        return;
+      }
+      recStartMs = Date.now();
+      recListening = true;
+      $("recBar").classList.remove("hidden");
+      tickRecTimer();
+      recTimer = setInterval(tickRecTimer, 250);
+      renderMicUI();
+      startRecASR();
+    }
+
+    function tickRecTimer() {
+      const elapsed = Date.now() - recStartMs;
+      $("recTime").textContent = fmtVoiceDur(elapsed) || "0:00";
+      if (elapsed >= REC_MAX_MS) { voiceToast(t("recMaxReached")); finishRec(false); }
+    }
+
+    function startRecASR() {
+      if (!hasASR || recAsrDead) return;
+      let sr = null;
+      try {
+        sr = new SpeechRec();
+        recSR = sr;
+        sr.lang = voiceCfg.lang || (navigator.language || "zh-CN").replace("_", "-");
+        sr.interimResults = true;
+        sr.continuous = true;
+        sr.onresult = (e) => {
           let final = "", interim = "";
           for (let i = e.resultIndex; i < e.results.length; i++) {
             const r = e.results[i];
             if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
           }
-          if (final) recFinal = final;
-          const input = $("content");
-          const tail = final + interim;
-          input.value = recBase ? recBase + " " + tail : tail;
+          if (final) recAsrFinal += final;
+          if (!recListening) return;
+          const preview = [recBase, (recAsrFinal + interim).trim()].filter(Boolean).join(" ");
+          $("content").value = preview;
           resizeComposer();
         };
-        rec.onerror = (e) => {
-          recListening = false;
-          renderMicUI();
-          if (e.error === "aborted") return;
+        sr.onerror = (e) => {
+          if (e.error === "aborted" || e.error === "no-speech") return;
           const map = {
-            "no-speech": t("asrNoSpeech"),
             "audio-capture": t("asrAudio"),
             "not-allowed": t("asrNotAllowed"),
             "service-not-allowed": t("asrService"),
             network: t("asrNetwork"),
           };
+          if (e.error === "not-allowed" || e.error === "service-not-allowed") recAsrDead = true;
           voiceToast(map[e.error] || t("asrError") + e.error);
         };
-        rec.onend = () => {
-          recListening = false;
-          renderMicUI();
-          if (recManualStop) { recManualStop = false; return; }
-          if (voiceCfg.autoSend && recFinal && !recDismissed) sendMessage();
+        sr.onend = () => {
+          if (!recListening || recSR !== sr || recAsrDead) return;
+          if (voiceCfg.autoSend && recAsrFinal.trim()) { finishRec(false); return; }   // 说完即发
+          if (recRestarts < 5) {   // 识别静默结束不打断录音，重启继续识别
+            recRestarts += 1;
+            try { sr.start(); } catch (e) { recAsrDead = true; }
+          }
         };
-        rec.start();
+        sr.start();
       } catch (e) {
-        recListening = false;
-        renderMicUI();
-        voiceToast(t("asrStartFail") + e.message);
+        recAsrDead = true;
       }
     }
 
-    function stopRec() {
-      recManualStop = true;
-      if (rec) { try { rec.stop(); } catch (e) {} }
-      setTimeout(() => { if (recListening && rec) { try { rec.abort(); } catch (e) {} } }, 600);
+    function stopRecASR() {
+      const sr = recSR;
+      recSR = null;
+      if (sr) { try { sr.onend = null; sr.abort(); } catch (e) {} }
+    }
+
+    function finishRec(cancelled) {
+      if (!recListening) return;
+      recCancelled = !!cancelled;
+      recListening = false;
+      if (recTimer) { clearInterval(recTimer); recTimer = null; }
+      stopRecASR();
+      renderMicUI();
+      if (mediaRec && mediaRec.state !== "inactive") {
+        try { mediaRec.stop(); } catch (e) { onRecStopped(); }
+      } else {
+        onRecStopped();
+      }
+    }
+
+    function abortRec(silent) {
+      if (recTimer) { clearInterval(recTimer); recTimer = null; }
+      if (recStarting) { recCancelled = true; recSilentCancel = !!silent; return; }
+      releaseRecStream();
+      if (!recListening) { $("recBar").classList.add("hidden"); return; }
+      recSilentCancel = !!silent;
+      finishRec(true);
+    }
+
+    function cancelRec() { finishRec(true); }
+
+    function releaseRecStream() {
+      if (recStream) {
+        try { recStream.getTracks().forEach((tk) => tk.stop()); } catch (e) {}
+        recStream = null;
+      }
+    }
+
+    async function onRecStopped() {
+      const durMs = Date.now() - recStartMs;
+      releaseRecStream();
+      $("recBar").classList.add("hidden");
+      const chunks = recChunks;
+      recChunks = [];
+      const mimeFull = (mediaRec && mediaRec.mimeType) || pickAudioMime() || "audio/webm";
+      mediaRec = null;
+      if (recCancelled) {
+        restoreRecBase();
+        if (recSilentCancel) recSilentCancel = false;
+        else voiceToast(t("recCancelled"));
+        return;
+      }
+      if (durMs < 1000 || !chunks.length) { restoreRecBase(); voiceToast(t("recTooShort")); return; }
+      const mime = mimeFull.split(";")[0].trim() || "audio/webm";
+      await sendVoice(new Blob(chunks, { type: mime }), durMs);
+    }
+
+    function restoreRecBase() {
+      if (recBaseRoom !== store.roomName) return;   // 已切房：不要覆盖新房间草稿
+      $("content").value = recBase;
+      resizeComposer();
+    }
+
+    async function sendVoice(blob, durMs) {
+      if (!recBaseRoom || recBaseRoom !== store.roomName || store.viewingArchive) { restoreRecBase(); return; }
+      const asrText = recAsrFinal.trim();
+      let text = [recBase, asrText].filter(Boolean).join(" ");
+      if (whisperTo.length) text = (whisperPrefix() + " " + text).trim();
+      const ext = blob.type.includes("mp4") ? "m4a" : (blob.type.includes("ogg") ? "ogg" : "webm");
+      const form = new FormData();
+      form.append("file", blob, `voice.${ext}`);
+      form.append("text", text);
+      form.append("durationMs", String(Math.round(durMs)));
+      if (replyTarget) form.append("replyTo", String(replyTarget.id));
+      try {
+        const sent = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/voice`, { method: "POST", body: form });
+        try {
+          if (sent.downloadUrl) blobCache.set(sent.downloadUrl, URL.createObjectURL(blob));   // 本地即时回放
+        } catch (e) {}
+        $("content").value = "";
+        resizeComposer();
+        clearDraft(store.roomName);
+        clearReply();
+        renderMessages([sent], false, true);
+      } catch (err) {
+        restoreRecBase();
+        if (err.status === 410) leaveEndedRoom(err.message);
+        else if (err.status !== 401) { setHint(err.message); voiceToast(err.message); }
+      }
     }
 
     function renderMicUI() {
       const b = $("micBtn");
       if (!b) return;
+      const unsupported = !hasRecApi || IS_WECHAT;
       b.classList.toggle("listening", recListening);
-      b.classList.toggle("unsupported", !hasASR || IS_WECHAT);
+      b.classList.toggle("unsupported", unsupported);
       b.textContent = recListening ? "⏹" : "🎤";
-      b.title = recListening ? t("stopRecTitle") : t("micTitle");
+      b.title = unsupported ? t("noRecApi") : (recListening ? t("stopRecTitle") : t("micRecTitle"));
     }
 
     // ---- 语音设置 UI ----

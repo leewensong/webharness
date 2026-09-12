@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -34,10 +34,24 @@ MAX_AVATAR_BYTES = 1 * 1024 * 1024
 MAX_MODEL3D_BYTES = 20 * 1024 * 1024
 MAX_RULES_CHARS = 4000
 MAX_LONG_POLL_SECONDS = 30
+MAX_VOICE_BYTES = 10 * 1024 * 1024
+RECALL_WINDOW_SECONDS = 30
+MAX_STREAM_IDS = 60
 # 私聊语法：消息以 @@用户名 开头（后面跟空白或整条结束）即只对该用户、
-# 发送者和房主可见。名字规则与用户名一致（[\w.\-]+），后跟空白/结尾避免
-# 「@@bob你好」这类连写被误解析。
-WHISPER_RE = re.compile(r"^@@([\w.\-]+)(?:\s|$)")
+# 发送者和房主可见；连续多个 @@用户名 前缀表示多个接收者（v2.5）。
+# 名字规则与用户名一致（[\w.\-]+），后跟空白/结尾避免「@@bob你好」这类连写被误解析。
+WHISPER_RE = re.compile(r"^@@([\w.\-]+)(?:\s+|$)")
+AUDIO_MIME_BY_EXT = {
+    ".webm": "audio/webm",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".wav": "audio/wav",
+    ".aac": "audio/aac",
+}
 
 _main_loop: asyncio.AbstractEventLoop | None = None
 _room_events: dict[int, asyncio.Event] = {}
@@ -77,8 +91,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.4.0",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
+    version="2.5.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
     lifespan=lifespan,
 )
 
@@ -149,10 +163,13 @@ class PermissionUpdate(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
+    # 引用回复：被引用消息的 id（必须是本房间、未撤回、对发送者可见的消息）
+    replyTo: int | None = None
 
 
 class StreamStart(BaseModel):
     content: str = Field(default="", max_length=8000)
+    replyTo: int | None = None
 
 
 class StreamPatch(BaseModel):
@@ -494,21 +511,77 @@ def _check_action_allowed(room, member, user_id: int, action: str) -> None:
         raise HTTPException(status_code=403, detail="你已被禁止上传附件")
 
 
-def _resolve_whisper(conn, room_id: int, content: str):
-    """解析消息开头的 @@用户名 私聊前缀，返回目标用户行；无前缀返回 None。
+def _whisper_targets(conn, room_id: int, content: str) -> list:
+    """解析消息开头连续的 @@用户名 私聊前缀，返回目标用户行列表（去重保序）；无前缀返回 []。
 
     目标必须是本房间成员，否则报错——避免本想私聊的消息被当成公开消息广播出去。
     """
-    m = WHISPER_RE.match(content)
-    if not m:
+    targets: list = []
+    seen: set[str] = set()
+    rest = content or ""
+    while True:
+        m = WHISPER_RE.match(rest)
+        if not m:
+            break
+        name = m.group(1)
+        rest = rest[m.end():]
+        if name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        target = _get_user(conn, name)
+        if not target:
+            raise HTTPException(status_code=400, detail=f"私聊对象 {name} 不存在，请检查 @@用户名 是否正确")
+        if not _member(conn, room_id, target["id"]):
+            raise HTTPException(status_code=400, detail=f"私聊对象 {name} 不在该房间中")
+        targets.append(target)
+    return targets
+
+
+def _check_whisper_targets(conn, room_id: int, sender_name: str, targets: list) -> None:
+    for target in targets:
+        _require_whisper_allowed(conn, room_id, sender_name, target["username"])
+
+
+def _whisper_ids(row) -> set[int]:
+    """行内私聊接收者全集：whisper_to（旧行/单接收者）+ whisper_to_ids（v2.5 多人列表）。"""
+    ids: set[int] = set()
+    single = _row_get(row, "whisper_to")
+    if single:
+        ids.add(int(single))
+    for part in str(_row_get(row, "whisper_to_ids") or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
+def _whisper_columns(targets: list) -> tuple[int | None, str | None]:
+    """由目标列表生成 (whisper_to, whisper_to_ids)：whisper_to 恒为第一个接收者。"""
+    if not targets:
+        return None, None
+    ids = [t["id"] for t in targets]
+    return ids[0], ",".join(str(i) for i in ids)
+
+
+def _resolve_reply(conn, room, user: dict, reply_to: int | None) -> int | None:
+    """校验引用目标并返回其 id；None 表示不引用。
+
+    目标必须在本房间、未被撤回、且对发送者可见（看不见的私聊不能被引用，避免借引用泄露）。
+    """
+    if not reply_to:
         return None
-    name = m.group(1)
-    target = _get_user(conn, name)
-    if not target:
-        raise HTTPException(status_code=400, detail=f"私聊对象 {name} 不存在，请检查 @@用户名 是否正确")
-    if not _member(conn, room_id, target["id"]):
-        raise HTTPException(status_code=400, detail=f"私聊对象 {name} 不在该房间中")
-    return target
+    row = conn.execute(
+        "SELECT id, room_id, user_id, whisper_to, whisper_to_ids, recalled FROM messages WHERE id = ?",
+        (reply_to,),
+    ).fetchone()
+    if not row or row["room_id"] != room["id"]:
+        raise HTTPException(status_code=404, detail="引用的消息不存在")
+    if row["recalled"]:
+        raise HTTPException(status_code=400, detail="引用的消息已撤回，不能引用")
+    recipients = _whisper_ids(row)
+    if recipients and user["id"] not in (row["user_id"], *recipients, room["created_by"]):
+        raise HTTPException(status_code=403, detail="引用的消息对你不可见")
+    return row["id"]
 
 
 def _whisper_allowed(conn, room_id: int, sender_name: str, receiver_name: str) -> bool:
@@ -568,7 +641,47 @@ def _row_get(row, key, default=None):
     return default if value is None else value
 
 
-def _message_dict(row, room_name: str, *, archive_id: int | None = None) -> dict:
+def _reply_dict(row, room, user_id: int | None) -> dict | None:
+    """引用信息。原消息是私聊且请求者不可见时只给占位（hidden），不泄露内容。"""
+    reply_id = _row_get(row, "reply_to")
+    if not reply_id:
+        return None
+    reply_user_id = _row_get(row, "replyUserId")
+    if reply_user_id is None:
+        # 原消息行缺失（理论不可达：撤回走墓碑）
+        return {"id": reply_id, "username": "", "excerpt": "", "excerptType": "text", "recalled": True, "hidden": False}
+    username = _row_get(row, "replyUsername") or ""
+    if _row_get(row, "replyRecalled"):
+        return {"id": reply_id, "username": username, "excerpt": "", "excerptType": "text", "recalled": True, "hidden": False}
+    original = {
+        "user_id": reply_user_id,
+        "whisper_to": _row_get(row, "replyWhisperTo"),
+        "whisper_to_ids": _row_get(row, "replyWhisperIds"),
+    }
+    recipients = _whisper_ids(original)
+    allowed = {int(reply_user_id), *recipients}
+    if room is not None and room["created_by"]:
+        allowed.add(int(room["created_by"]))
+    if recipients and user_id is not None and user_id not in allowed:
+        return {"id": reply_id, "username": username, "excerpt": "", "excerptType": "text", "recalled": False, "hidden": True}
+    reply_type = _row_get(row, "replyType") or "text"
+    if reply_type in ("attachment", "image", "voice"):
+        excerpt = _row_get(row, "replyAttachment") or ""
+        excerpt_type = reply_type
+    else:
+        excerpt = re.sub(r"\s+", " ", _row_get(row, "replyContent") or "").strip()[:120]
+        excerpt_type = "text"
+    return {
+        "id": reply_id,
+        "username": username,
+        "excerpt": excerpt,
+        "excerptType": excerpt_type,
+        "recalled": False,
+        "hidden": False,
+    }
+
+
+def _message_dict(row, room_name: str, *, room=None, user_id: int | None = None, archive_id: int | None = None) -> dict:
     username = row["username"]
     item = {
         "id": row["id"],
@@ -578,11 +691,17 @@ def _message_dict(row, room_name: str, *, archive_id: int | None = None) -> dict
         "msgType": row["msg_type"],
         "createdAt": row["createdAt"],
         "streaming": bool(_row_get(row, "streaming", 0)),
-        "whisper": bool(_row_get(row, "whisper_to")),
+        "whisper": bool(_row_get(row, "whisper_to") or _row_get(row, "whisper_to_ids")),
+        "recalled": bool(_row_get(row, "recalled", 0)),
         "updatedAt": _row_get(row, "updatedAt") or row["createdAt"],
     }
-    if row["msg_type"] in ("attachment", "image"):
+    reply = _reply_dict(row, room, user_id)
+    if reply is not None:
+        item["reply"] = reply
+    if row["msg_type"] in ("attachment", "image", "voice"):
         item["attachmentName"] = row["attachment_name"]
+        if row["msg_type"] == "voice":
+            item["durationMs"] = int(_row_get(row, "duration_ms", 0) or 0)
         if archive_id:
             item["downloadUrl"] = f"/api/archives/{archive_id}/attachments/{row['id']}"
         else:
@@ -628,7 +747,13 @@ ROOM_LIST_SQL = """
                AND msg.user_id != m.user_id
                AND msg.id > COALESCE(m.last_read_msg_id, 0)
                AND (m.can_view_history = 1 OR msg.id > COALESCE(m.first_visible_msg_id, 0))
-               AND (msg.whisper_to IS NULL OR msg.whisper_to = m.user_id OR r.created_by = m.user_id)
+               AND COALESCE(msg.recalled, 0) = 0
+               AND (
+                 COALESCE(msg.whisper_to, '') = '' AND COALESCE(msg.whisper_to_ids, '') = ''
+                 OR msg.whisper_to = m.user_id
+                 OR (',' || COALESCE(msg.whisper_to_ids, '') || ',') LIKE '%,' || m.user_id || ',%'
+                 OR r.created_by = m.user_id
+               )
            ), 0) AS unreadCount
     FROM rooms r
     JOIN users u ON u.id = r.created_by
@@ -895,8 +1020,13 @@ def delete_agent(username: str, user: HumanUser):
     with get_db() as conn:
         agent = _get_my_agent(conn, user["id"], username)
         has_history = conn.execute(
-            "SELECT 1 FROM messages WHERE user_id = ? OR whisper_to = ? LIMIT 1",
-            (agent["id"], agent["id"]),
+            """
+            SELECT 1 FROM messages
+            WHERE user_id = ? OR whisper_to = ?
+               OR (',' || COALESCE(whisper_to_ids, '') || ',') LIKE ?
+            LIMIT 1
+            """,
+            (agent["id"], agent["id"], f"%,{agent['id']},%"),
         ).fetchone()
         owns_room = conn.execute(
             "SELECT 1 FROM rooms WHERE created_by = ? LIMIT 1", (agent["id"],)
@@ -1271,28 +1401,31 @@ def archive_messages(
     return {
         "roomId": room["id"],
         "roomName": room["name"],
-        "messages": [_message_dict(row, room["name"], archive_id=room["id"]) for row in rows],
+        "messages": [_message_dict(row, room["name"], room=room, user_id=user["id"], archive_id=room["id"]) for row in rows],
     }
 
 
 @app.get("/api/archives/{room_id}/attachments/{message_id}")
 def download_archived_attachment(room_id: int, message_id: int, user: CurrentUser):
     with get_db() as conn:
-        _require_archive_access(conn, room_id, user)
+        room, _member = _require_archive_access(conn, room_id, user)
         row = conn.execute(
             """
-            SELECT m.attachment_name, m.attachment_path, m.msg_type
+            SELECT m.attachment_name, m.attachment_path, m.msg_type, m.user_id,
+                   m.whisper_to, m.whisper_to_ids
             FROM messages m
-            WHERE m.id = ? AND m.room_id = ? AND m.msg_type IN ('attachment', 'image')
+            WHERE m.id = ? AND m.room_id = ? AND m.msg_type IN ('attachment', 'image', 'voice')
             """,
             (message_id, room_id),
         ).fetchone()
-        if not row or not row["attachment_path"]:
+        _require_file_visible(row, room, user["id"])
+        if not row["attachment_path"]:
             raise HTTPException(status_code=404, detail="附件不存在")
         path = UPLOADS_DIR / row["attachment_path"]
         if not path.is_file():
             raise HTTPException(status_code=404, detail="附件文件缺失")
-    return _file_response(path, row["attachment_name"], inline=row["msg_type"] == "image")
+        media = _voice_media_type(row["attachment_name"]) if row["msg_type"] == "voice" else None
+    return _file_response(path, row["attachment_name"], inline=row["msg_type"] in ("image", "voice"), media_type=media)
 
 
 # ---------- 成员与权限 ----------
@@ -1455,9 +1588,17 @@ MESSAGE_SELECT = """
             SELECT m.id, m.content, m.msg_type, m.attachment_name, m.created_at AS createdAt,
                    COALESCE(m.streaming, 0) AS streaming,
                    COALESCE(m.updated_at, m.created_at) AS updatedAt,
-                   m.user_id, m.whisper_to,
-                   u.username, u.avatar_updated_at AS avatarV
+                   m.user_id, m.whisper_to, m.whisper_to_ids, m.reply_to,
+                   COALESCE(m.recalled, 0) AS recalled, m.duration_ms,
+                   u.username, u.avatar_updated_at AS avatarV,
+                   rp.user_id AS replyUserId, rp.content AS replyContent,
+                   rp.msg_type AS replyType, rp.attachment_name AS replyAttachment,
+                   COALESCE(rp.recalled, 0) AS replyRecalled,
+                   rp.whisper_to AS replyWhisperTo, rp.whisper_to_ids AS replyWhisperIds,
+                   ru.username AS replyUsername
             FROM messages m JOIN users u ON u.id = m.user_id
+            LEFT JOIN messages rp ON rp.id = m.reply_to
+            LEFT JOIN users ru ON ru.id = rp.user_id
 """
 
 
@@ -1473,7 +1614,7 @@ def _parse_stream_ids(raw: str | None) -> list[int]:
     if not raw:
         return []
     ids: list[int] = []
-    for part in raw.split(",")[:20]:
+    for part in raw.split(",")[:MAX_STREAM_IDS]:
         part = part.strip()
         if part.isdigit():
             n = int(part)
@@ -1495,18 +1636,16 @@ def _finalize_stale_streams(conn, room_id: int) -> None:
 
 
 def _visible_rows(rows, room, user_id: int) -> list[dict]:
-    """私聊可见性：只有发送者、接收者、房主能看到内容。
+    """私聊可见性：只有发送者、全部接收者、房主能看到内容。
 
     其余请求者拿到的行被抹成“空行”——保留 id 让增量游标（afterId）不乱，
-    但不泄露发送者与内容；UI 端忽略空行不渲染。
+    但不泄露发送者、内容与引用目标；UI 端忽略空行不渲染。
     """
     result = []
     for row in rows:
         item = dict(row)
-        if (
-            item.get("whisper_to") is not None
-            and user_id not in (item["user_id"], item["whisper_to"], room["created_by"])
-        ):
+        recipients = _whisper_ids(item)
+        if recipients and user_id not in (item["user_id"], *recipients, room["created_by"]):
             item["content"] = ""
             item["username"] = ""
             item["avatarV"] = None
@@ -1515,8 +1654,19 @@ def _visible_rows(rows, room, user_id: int) -> list[dict]:
             item["attachment_name"] = None
             item["attachment_path"] = None
             item["whisper_to"] = None
+            item["whisper_to_ids"] = None
+            item["reply_to"] = None
         result.append(item)
     return result
+
+
+def _require_file_visible(row, room, user_id: int) -> None:
+    """附件/语音下载前的私聊可见性校验；消息不存在 → 404。"""
+    if row is None:
+        raise HTTPException(status_code=404, detail="附件不存在")
+    recipients = _whisper_ids(row)
+    if recipients and user_id not in (row["user_id"], *recipients, room["created_by"]):
+        raise HTTPException(status_code=403, detail="该附件属于私聊消息，对你不可见")
 
 
 def _fetch_messages(
@@ -1611,7 +1761,7 @@ async def recent_messages(
             )
             _mark_room_read(conn, room["id"], user["id"])
             room_label = room["name"]
-    return {"roomName": room_label, "messages": [_message_dict(row, room_label) for row in rows]}
+    return {"roomName": room_label, "messages": [_message_dict(row, room_label, room=room, user_id=user["id"]) for row in rows]}
 
 
 @app.post("/api/rooms/{room_name}/messages")
@@ -1619,20 +1769,23 @@ def send_message(room_name: str, body: MessageCreate, user: CurrentUser):
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
         _check_action_allowed(room, member, user["id"], "speak")
-        target = _resolve_whisper(conn, room["id"], body.content)
-        if target is not None:
-            _require_whisper_allowed(conn, room["id"], user["username"], target["username"])
-        whisper_to = target["id"] if target else None
+        targets = _whisper_targets(conn, room["id"], body.content)
+        _check_whisper_targets(conn, room["id"], user["username"], targets)
+        whisper_to, whisper_to_ids = _whisper_columns(targets)
+        reply_to = _resolve_reply(conn, room, user, body.replyTo)
         now = _db_now(conn)
         conn.execute(
-            "INSERT INTO messages (room_id, user_id, content, whisper_to, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (room["id"], user["id"], body.content, whisper_to, now),
+            """
+            INSERT INTO messages (room_id, user_id, content, whisper_to, whisper_to_ids, reply_to, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (room["id"], user["id"], body.content, whisper_to, whisper_to_ids, reply_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
         room_id = room["id"]
         room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label)
+    return _message_dict(row, room_label, room=room, user_id=user["id"])
 
 
 @app.post("/api/rooms/{room_name}/messages/stream")
@@ -1642,23 +1795,23 @@ def start_stream(room_name: str, user: CurrentUser, body: StreamStart = StreamSt
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
         _check_action_allowed(room, member, user["id"], "speak")
-        target = _resolve_whisper(conn, room["id"], payload.content or "")
-        if target is not None:
-            _require_whisper_allowed(conn, room["id"], user["username"], target["username"])
-        whisper_to = target["id"] if target else None
+        targets = _whisper_targets(conn, room["id"], payload.content or "")
+        _check_whisper_targets(conn, room["id"], user["username"], targets)
+        whisper_to, whisper_to_ids = _whisper_columns(targets)
+        reply_to = _resolve_reply(conn, room, user, payload.replyTo)
         now = _db_now(conn)
         conn.execute(
             """
-            INSERT INTO messages (room_id, user_id, content, whisper_to, streaming, updated_at)
-            VALUES (?, ?, ?, ?, 1, ?)
+            INSERT INTO messages (room_id, user_id, content, whisper_to, whisper_to_ids, reply_to, streaming, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
             """,
-            (room["id"], user["id"], payload.content or "", whisper_to, now),
+            (room["id"], user["id"], payload.content or "", whisper_to, whisper_to_ids, reply_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
         room_id = room["id"]
         room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label)
+    return _message_dict(row, room_label, room=room, user_id=user["id"])
 
 
 @app.post("/api/rooms/{room_name}/messages/{message_id}/stream")
@@ -1672,7 +1825,7 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
         room, member = _require_membership(conn, room_name, user["id"])
         _finalize_stale_streams(conn, room["id"])
         row = conn.execute(
-            "SELECT id, user_id, content, msg_type, streaming, whisper_to FROM messages WHERE id = ? AND room_id = ?",
+            "SELECT id, user_id, content, msg_type, streaming, whisper_to, whisper_to_ids FROM messages WHERE id = ? AND room_id = ?",
             (message_id, room["id"]),
         ).fetchone()
         if not row:
@@ -1693,31 +1846,77 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
             raise HTTPException(status_code=400, detail="消息超过 8000 字上限")
         # 内容变化时重解析 @@ 前缀：新增前缀要重新过私聊规则并改写接收者；
         # 去掉前缀时保留原私聊属性（可见性只紧不松），防止私聊内容被公开广播
-        target = _resolve_whisper(conn, room["id"], content)
-        if target is not None:
-            _require_whisper_allowed(conn, room["id"], user["username"], target["username"])
-            whisper_to = target["id"]
+        targets = _whisper_targets(conn, room["id"], content)
+        if targets:
+            _check_whisper_targets(conn, room["id"], user["username"], targets)
+            whisper_to, whisper_to_ids = _whisper_columns(targets)
         else:
-            whisper_to = row["whisper_to"]
+            whisper_to, whisper_to_ids = row["whisper_to"], row["whisper_to_ids"]
         streaming = 0 if body.done else 1
         conn.execute(
             """
             UPDATE messages
-            SET content = ?, whisper_to = ?, streaming = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+            SET content = ?, whisper_to = ?, whisper_to_ids = ?, streaming = ?,
+                updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
             WHERE id = ?
             """,
-            (content, whisper_to, streaming, message_id),
+            (content, whisper_to, whisper_to_ids, streaming, message_id),
         )
         row = _load_message(conn, message_id)
         room_id = room["id"]
         room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label)
+    return _message_dict(row, room_label, room=room, user_id=user["id"])
+
+
+@app.delete("/api/rooms/{room_name}/messages/{message_id}")
+def recall_message(room_name: str, message_id: int, user: CurrentUser):
+    """撤回自己 30 秒内的消息：墓碑化（清空内容 / 附件 / 私聊 / 引用）。
+
+    保留 id 与 created_at，增量轮询（afterId）游标不乱；其他客户端通过
+    streamIds + sinceUpdatedAt 拿到 recalled 行后删除对应气泡。
+    """
+    with get_db() as conn:
+        room, member = _require_membership(conn, room_name, user["id"])
+        row = conn.execute(
+            """
+            SELECT id, user_id, attachment_path, recalled,
+                   (julianday('now') - julianday(created_at)) * 86400.0 AS ageSeconds
+            FROM messages WHERE id = ? AND room_id = ?
+            """,
+            (message_id, room["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="消息不存在")
+        if row["user_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="只能撤回自己发送的消息")
+        if not row["recalled"]:
+            if row["ageSeconds"] is not None and row["ageSeconds"] > RECALL_WINDOW_SECONDS:
+                raise HTTPException(status_code=403, detail=f"消息发出超过 {RECALL_WINDOW_SECONDS} 秒，无法撤回")
+            if row["attachment_path"]:
+                try:
+                    (UPLOADS_DIR / row["attachment_path"]).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            conn.execute(
+                """
+                UPDATE messages
+                SET content = '', msg_type = 'text', attachment_name = NULL, attachment_path = NULL,
+                    whisper_to = NULL, whisper_to_ids = NULL, reply_to = NULL, duration_ms = NULL,
+                    streaming = 0, recalled = 1,
+                    updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+                WHERE id = ?
+                """,
+                (message_id,),
+            )
+        row = _load_message(conn, message_id)
+        room_id = room["id"]
+        room_label = room["name"]
+    notify_room(room_id)
+    return _message_dict(row, room_label, room=room, user_id=user["id"])
 
 
 _SAFE_FILENAME = re.compile(r"[^\w.\-]+")
-
-
 def _sanitize_filename(name: str | None) -> str:
     base = Path(name or "").name
     base = _SAFE_FILENAME.sub("_", base).strip("._")
@@ -1739,8 +1938,44 @@ def _is_image_upload(filename: str, content_type: str | None, data: bytes) -> bo
     return False
 
 
-def _file_response(path: Path, filename: str, inline: bool) -> FileResponse:
-    media, _ = mimetypes.guess_type(filename)
+def _audio_ext(filename: str | None, content_type: str | None, data: bytes) -> str | None:
+    """识别音频类型，返回规范化扩展名；不是音频返回 None。
+
+    依次看 content-type、文件扩展名、魔数（webm/ogg/wav/mp3/mp4）。
+    """
+    ctype = (content_type or "").split(";")[0].strip().lower()
+    by_type = {
+        "audio/webm": ".webm", "video/webm": ".webm",
+        "audio/ogg": ".ogg", "application/ogg": ".ogg",
+        "audio/mpeg": ".mp3", "audio/mp3": ".mp3",
+        "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "video/mp4": ".mp4",
+        "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav",
+        "audio/aac": ".aac",
+    }
+    if ctype in by_type:
+        return by_type[ctype]
+    ext = Path(filename or "").suffix.lower()
+    if ext in AUDIO_MIME_BY_EXT:
+        return ext
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return ".webm"
+    if data.startswith(b"OggS"):
+        return ".ogg"
+    if data.startswith(b"RIFF") and data[8:12] == b"WAVE":
+        return ".wav"
+    if data.startswith(b"ID3") or (len(data) > 2 and (data[0], data[1] & 0xE0) == (0xFF, 0xE0)):
+        return ".mp3"
+    if len(data) > 12 and data[4:8] == b"ftyp":
+        return ".m4a"
+    return None
+
+
+def _voice_media_type(filename: str) -> str:
+    return AUDIO_MIME_BY_EXT.get(Path(filename).suffix.lower(), "audio/webm")
+
+
+def _file_response(path: Path, filename: str, inline: bool, media_type: str | None = None) -> FileResponse:
+    media = media_type or mimetypes.guess_type(filename)[0]
     return FileResponse(
         path,
         filename=filename,
@@ -1777,7 +2012,61 @@ async def upload_attachment(room_name: str, user: CurrentUser, file: UploadFile 
         room_id = room["id"]
         room_label = room["name"]
     notify_room(room_id)
-    return _message_dict(row, room_label)
+    return _message_dict(row, room_label, room=room, user_id=user["id"])
+
+
+@app.post("/api/rooms/{room_name}/voice")
+async def send_voice(
+    room_name: str,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    text: Annotated[str, Form()] = "",
+    reply_to: Annotated[int | None, Form(alias="replyTo")] = None,
+    duration_ms: Annotated[int | None, Form(alias="durationMs", ge=0, le=600_000)] = None,
+):
+    """发送语音消息：录制的音频（MediaRecorder）+ 同时段 ASR 识别文本。
+
+    `text` 可带 `@@用户名` 前缀表示私聊（与文本消息同语法）；`replyTo` 支持引用回复。
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="语音内容为空")
+    if len(data) > MAX_VOICE_BYTES:
+        raise HTTPException(status_code=413, detail="语音超过 10MB 上限")
+    ext = _audio_ext(file.filename, file.content_type, data)
+    if ext is None:
+        raise HTTPException(status_code=400, detail="语音必须是音频文件（webm/ogg/mp4/mp3/wav/aac 等）")
+    text = (text or "").strip()
+    if len(text) > 8000:
+        raise HTTPException(status_code=400, detail="语音识别文本超过 8000 字上限")
+    with get_db() as conn:
+        room, member = _require_membership(conn, room_name, user["id"])
+        _check_action_allowed(room, member, user["id"], "speak")
+        targets = _whisper_targets(conn, room["id"], text)
+        _check_whisper_targets(conn, room["id"], user["username"], targets)
+        whisper_to, whisper_to_ids = _whisper_columns(targets)
+        reply_to_id = _resolve_reply(conn, room, user, reply_to)
+        now = _db_now(conn)
+        safe_name = f"voice{ext}"   # ext 自带前导点（.webm/.m4a/...）
+        conn.execute(
+            """
+            INSERT INTO messages (room_id, user_id, content, msg_type, attachment_name,
+                                  whisper_to, whisper_to_ids, reply_to, duration_ms, updated_at)
+            VALUES (?, ?, ?, 'voice', ?, ?, ?, ?, ?, ?)
+            """,
+            (room["id"], user["id"], text, safe_name, whisper_to, whisper_to_ids, reply_to_id, duration_ms, now),
+        )
+        message_id = conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"]
+        rel_path = f"{room['id']}/{message_id}-{safe_name}"
+        dest = UPLOADS_DIR / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        conn.execute("UPDATE messages SET attachment_path = ? WHERE id = ?", (rel_path, message_id))
+        row = _load_message(conn, message_id)
+        room_id = room["id"]
+        room_label = room["name"]
+    notify_room(room_id)
+    return _message_dict(row, room_label, room=room, user_id=user["id"])
 
 
 @app.get("/api/rooms/{room_name}/attachments/{message_id}")
@@ -1786,19 +2075,22 @@ def download_attachment(room_name: str, message_id: int, user: CurrentUser):
         room, _mem = _require_membership(conn, room_name, user["id"])
         row = conn.execute(
             """
-            SELECT m.attachment_name, m.attachment_path, m.msg_type
+            SELECT m.attachment_name, m.attachment_path, m.msg_type, m.user_id,
+                   m.whisper_to, m.whisper_to_ids
             FROM messages m
             JOIN rooms r ON r.id = m.room_id
-            WHERE m.id = ? AND r.id = ? AND r.archived_at IS NULL AND m.msg_type IN ('attachment', 'image')
+            WHERE m.id = ? AND r.id = ? AND r.archived_at IS NULL AND m.msg_type IN ('attachment', 'image', 'voice')
             """,
             (message_id, room["id"]),
         ).fetchone()
-        if not row or not row["attachment_path"]:
+        _require_file_visible(row, room, user["id"])
+        if not row["attachment_path"]:
             raise HTTPException(status_code=404, detail="附件不存在")
         path = UPLOADS_DIR / row["attachment_path"]
         if not path.is_file():
             raise HTTPException(status_code=404, detail="附件文件缺失")
-    return _file_response(path, row["attachment_name"], inline=row["msg_type"] == "image")
+        media = _voice_media_type(row["attachment_name"]) if row["msg_type"] == "voice" else None
+    return _file_response(path, row["attachment_name"], inline=row["msg_type"] in ("image", "voice"), media_type=media)
 
 
 # ---------- 页面与说明书 ----------
