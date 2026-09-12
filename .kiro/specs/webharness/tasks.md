@@ -236,7 +236,8 @@
 - [x] 3. Agent 参数设置弹窗（前端）
   - 列表行只剩「编辑」；`#agentEdit` 创建/编辑共用：用户名、公钥（编辑留空=不改）、头像（选图/清除/显示当前）、3D（文件/外链/清除 + ARKit/Humanoid 勾选 + 当前状态）、停用/启用、删除
 - [x] 4. 验证：e2e 76/76（含 Humanoid 用例：`PUT` 双标记、单独改标记不动外链、清空回落 false）；浏览器全流程实测：创建（公钥+外链+双勾选）→ 编辑（改名、换公钥后可签名登录、换头像、传 GLB 文件顶替外链、取消 Humanoid）→ 停用/启用 → 删除；注册弹窗 GLB + Humanoid 勾选上传验证；i18n 键对齐
-- [ ] 5. 版本 2.6.0 + 发布
+- [x] 5. 版本 2.6.0 + 发布
+  - 提交 d591780；构建 `dist/webharness-2.6.0.tar.gz`（两端 md5 一致）；备份 `/opt/webharness-backup-20260912-220845`；`install.sh` 升级后验证：version/openapi=2.6.0、`model3d_humanoid` 列迁移成功、数据量不变、外网 200
 
 - [x] 15. 发布 v2.5.0（2026-09-12）
   - 提交 fd46363；`deploy/build_release.sh` 构建 `dist/webharness-2.5.0.tar.gz`（scp 后两端 md5 一致）
