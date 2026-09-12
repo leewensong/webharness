@@ -13,3 +13,8 @@ dist/
 AgentParty_*.md
 AgentParty_*.txt
 安全审计报告.md
+
+# 自身服务器/基础设施运维信息（服务器 IP、SSH 密钥路径、端口映射、证书与备份路径）
+# 正本在会话目录的 ops/（见 Chat/.gitignore）；此处防御性忽略，避免误落项目目录
+ops/
+*/ops/
