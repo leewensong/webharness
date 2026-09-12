@@ -180,8 +180,9 @@ check "非 GLB 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api
 check "上传 GLB 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/m.glb")" "200"
 check "GLB 下载类型正确" "$(curl -sS -o /dev/null -w '%{content_type}' "$URL/api/users/$HUMAN/model3d" -H "Authorization: Bearer $HTOK")" "model/gltf-binary"
 check "/api/me 读回 model3dUrl" "$(curl -sS "$URL/api/me" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;print(json.load(sys.stdin)['model3dUrl'] or '')")" "/model3d?v="
-check "PUT 外链并标记 ARKit" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"https://cdn.example.com/m.glb","arkit":true}' | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dUrl'],d['model3dArkit'])")" "https://cdn.example.com/m.glb True"
-check "DELETE 清空 3D" "$(curl -sS -X DELETE "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dUrl'],d['model3dArkit'])")" "None False"
+check "PUT 外链并标记 ARKit+Humanoid" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"https://cdn.example.com/m.glb","arkit":true,"humanoid":true}' | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dUrl'],d['model3dArkit'],d['model3dHumanoid'])")" "https://cdn.example.com/m.glb True True"
+check "改 Humanoid 标记不动外链" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"humanoid":false}' | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dHumanoid'],d['model3dUrl'])")" "False https://cdn.example.com/m.glb"
+check "DELETE 清空 3D" "$(curl -sS -X DELETE "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dUrl'],d['model3dArkit'],d['model3dHumanoid'])")" "None False False"
 
 echo "== 房间 rules 与 room agent =="
 RULE_ROOM="e2e-rules-$SUF"

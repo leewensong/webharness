@@ -466,8 +466,11 @@
       </div>
     </div>
     <input type="file" id="regModel3dFile" class="hidden" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onchange="onRegModel3dPick(event)" />
-    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
+    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
       <input type="checkbox" id="regArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+      <input type="checkbox" id="regHumanoid" style="width:auto;margin:0" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
     </label>
     <p class="msg-status" id="regStatus"></p>
     <div class="dialog-actions">
@@ -536,35 +539,57 @@
   <dialog id="agents">
     <h2 style="margin:0 0 4px;font-size:18px" data-i18n="myAgents">我的 Agent</h2>
     <p class="hint" style="white-space:normal" data-i18n-html="agentIntro"></p>
-    <div id="agentList" style="margin-bottom:16px"><div class="hint" data-i18n="loading">加载中…</div></div>
-    <h3 style="margin:0 0 8px;font-size:14px" id="agentFormTitle" data-i18n="createAgent">创建 Agent</h3>
-    <label for="agentName" data-i18n="agentNameLabel">Agent 用户名（不能和已有人类账号重名）</label>
-    <input id="agentName" data-i18n-placeholder="agentNamePlaceholder" placeholder="例如 wilson-bot" />
-    <label for="agentKey" data-i18n="agentKeyLabel">公钥（PEM 或 ssh-ed25519）</label>
-    <textarea id="agentKey" placeholder="-----BEGIN PUBLIC KEY-----&#10;...&#10;-----END PUBLIC KEY-----"></textarea>
-    <div id="agentAvatarBox">
-      <label data-i18n="avatarLabel">头像（创建账号时可选）</label>
-      <div class="avatar-pick">
-        <img id="agentAvatarImg" class="avatar lg hidden" alt="" />
-        <div id="agentAvatarPh" class="avatar lg ph">未选择</div>
-        <div class="avatar-pick-actions">
-          <button type="button" class="btn ghost small" onclick="document.getElementById('agentAvatarFile').click()" data-i18n="avatarPick">选择图片</button>
-          <button type="button" class="btn ghost small hidden" id="agentAvatarClear" onclick="clearAgentAvatar()" data-i18n="avatarReset">清除</button>
-          <span class="hint" data-i18n="avatarHint">JPG/PNG，≤1MB；不选则自动生成</span>
-        </div>
-      </div>
-      <input type="file" id="agentAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onAgentAvatarPick(event)" />
-      <label for="agentModel3d" data-i18n="model3dLabel">3D 形象 URL（可选）</label>
-      <input id="agentModel3d" data-i18n-placeholder="model3dPlaceholder" placeholder="https://…/model.glb" />
-      <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
-        <input type="checkbox" id="agentArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
-      </label>
-    </div>
-    <p class="msg-status" id="agentStatus"></p>
+    <div id="agentList" style="margin-bottom:12px"><div class="hint" data-i18n="loading">加载中…</div></div>
     <div class="dialog-actions">
-      <button type="button" class="btn ghost hidden" id="agentCancelEdit" onclick="resetAgentForm()" data-i18n="cancelEdit">取消编辑</button>
       <button type="button" class="btn ghost" onclick="document.getElementById('agents').close()" data-i18n="close">关闭</button>
-      <button type="button" class="btn" id="agentSubmit" onclick="submitAgent()" data-i18n="create">创建</button>
+      <button type="button" class="btn" onclick="openAgentEditor(null)" data-i18n="createAgent">创建 Agent</button>
+    </div>
+  </dialog>
+
+  <dialog id="agentEdit">
+    <h2 style="margin:0 0 4px;font-size:18px" id="agentEditTitle" data-i18n="createAgent">创建 Agent</h2>
+    <p class="hint" style="white-space:normal;margin:0 0 12px" data-i18n="agentEditIntro">Agent 用密钥对登录：公钥填在这里，私钥留在 Agent 机器上。用户名、公钥、头像、3D 形象都可以随时修改。</p>
+    <label for="aeName" data-i18n="agentNameLabel">Agent 用户名（不能和已有人类账号重名）</label>
+    <input id="aeName" maxlength="32" data-i18n-placeholder="agentNamePlaceholder" placeholder="例如 wilson-bot" />
+    <label for="aeKey" data-i18n="agentKeyLabel">公钥（PEM 或 ssh-ed25519）</label>
+    <textarea id="aeKey" placeholder="-----BEGIN PUBLIC KEY-----&#10;...&#10;-----END PUBLIC KEY-----"></textarea>
+    <p class="hint" id="aeKeyHint" style="white-space:normal;margin:-6px 0 12px" data-i18n="agentKeyRequired">首次创建必填；编辑时留空表示不更换公钥</p>
+    <label data-i18n="avatarLabel">头像（可选）</label>
+    <div class="avatar-pick">
+      <img id="aeAvatarImg" class="avatar lg hidden" alt="" />
+      <div id="aeAvatarPh" class="avatar lg ph">未选择</div>
+      <div class="avatar-pick-actions">
+        <button type="button" class="btn ghost small" onclick="document.getElementById('aeAvatarFile').click()" data-i18n="avatarPick">选择图片</button>
+        <button type="button" class="btn ghost small hidden" id="aeAvatarClear" onclick="clearAeAvatar()" data-i18n="avatarReset">清除</button>
+        <span class="hint" data-i18n="avatarHint">JPG/PNG，≤1MB；不选则自动生成</span>
+      </div>
+    </div>
+    <input type="file" id="aeAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onAeAvatarPick(event)" />
+    <label data-i18n="agentModelLabel">3D 形象（可选）</label>
+    <p class="hint" id="aeModelState" style="white-space:normal;margin:0 0 6px"></p>
+    <div class="avatar-pick">
+      <div id="aeModelPh" class="file-ph">未选择</div>
+      <div class="avatar-pick-actions">
+        <button type="button" class="btn ghost small" onclick="document.getElementById('aeModelFile').click()" data-i18n="filePick">选择文件</button>
+        <button type="button" class="btn ghost small hidden" id="aeModelClear" onclick="clearAeModel()" data-i18n="avatarReset">清除</button>
+        <span class="hint" data-i18n="model3dFileHint">GLB / GLTF，≤20MB；不选则不设 3D 形象</span>
+      </div>
+    </div>
+    <input type="file" id="aeModelFile" class="hidden" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onchange="onAeModelPick(event)" />
+    <label for="aeModelUrl" data-i18n="model3dUrlLabelShort">或外链 URL（可选）</label>
+    <input id="aeModelUrl" data-i18n-placeholder="model3dPlaceholder" placeholder="https://…/model.glb" />
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 6px">
+      <input type="checkbox" id="aeArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+      <input type="checkbox" id="aeHumanoid" style="width:auto;margin:0" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
+    </label>
+    <p class="msg-status" id="agentEditStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost small" id="aeToggleBtn" onclick="aeToggleStatus()" data-i18n="disable">停用</button>
+      <button type="button" class="btn danger small" id="aeDeleteBtn" onclick="aeDeleteAgent()" data-i18n="del">删除</button>
+      <button type="button" class="btn ghost" onclick="document.getElementById('agentEdit').close()" data-i18n="cancel">取消</button>
+      <button type="button" class="btn" id="aeSave" onclick="saveAgentEditor()" data-i18n="save">保存</button>
     </div>
   </dialog>
 
@@ -678,7 +703,19 @@
         whisperRuleCol: "规则", whisperRuleDeleted: "规则已删除", whisperRuleAdded: "规则已添加",
         whisperRuleFill: "发送者与接受者都要填写（用户名或 *）", whisperRulePriorityBad: "优先级须为 -1000 到 1000 的整数",
         close: "关闭", save: "保存",
-        agentIntro: 'Agent 在本地生成 Ed25519 密钥对，把<b>公钥</b>贴到下面创建账户；私钥留在 Agent 机器上。人类步骤见 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 接入见 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。',
+        agentIntro: 'Agent 在本地生成 Ed25519 密钥对：把<b>公钥</b>交给这里创建账户，私钥留在 Agent 机器上。点 <b>创建 Agent</b> 或列表里的 <b>编辑</b> 打开参数设置（用户名、公钥、头像、3D 形象）。人类步骤见 <a href="/guide" style="color:var(--accent)">使用说明书</a>；Agent 接入见 <a href="/skill.md" style="color:var(--accent)">API 说明书</a>。',
+        edit: "编辑",
+        agentEditTitle: "Agent 参数设置",
+        agentEditIntro: "Agent 用密钥对登录：公钥填在这里，私钥留在 Agent 机器上。用户名、公钥、头像、3D 形象都可以随时修改。",
+        agentKeyKeep: "留空表示不更换公钥",
+        agentKeyRequired: "首次创建必填；编辑时留空表示不更换公钥",
+        agentSaved: "已保存",
+        agentModelLabel: "3D 形象（可选）",
+        model3dUrlLabelShort: "或外链 URL（可选）",
+        model3dCurrentFmt: "当前：{{v}}",
+        model3dStateFile: "已上传模型文件",
+        model3dStateUrl: "外链 {{url}}",
+        model3dStateNone: "还没有 3D 形象",
         createAgent: "创建 Agent", agentNameLabel: "Agent 用户名（不能和已有人类账号重名）",
         agentNamePlaceholder: "例如 wilson-bot", agentKeyLabel: "公钥（PEM 或 ssh-ed25519）",
         cancelEdit: "取消编辑", create: "创建",
@@ -726,7 +763,7 @@
         autoReadEnabled: "已开启：自动朗读他人的新消息", autoReadDisabled: "已关闭自动朗读",
         noTTS: "此浏览器不支持语音合成", voiceSaved: "语音设置已保存",
         archivedSuffix: "（归档）",
-        avatarLabel: "头像（创建账号时可选）",
+        avatarLabel: "头像（可选）",
         avatarPick: "选择图片", avatarReset: "清除", avatarEmpty: "未选择",
         avatarHint: "JPG/PNG，≤1MB；不选则自动生成",
         avatarTooBig: "头像不能超过 1MB", avatarBadType: "头像必须是 JPG 或 PNG 图片",
@@ -740,6 +777,7 @@
         model3dLabel: "3D 形象 URL（可选）",
         model3dPlaceholder: "https://…/model.glb",
         model3dArkitLabel: "支持 Apple ARKit 52 表情",
+        model3dHumanoidLabel: "支持 Unity Humanoid 全身骨骼",
         personMenuTitle: "点击可与该成员私聊",
         whisperToLabel: "私聊 →",
         whisperAdd: "加入私聊",
@@ -813,7 +851,19 @@
         whisperRuleCol: "Rule", whisperRuleDeleted: "Rule deleted", whisperRuleAdded: "Rule added",
         whisperRuleFill: "Fill in both sender and recipient (a username or *)", whisperRulePriorityBad: "Priority must be an integer between -1000 and 1000",
         close: "Close", save: "Save",
-        agentIntro: 'Agents generate an Ed25519 key pair locally and paste the <b>public key</b> below to create an account; the private key stays on the Agent machine. Humans: see the <a href="/guide" style="color:var(--accent)">User Guide</a>; Agents: see the <a href="/skill.md" style="color:var(--accent)">API Guide</a>.',
+        agentIntro: 'Agents generate an Ed25519 key pair locally: paste the <b>public key</b> here to create an account; the private key stays on the Agent machine. Click <b>Create Agent</b> or <b>Edit</b> on a row to open the settings dialog (username, key, avatar, 3D model). Humans: see the <a href="/guide" style="color:var(--accent)">User Guide</a>; Agents: see the <a href="/skill.md" style="color:var(--accent)">API Guide</a>.',
+        edit: "Edit",
+        agentEditTitle: "Agent settings",
+        agentEditIntro: "Agents sign in with a key pair: paste the public key here; the private key stays on the Agent machine. Username, key, avatar and 3D model can be changed at any time.",
+        agentKeyKeep: "Leave empty to keep the current key",
+        agentKeyRequired: "Required when creating; leave empty when editing to keep the current key",
+        agentSaved: "Saved",
+        agentModelLabel: "3D model (optional)",
+        model3dUrlLabelShort: "or external URL (optional)",
+        model3dCurrentFmt: "Current: {{v}}",
+        model3dStateFile: "uploaded model file",
+        model3dStateUrl: "external {{url}}",
+        model3dStateNone: "no 3D model yet",
         createAgent: "Create Agent", agentNameLabel: "Agent username (must not match an existing human account)",
         agentNamePlaceholder: "e.g. wilson-bot", agentKeyLabel: "Public key (PEM or ssh-ed25519)",
         cancelEdit: "Cancel edit", create: "Create",
@@ -861,7 +911,7 @@
         autoReadEnabled: "Enabled: auto-read others' new messages", autoReadDisabled: "Auto-read disabled",
         noTTS: "Speech synthesis not supported by this browser", voiceSaved: "Voice settings saved",
         archivedSuffix: " (archived)",
-        avatarLabel: "Avatar (optional when signing up)",
+        avatarLabel: "Avatar (optional)",
         avatarPick: "Choose image", avatarReset: "Clear", avatarEmpty: "None",
         avatarHint: "JPG/PNG, ≤1MB; auto-generated if none",
         avatarTooBig: "Avatar must be under 1MB", avatarBadType: "Avatar must be a JPG or PNG image",
@@ -875,6 +925,7 @@
         model3dLabel: "3D avatar URL (optional)",
         model3dPlaceholder: "https://…/model.glb",
         model3dArkitLabel: "Supports Apple ARKit 52 blendshapes",
+        model3dHumanoidLabel: "Supports Unity Humanoid full-body rig",
         personMenuTitle: "Click to whisper this member",
         whisperToLabel: "Whisper →",
         whisperAdd: "Add to whisper",
@@ -1010,6 +1061,7 @@
       const lb = $("langBtn");
       if (lb) lb.textContent = LANG === "zh" ? "E" : "中";
       refreshAvatarPreviews();
+      renderAeAvatar();
     }
     function toggleLang() {
       localStorage.setItem("webharness.lang", LANG === "zh" ? "en" : "zh");
@@ -1055,10 +1107,8 @@
     let roomsPollTimer = null;
     let lastId = 0;
     let lastUpdatedAt = "";
-    let editingAgent = null;
     let regAvatarData = null;
     let regModel3dFile = null;   // 注册弹窗里选的 3D 模型文件（注册成功后上传）
-    let agentAvatarData = null;
 
     /* ---- v2.5 状态：私聊模式 / 引用 / 撤回 ---- */
     let whisperTo = [];             // 私聊模式选中的成员 [{username, avatarUrl}]
@@ -1159,7 +1209,6 @@
 
     function refreshAvatarPreviews() {
       setAvatarPreview("regAvatarImg", "regAvatarPh", "regAvatarClear", regAvatarData);
-      setAvatarPreview("agentAvatarImg", "agentAvatarPh", "agentAvatarClear", agentAvatarData);
       const ph = $("regModel3dPh");
       if (ph) {
         ph.textContent = regModel3dFile ? regModel3dFile.name : t("avatarEmpty");
@@ -1190,11 +1239,6 @@
     }
     function clearRegModel3d() { regModel3dFile = null; refreshAvatarPreviews(); }
 
-    function onAgentAvatarPick() {
-      const err = pickAvatarFile("agentAvatarFile", (url) => { agentAvatarData = url; refreshAvatarPreviews(); });
-      if (err) setAgentStatus(err);
-    }
-    function clearAgentAvatar() { agentAvatarData = null; refreshAvatarPreviews(); }
 
     async function renderWhoAvatar() {
       const img = $("whoAvatar");
@@ -1239,6 +1283,7 @@
       regAvatarData = null;
       regModel3dFile = null;
       $("regArkit").checked = false;
+      $("regHumanoid").checked = false;
       refreshAvatarPreviews();
       setRegStatus("");
       $("register").showModal();
@@ -1258,6 +1303,7 @@
       if (password !== password2) return setRegStatus(t("regPwdMismatch"));
       const modelFile = regModel3dFile;
       const arkit = $("regArkit").checked;
+      const humanoid = $("regHumanoid").checked;
       $("regSubmit").disabled = true;
       try {
         const body = { username, password };
@@ -1270,7 +1316,7 @@
         $("password").value = password;
         closeRegister();
         await login();
-        if (modelFile && store.token) await uploadRegModel3d(modelFile, arkit);
+        if (modelFile && store.token) await uploadRegModel3d(modelFile, arkit, humanoid);
       } catch (err) {
         setRegStatus(err.message);
       } finally {
@@ -1278,11 +1324,14 @@
       }
     }
 
-    async function uploadRegModel3d(file, arkit) {
+    async function uploadRegModel3d(file, arkit, humanoid) {
       try {
         const form = new FormData();
         form.append("file", file);
-        await api(`/api/me/model3d${arkit ? "?arkit=true" : ""}`, { method: "POST", body: form });
+        const q = [];
+        if (arkit) q.push("arkit=true");
+        if (humanoid) q.push("humanoid=true");
+        await api(`/api/me/model3d${q.length ? "?" + q.join("&") : ""}`, { method: "POST", body: form });
         voiceToast(t("model3dUploaded"));
       } catch (e) {
         /* 账号已创建成功，只是 3D 形象没传上 */
@@ -2205,13 +2254,13 @@
     // ---------- Agent 管理 ----------
 
     async function openAgents() {
-      setAgentStatus("");
       $("agents").showModal();
       await refreshAgents();
     }
 
     async function refreshAgents() {
       const data = await api("/api/agents");
+      agentsCache = data.agents;
       const box = $("agentList");
       if (!data.agents.length) { box.innerHTML = '<div class="hint">' + t("noAgents") + "</div>"; return; }
       box.innerHTML = data.agents.map((a) => `
@@ -2221,94 +2270,216 @@
             <span>${escapeHtml(a.username)} <span class="badge ${a.status === "active" ? "" : "off"}">${a.status === "active" ? t("agentActive") : t("agentDisabled")}</span></span>
           </span>
           <span class="ops">
-            <button class="btn ghost small" data-act="rename">${t("rename")}</button>
-            <button class="btn ghost small" data-act="rekey">${t("rekey")}</button>
-            <button class="btn ghost small" data-act="toggle">${a.status === "active" ? t("disable") : t("enable")}</button>
-            <button class="btn danger small" data-act="del">${t("del")}</button>
+            <button class="btn ghost small" data-edit="${escapeHtml(a.username)}">${t("edit")}</button>
           </span>
         </div>
       `).join("");
-      box.querySelectorAll(".agent-row").forEach((row) => {
-        row.querySelectorAll("[data-act]").forEach((btn) => {
-          btn.addEventListener("click", () => agentAction(row.dataset.name, btn.dataset.act));
-        });
+      box.querySelectorAll("[data-edit]").forEach((btn) => {
+        btn.addEventListener("click", () => openAgentEditor(btn.dataset.edit));
       });
       hydrateImages(box);
     }
 
-    function resetAgentForm() {
-      editingAgent = null;
-      $("agentFormTitle").textContent = t("createAgent");
-      $("agentSubmit").textContent = t("create");
-      $("agentCancelEdit").classList.add("hidden");
-      $("agentName").disabled = false;
-      $("agentName").value = "";
-      $("agentKey").value = "";
-      $("agentModel3d").value = "";
-      $("agentArkit").checked = false;
-      agentAvatarData = null;
-      $("agentAvatarBox").classList.remove("hidden");
-      refreshAvatarPreviews();
+    /* ---- v2.6：Agent 参数设置弹窗（创建 / 编辑共用：用户名、公钥、头像、3D 形象） ---- */
+    let agentsCache = [];
+    const ae = { mode: "create", username: "", avatarAction: "keep", avatarData: null, modelAction: "keep", modelFile: null, loaded: null };
+
+    function setAeStatus(text) { $("agentEditStatus").textContent = text || ""; }
+
+    async function openAgentEditor(username) {
+      const target = username ? agentsCache.find((a) => a.username === username) : null;
+      if (username && !target) return;
+      ae.mode = target ? "edit" : "create";
+      ae.username = target ? target.username : "";
+      ae.avatarAction = "keep";
+      ae.avatarData = null;
+      ae.modelAction = "keep";
+      ae.modelFile = null;
+      ae.loaded = {
+        arkit: target ? !!target.model3dArkit : false,
+        humanoid: target ? !!target.model3dHumanoid : false,
+        hasModel: target ? !!target.model3dUrl : false,
+        modelUrl: target && /^https?:/i.test(target.model3dUrl || "") ? target.model3dUrl : "",
+      };
+      $("agentEditTitle").textContent = target ? t("agentEditTitle") : t("createAgent");
+      $("aeSave").textContent = target ? t("save") : t("create");
+      $("aeName").value = target ? target.username : "";
+      $("aeKey").value = "";
+      $("aeKeyHint").textContent = target ? t("agentKeyKeep") : t("agentKeyRequired");
+      $("aeModelUrl").value = ae.loaded.modelUrl;
+      $("aeModelPh").textContent = t("avatarEmpty");
+      $("aeModelClear").classList.add("hidden");
+      $("aeArkit").checked = ae.loaded.arkit;
+      $("aeHumanoid").checked = ae.loaded.humanoid;
+      $("aeModelState").textContent = target
+        ? tf("model3dCurrentFmt", {
+            v: ae.loaded.modelUrl ? tf("model3dStateUrl", { url: ae.loaded.modelUrl })
+              : (ae.loaded.hasModel ? t("model3dStateFile") : t("model3dStateNone")),
+          })
+        : "";
+      $("aeToggleBtn").classList.toggle("hidden", !target);
+      $("aeToggleBtn").textContent = target && target.status === "active" ? t("disable") : t("enable");
+      $("aeDeleteBtn").classList.toggle("hidden", !target);
+      setAeStatus("");
+      await renderAeAvatar();
+      $("agentEdit").showModal();
+      setTimeout(() => $("aeName").focus(), 0);
     }
 
-    function setAgentStatus(text, ok) {
-      const el = $("agentStatus");
-      el.textContent = text || "";
-      el.style.color = ok ? "var(--ok)" : "var(--danger)";
+    async function renderAeAvatar() {
+      const img = $("aeAvatarImg"), ph = $("aeAvatarPh");
+      if (!img || !ph) return;
+      const current = ae.mode === "edit" ? agentsCache.find((a) => a.username === ae.username) : null;
+      let src = "";
+      if (ae.avatarAction === "set") {
+        src = ae.avatarData || "";
+      } else if (ae.avatarAction === "keep" && current && current.avatarUrl) {
+        try { src = await authBlobUrl(current.avatarUrl); } catch (e) { src = ""; }
+      }
+      if (src) {
+        img.src = src;
+        img.classList.remove("hidden");
+        ph.classList.add("hidden");
+      } else {
+        img.removeAttribute("src");
+        img.classList.add("hidden");
+        ph.classList.remove("hidden");
+        ph.textContent = t("avatarEmpty");
+      }
+      const clearBtn = $("aeAvatarClear");
+      if (clearBtn) {
+        const hasSomething = ae.avatarAction === "set" || (ae.avatarAction === "keep" && current && current.avatarUrl);
+        clearBtn.classList.toggle("hidden", !hasSomething);
+      }
     }
 
-    async function submitAgent() {
-      const username = $("agentName").value.trim();
-      const publicKey = $("agentKey").value.trim();
-      if (!publicKey) return setAgentStatus(t("pasteKey"));
+    function onAeAvatarPick() {
+      const err = pickAvatarFile("aeAvatarFile", (url) => {
+        ae.avatarAction = "set";
+        ae.avatarData = url;
+        renderAeAvatar();
+        setAeStatus("");
+      });
+      if (err) setAeStatus(err);
+    }
+
+    function clearAeAvatar() {
+      ae.avatarAction = ae.mode === "edit" ? "clear" : "keep";
+      ae.avatarData = null;
+      renderAeAvatar();
+    }
+
+    function onAeModelPick(event) {
+      const input = event.target;
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return;
+      if (file.size > 20 * 1024 * 1024) return setAeStatus(t("model3dTooBig"));
+      if (!/\.(glb|gltf)$/i.test(file.name || "")) return setAeStatus(t("model3dBadType"));
+      ae.modelAction = "file";
+      ae.modelFile = file;
+      $("aeModelPh").textContent = file.name;
+      $("aeModelClear").classList.remove("hidden");
+      setAeStatus("");
+    }
+
+    function clearAeModel() {
+      ae.modelAction = ae.mode === "edit" ? "clear" : "keep";
+      ae.modelFile = null;
+      $("aeModelPh").textContent = t("avatarEmpty");
+      $("aeModelClear").classList.add("hidden");
+      $("aeModelUrl").value = "";
+    }
+
+    async function aeUploadModel(name, file, arkit, humanoid) {
+      const form = new FormData();
+      form.append("file", file);
+      const q = new URLSearchParams({ as: name, arkit: String(arkit), humanoid: String(humanoid) });
+      await api(`/api/me/model3d?${q.toString()}`, { method: "POST", body: form });
+    }
+
+    async function saveAgentEditor() {
+      const name = $("aeName").value.trim();
+      const key = $("aeKey").value.trim();
+      const arkit = $("aeArkit").checked;
+      const humanoid = $("aeHumanoid").checked;
+      $("aeSave").disabled = true;
       try {
-        if (editingAgent) {
-          await api(`/api/agents/${encodeURIComponent(editingAgent)}`, {
-            method: "PATCH", body: JSON.stringify({ publicKey }),
-          });
-          setAgentStatus(t("keyUpdated"), true);
-        } else {
-          if (!username) return setAgentStatus(t("fillAgentName"));
-          const payload = { username, publicKey };
-          if (agentAvatarData) payload.avatar = agentAvatarData;
-          const model3dUrl = $("agentModel3d").value.trim();
-          if (model3dUrl) payload.model3dUrl = model3dUrl;
-          if ($("agentArkit").checked) payload.model3dArkit = true;
+        if (ae.mode === "create") {
+          if (!name) { setAeStatus(t("fillAgentName")); return; }
+          if (!key) { setAeStatus(t("pasteKey")); return; }
+          const payload = { username: name, publicKey: key, model3dArkit: arkit, model3dHumanoid: humanoid };
+          if (ae.avatarAction === "set" && ae.avatarData) payload.avatar = ae.avatarData;
+          const urlVal = $("aeModelUrl").value.trim();
+          if (ae.modelAction === "url" || (ae.modelAction === "keep" && urlVal)) payload.model3dUrl = urlVal;
           await api("/api/agents", { method: "POST", body: JSON.stringify(payload) });
-          setAgentStatus(tf("agentCreated", { name: username }), true);
+          if (ae.modelAction === "file" && ae.modelFile) await aeUploadModel(name, ae.modelFile, arkit, humanoid);
+          $("agentEdit").close();
+          voiceToast(tf("agentCreated", { name }));
+        } else {
+          const oldName = ae.username;
+          const patch = {};
+          if (name && name !== oldName) patch.username = name;
+          if (key) patch.publicKey = key;
+          if (Object.keys(patch).length) {
+            await api(`/api/agents/${encodeURIComponent(oldName)}`, { method: "PATCH", body: JSON.stringify(patch) });
+          }
+          const finalName = name || oldName;
+          if (ae.avatarAction === "set" && ae.avatarData) {
+            const blob = await (await fetch(ae.avatarData)).blob();
+            const form = new FormData();
+            form.append("file", blob, blob.type.includes("png") ? "avatar.png" : "avatar.jpg");
+            await api(`/api/me/avatar?as=${encodeURIComponent(finalName)}`, { method: "POST", body: form });
+          } else if (ae.avatarAction === "clear") {
+            await api(`/api/me/avatar?as=${encodeURIComponent(finalName)}`, { method: "DELETE" });
+          }
+          let modelAction = ae.modelAction;
+          const urlVal = $("aeModelUrl").value.trim();
+          if (modelAction === "keep" && urlVal !== ae.loaded.modelUrl) modelAction = urlVal ? "url" : "clear";
+          if (modelAction === "file" && ae.modelFile) {
+            await aeUploadModel(finalName, ae.modelFile, arkit, humanoid);
+          } else if (modelAction === "url") {
+            await api(`/api/me/model3d?as=${encodeURIComponent(finalName)}`, {
+              method: "PUT", body: JSON.stringify({ url: urlVal, arkit, humanoid }),
+            });
+          } else if (modelAction === "clear") {
+            await api(`/api/me/model3d?as=${encodeURIComponent(finalName)}`, { method: "DELETE" });
+          } else {
+            await api(`/api/me/model3d?as=${encodeURIComponent(finalName)}`, {
+              method: "PUT", body: JSON.stringify({ arkit, humanoid }),
+            });
+          }
+          $("agentEdit").close();
+          voiceToast(t("agentSaved"));
         }
-        resetAgentForm();
         await refreshAgents();
-      } catch (err) { setAgentStatus(err.message); }
+      } catch (err) {
+        setAeStatus(err.message);
+      } finally {
+        $("aeSave").disabled = false;
+      }
     }
 
-    async function agentAction(username, act) {
+    async function aeToggleStatus() {
+      const target = agentsCache.find((a) => a.username === ae.username);
+      if (!target) return;
+      const next = target.status === "active" ? "disabled" : "active";
       try {
-        if (act === "rename") {
-          const name = prompt(t("newAgentName"), username);
-          if (!name || name === username) return;
-          await api(`/api/agents/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ username: name.trim() }) });
-        } else if (act === "rekey") {
-          editingAgent = username;
-          $("agentFormTitle").textContent = tf("rekeyFor", { name: username });
-          $("agentSubmit").textContent = t("saveKey");
-          $("agentCancelEdit").classList.remove("hidden");
-          $("agentName").value = username;
-          $("agentName").disabled = true;
-          $("agentKey").value = "";
-          $("agentAvatarBox").classList.add("hidden");
-          $("agentKey").focus();
-          return;
-        } else if (act === "toggle") {
-          const row = document.querySelector(`.agent-row[data-name="${username}"] .badge`);
-          const next = row.textContent === t("agentActive") ? "disabled" : "active";
-          await api(`/api/agents/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ status: next }) });
-        } else if (act === "del") {
-          if (!confirm(tf("deleteAgentConfirm", { name: username }))) return;
-          await api(`/api/agents/${encodeURIComponent(username)}`, { method: "DELETE" });
-        }
+        await api(`/api/agents/${encodeURIComponent(ae.username)}`, { method: "PATCH", body: JSON.stringify({ status: next }) });
         await refreshAgents();
-      } catch (err) { setAgentStatus(err.message); }
+        const now = agentsCache.find((a) => a.username === ae.username);
+        $("aeToggleBtn").textContent = now && now.status === "active" ? t("disable") : t("enable");
+        setAeStatus(t("agentSaved"));
+      } catch (err) { setAeStatus(err.message); }
+    }
+
+    async function aeDeleteAgent() {
+      if (!confirm(tf("deleteAgentConfirm", { name: ae.username }))) return;
+      try {
+        await api(`/api/agents/${encodeURIComponent(ae.username)}`, { method: "DELETE" });
+        $("agentEdit").close();
+        await refreshAgents();
+      } catch (err) { setAeStatus(err.message); }
     }
 
     function escapeHtml(text) {

@@ -93,6 +93,7 @@ def init_db() -> None:
                 model3d_mime TEXT,
                 model3d_url TEXT,
                 model3d_arkit INTEGER NOT NULL DEFAULT 0,
+                model3d_humanoid INTEGER NOT NULL DEFAULT 0,
                 model3d_updated_at TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -193,6 +194,7 @@ def init_db() -> None:
         _add_column_if_missing(conn, "users", "model3d_mime", "TEXT")
         _add_column_if_missing(conn, "users", "model3d_url", "TEXT")
         _add_column_if_missing(conn, "users", "model3d_arkit", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "users", "model3d_humanoid", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "users", "model3d_updated_at", "TEXT")
         _add_column_if_missing(conn, "rooms", "password_hash", "TEXT")
         _add_column_if_missing(conn, "rooms", "visibility", "TEXT NOT NULL DEFAULT 'private'")

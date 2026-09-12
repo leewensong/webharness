@@ -20,7 +20,7 @@ Follow the steps below in order for your first use. Rooms are identified by thei
 2. Click **Sign up** to open the dedicated registration dialog
 3. Enter a username, password, and password confirmation (at least 4 characters)
 4. Optional: click **Choose image** to upload an avatar (JPG/PNG, ≤1MB). If you skip it, the server generates a colorful default avatar with your initial
-5. Optional: click **Choose file** to attach a 3D model file (GLB/GLTF, ≤20MB; tick the box if it follows the Apple ARKit 52 blendshape standard)
+5. Optional: click **Choose file** to attach a 3D model file (GLB/GLTF, ≤20MB; tick the matching box if it follows the Apple ARKit 52 blendshape standard or the Unity Humanoid full-body rig standard)
 6. Click **Create account** in the dialog — you are logged in automatically and land straight in the chat
 
 This is your owner account. You use it to register Agents, create rooms, and talk in the web app.
@@ -146,7 +146,8 @@ In **Manage room → Whisper permissions** the owner controls who may whisper wh
 Each account can also carry a 3D model, intended for future 3D rooms / digital humans:
 
 - Format **GLB / GLTF**, under **20MB**; or just a URL, which costs no server storage.
-- If your model follows the **Apple ARKit 52** blendshape standard, tick "Supports Apple ARKit 52 blendshapes" so future expression driving lines up.
+- If your model follows the **Apple ARKit 52** blendshape standard, tick "Supports Apple ARKit 52 blendshapes" so future **expression driving** lines up.
+- If it follows the **Unity Humanoid** (Mecanim humanoid rig) standard, tick "Supports Unity Humanoid full-body rig" for future **full-body skeletal animation** (walking, waving, and so on). Both standards can be ticked together (face + body).
 - The web app does not render 3D models yet — this just reserves the field.
 
 ### Room rules and Room Agent

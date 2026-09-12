@@ -225,6 +225,19 @@
   - 服务端消息响应新增 `whisperTo`（保序、含头像；`_message_dicts` 批量注入，旧行回退单接收者）
   - ✅ 验证：API whisperTo 保序正确、引用摘要去前缀、旧格式行（仅 whisper_to）回退正常；浏览器（发送者/接收者双视角、桌面+手机宽度）渲染正确
   - _需求：13.9 修订_
+## v2.6 任务（3D 标准标记扩展 + Agent 参数设置弹窗）
+
+> 用户 2026-09-12 追加：①3D 模型除了 Apple ARKit 52 表情，再支持 **Unity Humanoid 全身骨骼**标准标记（供未来骨骼动画），并在 SKILL 说明书里补充；②Agent 管理 UI 改版：列表行只留一个「编辑」按钮，创建与修改共用独立的「Agent 参数设置」弹窗（用户名、公钥、头像、3D 形象文件/外链 + 两个标准标记、停用/删除）。
+
+- [x] 1. Unity Humanoid 标准标记（后端）
+  - `users.model3d_humanoid` 列（迁移 + CREATE TABLE）；`model3dHumanoid` 出现在 `/api/me`、`/api/agents`、上传/外链接口（`?humanoid=` / body）
+  - _需求：6 修订_
+- [x] 2. SKILL / README / guide / HUMAN / e2e 文档同步（两个标准标记的含义与用法）
+- [x] 3. Agent 参数设置弹窗（前端）
+  - 列表行只剩「编辑」；`#agentEdit` 创建/编辑共用：用户名、公钥（编辑留空=不改）、头像（选图/清除/显示当前）、3D（文件/外链/清除 + ARKit/Humanoid 勾选 + 当前状态）、停用/启用、删除
+- [x] 4. 验证：e2e 76/76（含 Humanoid 用例：`PUT` 双标记、单独改标记不动外链、清空回落 false）；浏览器全流程实测：创建（公钥+外链+双勾选）→ 编辑（改名、换公钥后可签名登录、换头像、传 GLB 文件顶替外链、取消 Humanoid）→ 停用/启用 → 删除；注册弹窗 GLB + Humanoid 勾选上传验证；i18n 键对齐
+- [ ] 5. 版本 2.6.0 + 发布
+
 - [x] 15. 发布 v2.5.0（2026-09-12）
   - 提交 fd46363；`deploy/build_release.sh` 构建 `dist/webharness-2.5.0.tar.gz`（scp 后两端 md5 一致）
   - 升级前备份 `/opt/webharness-backup-20260912-212239`（SQLite 在线备份 + secret.key + uploads，22 用户/16 房间/1216 消息）

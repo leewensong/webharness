@@ -91,8 +91,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.5.1",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
+    version="2.6.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
     lifespan=lifespan,
 )
 
@@ -114,12 +114,15 @@ class AgentCreate(BaseModel):
     publicKey: str = Field(min_length=1, max_length=4096)
     avatar: str | None = Field(default=None, max_length=2_000_000)
     model3dUrl: str | None = Field(default=None, max_length=2048)
+    # 3D 形象标准标记：ARKit 52 = 面部 blendshape；Humanoid = Unity 人形全身骨骼
     model3dArkit: bool = False
+    model3dHumanoid: bool = False
 
 
 class Model3dUpdate(BaseModel):
     url: str | None = Field(default=None, max_length=2048)
     arkit: bool | None = None
+    humanoid: bool | None = None
 
 
 class AgentUpdate(BaseModel):
@@ -335,13 +338,14 @@ def _profile_fields(row) -> dict:
         "avatarUrl": _avatar_url(username, _row_get(row, "avatar_updated_at")),
         "model3dUrl": model_url,
         "model3dArkit": bool(_row_get(row, "model3d_arkit", 0)),
+        "model3dHumanoid": bool(_row_get(row, "model3d_humanoid", 0)),
     }
 
 
 # 形象相关的轻量列：不含 avatar/model3d 的 BLOB 本体，避免列表响应被大字段撑爆
 PROFILE_COLUMNS = """
     username, kind, status, created_at,
-    avatar_updated_at, model3d_url, model3d_arkit, model3d_updated_at,
+    avatar_updated_at, model3d_url, model3d_arkit, model3d_humanoid, model3d_updated_at,
     (model3d IS NOT NULL) AS has_model3d
 """
 
@@ -351,7 +355,7 @@ def _get_user(conn, username: str):
     return conn.execute(
         """
         SELECT id, username, kind, owner_id, public_key, status, created_at,
-               avatar_updated_at, model3d_url, model3d_arkit, model3d_updated_at,
+               avatar_updated_at, model3d_url, model3d_arkit, model3d_humanoid, model3d_updated_at,
                (model3d IS NOT NULL) AS has_model3d
         FROM users WHERE username = ?
         """,
@@ -994,9 +998,9 @@ def create_agent(body: AgentCreate, user: HumanUser):
             INSERT INTO users (
                 username, password_hash, kind, owner_id, public_key,
                 avatar, avatar_mime, avatar_updated_at,
-                model3d_url, model3d_arkit, model3d_updated_at
+                model3d_url, model3d_arkit, model3d_humanoid, model3d_updated_at
             )
-            VALUES (?, '', 'agent', ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, '', 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 body.username,
@@ -1007,6 +1011,7 @@ def create_agent(body: AgentCreate, user: HumanUser):
                 now if avatar_bytes else None,
                 model_url,
                 int(body.model3dArkit),
+                int(body.model3dHumanoid),
                 now if model_url else None,
             ),
         )
@@ -1170,20 +1175,22 @@ async def set_my_model3d(
     file: UploadFile = File(...),
     as_username: Annotated[str | None, Query(alias="as")] = None,
     arkit: Annotated[bool | None, Query()] = None,
+    humanoid: Annotated[bool | None, Query()] = None,
 ):
     data = await file.read()
     mime = _validate_model3d_bytes(data)
     with get_db() as conn:
         target = _resolve_profile_target(conn, user, as_username)
         arkit_flag = int(target["model3d_arkit"] or 0) if arkit is None else int(arkit)
+        humanoid_flag = int(target["model3d_humanoid"] or 0) if humanoid is None else int(humanoid)
         conn.execute(
             """
             UPDATE users
             SET model3d = ?, model3d_mime = ?, model3d_url = NULL,
-                model3d_arkit = ?, model3d_updated_at = ?
+                model3d_arkit = ?, model3d_humanoid = ?, model3d_updated_at = ?
             WHERE id = ?
             """,
-            (data, mime, arkit_flag, _db_now(conn), target["id"]),
+            (data, mime, arkit_flag, humanoid_flag, _db_now(conn), target["id"]),
         )
         row = _get_user_by_id(conn, target["id"])
     return {"username": row["username"], **_profile_fields(row)}
@@ -1196,21 +1203,25 @@ def set_my_model3d_url(
     as_username: Annotated[str | None, Query(alias="as")] = None,
 ):
     url = _blank_to_none(body.url)
-    if url is None and body.arkit is None:
+    if url is None and body.arkit is None and body.humanoid is None:
         raise HTTPException(status_code=400, detail="没有需要修改的字段")
     with get_db() as conn:
         target = _resolve_profile_target(conn, user, as_username)
         arkit = int(body.arkit) if body.arkit is not None else int(target["model3d_arkit"] or 0)
+        humanoid = int(body.humanoid) if body.humanoid is not None else int(target["model3d_humanoid"] or 0)
         if url is None:
-            conn.execute("UPDATE users SET model3d_arkit = ? WHERE id = ?", (arkit, target["id"]))
+            conn.execute(
+                "UPDATE users SET model3d_arkit = ?, model3d_humanoid = ? WHERE id = ?",
+                (arkit, humanoid, target["id"]),
+            )
         else:
             conn.execute(
                 """
-                UPDATE users SET model3d_url = ?, model3d_arkit = ?,
+                UPDATE users SET model3d_url = ?, model3d_arkit = ?, model3d_humanoid = ?,
                                  model3d = NULL, model3d_mime = NULL, model3d_updated_at = ?
                 WHERE id = ?
                 """,
-                (url, arkit, _db_now(conn), target["id"]),
+                (url, arkit, humanoid, _db_now(conn), target["id"]),
             )
         row = _get_user_by_id(conn, target["id"])
     return {"username": row["username"], **_profile_fields(row)}
@@ -1223,12 +1234,12 @@ def delete_my_model3d(user: CurrentUser, as_username: Annotated[str | None, Quer
         conn.execute(
             """
             UPDATE users SET model3d = NULL, model3d_mime = NULL, model3d_url = NULL,
-                             model3d_arkit = 0, model3d_updated_at = NULL
+                             model3d_arkit = 0, model3d_humanoid = 0, model3d_updated_at = NULL
             WHERE id = ?
             """,
             (target["id"],),
         )
-    return {"username": target["username"], "model3dUrl": None, "model3dArkit": False}
+    return {"username": target["username"], "model3dUrl": None, "model3dArkit": False, "model3dHumanoid": False}
 
 
 # ---------- 房间 ----------
