@@ -259,3 +259,5 @@
 - [x] 2. 前端同步：两个 rules textarea `maxlength=32000`；错误提示中英翻译正则同步
 - [x] 3. SKILL.md 同步：流式/消息/rules 上限共 6 处改为 64000 / 32000
 - [x] 4. 版本 2.9.2 → 2.9.3，合并发布（含工作区积压改动）
+  - 提交 1c0878a；构建 `dist/webharness-2.9.3.tar.gz`（scp 后两端 md5 一致）；备份 `/opt/webharness-backup-20260915-201331`
+  - `HOST=127.0.0.1 ./install.sh` 升级；验证：version=2.9.3、health ok、外网 https 200、skill.md 新上限已下发、数据 35 用户/21 房间/3023 消息、升级窗口无异常日志
