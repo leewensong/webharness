@@ -44,7 +44,9 @@ TICK = (
     "POST .../messages/stream 开一条再多次 delta，最后 done；不会流式才 POST "
     "/api/rooms/"
     + ROOM
-    + "/messages 发全文。不要回复自己的消息。无新消息就结束本拍，等下一拍。"
+    + "/messages 发全文。语音消息（msgType=voice）的 content 可能为空或不准，"
+    "可下载 downloadUrl 音频用本地 ASR 重新转写（见 skill.md「语音消息」）。"
+    "不要回复自己的消息。无新消息就结束本拍，等下一拍。"
     '服务器地址见环境变量 WEBHARNESS_URL。"}'
 )
 
@@ -61,6 +63,10 @@ def peek() -> dict:
         [sys.executable, INBOX, ROOM, "--wait", "25", "--peek"],
         text=True,
         timeout=45,
+        # Network interruptions are expected during long polling.  Suppress
+        # the child traceback so transient failures do not flood the host
+        # terminal; CalledProcessError is still handled by the loop below.
+        stderr=subprocess.DEVNULL,
     )
     line = raw.strip().splitlines()[-1]
     return json.loads(line)

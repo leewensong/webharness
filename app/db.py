@@ -177,6 +177,39 @@ def init_db() -> None:
                 UNIQUE (room_id, list_type, sender, receiver)
             );
 
+            CREATE TABLE IF NOT EXISTS room_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id INTEGER NOT NULL,
+                name TEXT NOT NULL COLLATE NOCASE,
+                created_by INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id),
+                UNIQUE (room_id, name)
+            );
+
+            CREATE TABLE IF NOT EXISTS room_group_members (
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                PRIMARY KEY (group_id, user_id),
+                FOREIGN KEY (group_id) REFERENCES room_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS room_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                rules TEXT NOT NULL DEFAULT '',
+                params TEXT NOT NULL DEFAULT '{}',
+                script_name TEXT,
+                script_data BLOB,
+                created_by INTEGER REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_messages_room_id
                 ON messages(room_id, id DESC);
             """
@@ -211,6 +244,7 @@ def init_db() -> None:
         # 重建 rooms 表只搬运显式列出的字段，新增列必须放在重建之后。
         _add_column_if_missing(conn, "rooms", "rules", "TEXT")
         _add_column_if_missing(conn, "rooms", "room_agent_id", "INTEGER REFERENCES users(id)")
+        _add_column_if_missing(conn, "rooms", "template", "TEXT")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_live_name
@@ -274,3 +308,62 @@ def init_db() -> None:
                 ON room_members(room_id, last_seen_at)
             """
         )
+
+
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+
+
+def seed_builtin_templates() -> None:
+    """把仓库 templates/ 目录下的内置房间模板种进数据库。
+
+    目录布局：templates/<name>/template.json（name/title/description）+ rules.md +
+    可选脚本附件（如 werewolf_gm.zip，文件名记录在 template.json 的 scriptName）。
+    同名用户模板不动；同名系统模板（created_by 为空）随版本刷新。
+    """
+    import json as _json
+
+    if not TEMPLATES_DIR.is_dir():
+        return
+    with get_db() as conn:
+        for d in sorted(TEMPLATES_DIR.iterdir()):
+            meta_path = d / "template.json"
+            if not d.is_dir() or not meta_path.is_file():
+                continue
+            try:
+                meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            name = str(meta.get("name") or "").strip()
+            title = str(meta.get("title") or "").strip()
+            if not name or not title:
+                continue
+            exists = conn.execute(
+                "SELECT created_by FROM room_templates WHERE name = ? COLLATE NOCASE", (name,)
+            ).fetchone()
+            rules_path = d / "rules.md"
+            rules = rules_path.read_text(encoding="utf-8") if rules_path.is_file() else ""
+            script_name = meta.get("scriptName")
+            script_data = None
+            if script_name:
+                script_path = d / str(script_name)
+                if script_path.is_file():
+                    script_data = script_path.read_bytes()
+            if exists:
+                if exists["created_by"] is None:
+                    conn.execute(
+                        """
+                        UPDATE room_templates
+                        SET title = ?, description = ?, rules = ?, params = '{}',
+                            script_name = ?, script_data = ?, updated_at = datetime('now')
+                        WHERE name = ? COLLATE NOCASE
+                        """,
+                        (title, str(meta.get("description") or ""), rules, script_name, script_data, name),
+                    )
+                continue
+            conn.execute(
+                """
+                INSERT INTO room_templates (name, title, description, rules, params, script_name, script_data)
+                VALUES (?, ?, ?, ?, '{}', ?, ?)
+                """,
+                (name, title, str(meta.get("description") or ""), rules, script_name, script_data),
+            )

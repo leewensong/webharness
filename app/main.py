@@ -7,9 +7,10 @@ import mimetypes
 import re
 import sqlite3
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from html import escape
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
@@ -18,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import auth
-from .db import UPLOADS_DIR, get_db, init_db
+from .db import UPLOADS_DIR, get_db, init_db, seed_builtin_templates
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
@@ -32,7 +33,7 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
 MAX_AVATAR_BYTES = 1 * 1024 * 1024
 MAX_MODEL3D_BYTES = 20 * 1024 * 1024
-MAX_RULES_CHARS = 4000
+MAX_RULES_CHARS = 32000
 MAX_LONG_POLL_SECONDS = 30
 MAX_VOICE_BYTES = 10 * 1024 * 1024
 RECALL_WINDOW_SECONDS = 30
@@ -41,6 +42,7 @@ MAX_STREAM_IDS = 60
 # 发送者和房主可见；连续多个 @@用户名 前缀表示多个接收者（v2.5）。
 # 名字规则与用户名一致（[\w.\-]+），后跟空白/结尾避免「@@bob你好」这类连写被误解析。
 WHISPER_RE = re.compile(r"^@@([\w.\-]+)(?:\s+|$)")
+GROUP_RE = re.compile(r"^#([\w.\-]+)(?:\s+|$)")
 AUDIO_MIME_BY_EXT = {
     ".webm": "audio/webm",
     ".ogg": "audio/ogg",
@@ -85,14 +87,15 @@ async def lifespan(_: FastAPI):
     global _main_loop
     _main_loop = asyncio.get_running_loop()
     init_db()
+    seed_builtin_templates()
     yield
     _main_loop = None
 
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.6.0",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
+    version="2.9.3",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单，并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
     lifespan=lifespan,
 )
 
@@ -146,6 +149,8 @@ class RoomRequest(BaseModel):
     visibility: Literal["private", "public"] | None = None
     rules: str | None = Field(default=None, max_length=MAX_RULES_CHARS)
     roomAgent: str | None = Field(default=None, max_length=32)
+    # 房间模板名：新房间复制模板 rules（显式传 rules 时以 rules 为准），并记录来源模板
+    template: str | None = Field(default=None, max_length=32, pattern=r"^[\w.\-]+$")
 
 
 class RoomUpdate(BaseModel):
@@ -165,19 +170,19 @@ class PermissionUpdate(BaseModel):
 
 
 class MessageCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=8000)
+    content: str = Field(min_length=1, max_length=64000)
     # 引用回复：被引用消息的 id（必须是本房间、未撤回、对发送者可见的消息）
     replyTo: int | None = None
 
 
 class StreamStart(BaseModel):
-    content: str = Field(default="", max_length=8000)
+    content: str = Field(default="", max_length=64000)
     replyTo: int | None = None
 
 
 class StreamPatch(BaseModel):
-    delta: str | None = Field(default=None, max_length=8000)
-    content: str | None = Field(default=None, max_length=8000)
+    delta: str | None = Field(default=None, max_length=64000)
+    content: str | None = Field(default=None, max_length=64000)
     done: bool = False
 
 
@@ -192,6 +197,36 @@ class WhisperRuleCreate(BaseModel):
     sender: str = Field(min_length=1, max_length=32, pattern=r"^(?:[\w.\-]+|\*)$")
     receiver: str = Field(min_length=1, max_length=32, pattern=r"^(?:[\w.\-]+|\*)$")
     priority: int = Field(default=0, ge=-1000, le=1000)
+
+
+class GroupCreate(BaseModel):
+    # 房间命名群组：成员发 `#群名 内容` 自动展开为对全组的私聊（如狼人杀的狼人群）
+    name: str = Field(min_length=1, max_length=32, pattern=r"^[\w.\-]+$")
+    members: list[str] = Field(default_factory=list, max_length=64)
+
+
+class GroupUpdate(BaseModel):
+    members: list[str] = Field(default_factory=list, max_length=64)
+
+
+class TemplateCreate(BaseModel):
+    # 房间模板：建房时按 name 复制 rules，脚本附件供 Room Agent 下载到本地执行
+    name: str = Field(min_length=1, max_length=32, pattern=r"^[\w.\-]+$")
+    title: str = Field(min_length=1, max_length=64)
+    description: str = Field(default="", max_length=2000)
+    rules: str = Field(default="", max_length=MAX_RULES_CHARS)
+    params: dict[str, Any] = Field(default_factory=dict)
+    scriptName: str | None = Field(default=None, max_length=128, pattern=r"^[\w.\-]+$")
+    scriptBase64: str | None = Field(default=None, max_length=7_000_000)
+
+
+class TemplateUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=2000)
+    rules: str | None = Field(default=None, max_length=MAX_RULES_CHARS)
+    params: dict[str, Any] | None = None
+    scriptName: str | None = Field(default=None, max_length=128, pattern=r"^[\w.\-]+$")
+    scriptBase64: str | None = Field(default=None, max_length=7_000_000)
 
 
 def require_user(authorization: Annotated[str | None, Header(alias="Authorization")] = None):
@@ -365,7 +400,7 @@ def _get_user(conn, username: str):
 
 ROOM_SELECT = """
         SELECT r.id, r.name, r.created_by, r.password_hash, r.visibility, r.muted,
-               r.ended_at, r.archived_at, r.created_at, r.rules, r.room_agent_id,
+               r.ended_at, r.archived_at, r.created_at, r.rules, r.room_agent_id, r.template,
                u.username AS ownerName, u.kind AS creatorKind, u.owner_id AS creatorOwnerId,
                ra.username AS roomAgentName
         FROM rooms r
@@ -420,22 +455,32 @@ def _member(conn, room_id: int, user_id: int):
     ).fetchone()
 
 
-def _online_users(conn, room_id: int) -> list[dict]:
+def _online_users(conn, room) -> list[dict]:
+    """在线成员（带有效发言权 canSpeak，供前端画红/绿框）。
+
+    有效发言权 = 房主/roomAgent 恒可发言；否则受全体禁言与成员禁言影响。
+    """
+    gov_ids = {room["created_by"]}
+    if room["room_agent_id"]:
+        gov_ids.add(room["room_agent_id"])
     rows = conn.execute(
         """
-        SELECT u.username, u.avatar_updated_at AS avatarV, m.last_seen_at AS lastSeenAt
+        SELECT u.username, u.avatar_updated_at AS avatarV, m.last_seen_at AS lastSeenAt,
+               u.id AS uid, m.can_speak AS canSpeak
         FROM room_members m
         JOIN users u ON u.id = m.user_id
         WHERE m.room_id = ? AND m.last_seen_at > datetime('now', ?)
         ORDER BY m.last_seen_at DESC
         """,
-        (room_id, ONLINE_WINDOW),
+        (room["id"], ONLINE_WINDOW),
     ).fetchall()
     return [
         {
             "username": row["username"],
             "lastSeenAt": row["lastSeenAt"],
             "avatarUrl": _avatar_url(row["username"], row["avatarV"]),
+            "canSpeak": row["uid"] in gov_ids
+            or (not room["muted"] and bool(row["canSpeak"])),
         }
         for row in rows
     ]
@@ -459,9 +504,14 @@ def _require_membership(conn, room_name: str, user_id: int):
     return room, member
 
 
+def _is_room_governor(room, user_id: int) -> bool:
+    """房主或 roomAgent：房间治理者，可代房主执行管理 API，并可见全部私聊与完整历史。"""
+    return room["created_by"] == user_id or room["room_agent_id"] == user_id
+
+
 def _require_owner(room, user_id: int) -> None:
-    if room["created_by"] != user_id:
-        raise HTTPException(status_code=403, detail="只有房主可以管理该房间")
+    if not _is_room_governor(room, user_id):
+        raise HTTPException(status_code=403, detail="只有房主或房间管理 Agent（roomAgent）可以管理该房间")
 
 
 def _is_agent_master(user: dict, room) -> bool:
@@ -504,26 +554,44 @@ def _require_archive_access(conn, room_id: int, user: dict):
     return room, member
 
 
-def _check_action_allowed(room, member, user_id: int, action: str) -> None:
-    if room["created_by"] == user_id:
+def _check_action_allowed(room, member, user_id: int, action: str, whisper: bool = False) -> None:
+    if _is_room_governor(room, user_id):
         return
     if room["muted"]:
         raise HTTPException(status_code=403, detail="房间已全体禁言")
+    if whisper:
+        # 私聊不受成员「公开发言」禁言限制（禁言只约束公开频道）；私聊可见性与
+        # 可达性由 whisper-rules 白黑名单与目标校验管控（狼人杀等主持场景依赖此通道）。
+        return
     if action == "speak" and not member["can_speak"]:
         raise HTTPException(status_code=403, detail="你已被禁言")
     if action == "upload" and not member["can_upload"]:
         raise HTTPException(status_code=403, detail="你已被禁止上传附件")
 
 
-def _whisper_targets(conn, room_id: int, content: str) -> list:
-    """解析消息开头连续的 @@用户名 私聊前缀，返回目标用户行列表（去重保序）；无前缀返回 []。
+def _whisper_targets(conn, room, content: str, sender_id: int | None = None) -> list:
+    """解析消息开头的私聊前缀，返回目标用户行列表（去重保序）；无前缀返回 []。
 
-    目标必须是本房间成员，否则报错——避免本想私聊的消息被当成公开消息广播出去。
+    两种前缀可混用（v2.8 起支持群组）：
+    - @@用户名：发给指定房间成员；
+    - #群组名：展开为该群组内除发送者外的全部房间成员——群组由房主/roomAgent
+      维护，成员名单对非成员保密（游戏身份群如狼人群依赖这一点）。
+    只能发言给自己所在的群（防伪装身份），治理者代发除外。
+    目标必须可送达，否则报错——避免本想私聊的消息被当成公开消息广播出去。
     """
+    room_id = room["id"]
     targets: list = []
     seen: set[str] = set()
+    group_names: list[str] = []
     rest = content or ""
     while True:
+        m = GROUP_RE.match(rest)
+        if m:
+            name = m.group(1)
+            rest = rest[m.end():]
+            if name.lower() not in {g.lower() for g in group_names}:
+                group_names.append(name)
+            continue
         m = WHISPER_RE.match(rest)
         if not m:
             break
@@ -538,6 +606,25 @@ def _whisper_targets(conn, room_id: int, content: str) -> list:
         if not _member(conn, room_id, target["id"]):
             raise HTTPException(status_code=400, detail=f"私聊对象 {name} 不在该房间中")
         targets.append(target)
+    for gname in group_names:
+        group = _get_group(conn, room_id, gname)
+        if not group:
+            raise HTTPException(status_code=400, detail=f"群组 #{gname} 不存在，请让房主或管理 Agent 先创建")
+        members = _group_members(conn, group["id"])
+        if sender_id is not None and sender_id not in {m["id"] for m in members} \
+                and not _is_room_governor(room, sender_id):
+            raise HTTPException(status_code=403, detail=f"你不是群组 #{gname} 的成员，不能在群里发言")
+        for target in members:
+            if sender_id is not None and target["id"] == sender_id:
+                continue
+            if target["username"].lower() in seen:
+                continue
+            if not _member(conn, room_id, target["id"]):
+                continue    # 已退出房间的旧成员自动跳过，不影响其余人收信
+            seen.add(target["username"].lower())
+            targets.append(target)
+    if group_names and not targets:
+        raise HTTPException(status_code=400, detail=f"群组 #{group_names[0]} 没有可发送的成员（成员需在房间内且不是你自己）")
     return targets
 
 
@@ -623,7 +710,7 @@ def _resolve_reply(conn, room, user: dict, reply_to: int | None) -> int | None:
     if row["recalled"]:
         raise HTTPException(status_code=400, detail="引用的消息已撤回，不能引用")
     recipients = _whisper_ids(row)
-    if recipients and user["id"] not in (row["user_id"], *recipients, room["created_by"]):
+    if recipients and user["id"] not in (row["user_id"], *recipients) and not _is_room_governor(room, user["id"]):
         raise HTTPException(status_code=403, detail="引用的消息对你不可见")
     return row["id"]
 
@@ -656,6 +743,53 @@ def _require_whisper_allowed(conn, room_id: int, sender_name: str, receiver_name
         raise HTTPException(status_code=403, detail=f"房间的私聊规则不允许发给 {receiver_name}")
 
 
+# ---------- 房间群组（v2.8：命名私聊群，如狼人杀的狼人群） ----------
+
+def _get_group(conn, room_id: int, name: str):
+    return conn.execute(
+        "SELECT * FROM room_groups WHERE room_id = ? AND name = ?", (room_id, name)
+    ).fetchone()
+
+
+def _group_members(conn, group_id: int) -> list:
+    return conn.execute(
+        """
+        SELECT u.* FROM room_group_members gm JOIN users u ON u.id = gm.user_id
+        WHERE gm.group_id = ? ORDER BY u.id
+        """,
+        (group_id,),
+    ).fetchall()
+
+
+def _group_dicts(conn, room, user_id: int) -> list[dict]:
+    """群组列表。可见性：治理者（房主/roomAgent）可见全部；普通成员只看见
+    自己所在的群——群组常按游戏身份组建（如狼人群），名单对非成员保密。"""
+    governor = _is_room_governor(room, user_id)
+    out = []
+    for row in conn.execute(
+        "SELECT id, name FROM room_groups WHERE room_id = ? ORDER BY id", (room["id"],)
+    ).fetchall():
+        members = _group_members(conn, row["id"])
+        if not governor and user_id not in {m["id"] for m in members}:
+            continue
+        out.append({"name": row["name"], "members": [m["username"] for m in members]})
+    return out
+
+
+def _validate_group_members(conn, room_id: int, names: list[str]) -> list[int]:
+    """群组成员白名单：必须存在且在房间里；去重保序。"""
+    ids: list[int] = []
+    for name in names:
+        u = _get_user(conn, name)
+        if not u:
+            raise HTTPException(status_code=400, detail=f"群组成员 {name} 不存在")
+        if not _member(conn, room_id, u["id"]):
+            raise HTTPException(status_code=400, detail=f"群组成员 {name} 不在该房间中")
+        if u["id"] not in ids:
+            ids.append(u["id"])
+    return ids
+
+
 def _room_dict(room, user_id: int, online: list[dict] | None = None) -> dict:
     data = {
         "roomId": room["id"],
@@ -666,8 +800,9 @@ def _room_dict(room, user_id: int, online: list[dict] | None = None) -> dict:
         "muted": bool(room["muted"]),
         "isOwner": room["created_by"] == user_id,
         "canArchive": room["created_by"] == user_id or room["creatorOwnerId"] == user_id,
-        "rules": _row_get(room, "rules") or "",
+        "rules": _fill_base_url(_row_get(room, "rules")),
         "roomAgent": _row_get(room, "roomAgentName"),
+        "template": _row_get(room, "template"),
         "createdAt": room["created_at"],
         "archivedAt": room["archived_at"],
     }
@@ -704,8 +839,11 @@ def _reply_dict(row, room, user_id: int | None) -> dict | None:
     }
     recipients = _whisper_ids(original)
     allowed = {int(reply_user_id), *recipients}
-    if room is not None and room["created_by"]:
-        allowed.add(int(room["created_by"]))
+    if room is not None:
+        if room["created_by"]:
+            allowed.add(int(room["created_by"]))
+        if room["room_agent_id"]:
+            allowed.add(int(room["room_agent_id"]))
     if recipients and user_id is not None and user_id not in allowed:
         return {"id": reply_id, "username": username, "excerpt": "", "excerptType": "text", "recalled": False, "hidden": True}
     reply_type = _row_get(row, "replyType") or "text"
@@ -1255,19 +1393,28 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
         if not room:
             visibility = body.visibility or "private"
             room_agent_id = _resolve_room_agent(conn, user, body.roomAgent)
+            template = None
+            if body.template:
+                template = _get_template(conn, body.template)
+                if not template:
+                    raise HTTPException(status_code=404, detail=f"模板 {body.template} 不存在")
+            rules = _blank_to_none(body.rules)
+            if rules is None and template:
+                rules = template["rules"] or None
             try:
                 conn.execute(
                     """
-                    INSERT INTO rooms (name, created_by, password_hash, visibility, rules, room_agent_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO rooms (name, created_by, password_hash, visibility, rules, room_agent_id, template)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         body.roomName,
                         user["id"],
                         auth.hash_password(password) if password else None,
                         visibility,
-                        _blank_to_none(body.rules),
+                        rules,
                         room_agent_id,
+                        template["name"] if template else None,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -1279,7 +1426,7 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
             needs_password = (
                 room["visibility"] != "public"
                 and room["password_hash"]
-                and room["created_by"] != user["id"]
+                and not _is_room_governor(room, user["id"])
                 and not _is_agent_master(user, room)
             )
             if needs_password:
@@ -1302,8 +1449,10 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
             )
         else:
             _touch(conn, room["id"], user["id"])
-        online = _online_users(conn, room["id"])
-    return {**_room_dict(room, user["id"], online), "created": created, "joined": True}
+        online = _online_users(conn, room)
+        data = {**_room_dict(room, user["id"], online), "created": created, "joined": True}
+        _attach_template_fields(conn, room, data)
+    return data
 
 
 @app.get("/api/rooms")
@@ -1334,7 +1483,7 @@ def list_public_rooms(user: CurrentUser):
 def room_detail(room_name: str, user: CurrentUser):
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
-        online = _online_users(conn, room["id"])
+        online = _online_users(conn, room)
         data = _room_dict(room, user["id"], online)
         data["myPermissions"] = {
             "canSpeak": bool(member["can_speak"]),
@@ -1344,6 +1493,8 @@ def room_detail(room_name: str, user: CurrentUser):
         data["memberCount"] = conn.execute(
             "SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?", (room["id"],)
         ).fetchone()["c"]
+        data["groups"] = _group_dicts(conn, room, user["id"])
+        _attach_template_fields(conn, room, data)
     return data
 
 
@@ -1391,7 +1542,7 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
         )
         _touch(conn, room["id"], user["id"])
         room = _get_room(conn, new_name)
-        online = _online_users(conn, room["id"])
+        online = _online_users(conn, room)
     return _room_dict(room, user["id"], online)
 
 
@@ -1539,8 +1690,8 @@ def set_permissions(room_name: str, username: str, body: PermissionUpdate, user:
         target = _get_user(conn, username)
         if not target:
             raise HTTPException(status_code=404, detail="用户不存在")
-        if target["id"] == room["created_by"]:
-            raise HTTPException(status_code=403, detail="房主不可被限制")
+        if target["id"] == room["created_by"] or target["id"] == room["room_agent_id"]:
+            raise HTTPException(status_code=403, detail="房主与房间管理 Agent 不可被限制")
         member = _member(conn, room["id"], target["id"])
         if not member:
             raise HTTPException(status_code=404, detail="该用户尚未加入房间")
@@ -1649,6 +1800,258 @@ def delete_whisper_rule(room_name: str, rule_id: int, user: CurrentUser):
     return {"deleted": True, "id": rule_id}
 
 
+# ---------- 房间群组（v2.8） ----------
+
+@app.get("/api/rooms/{room_name}/groups")
+def list_groups(room_name: str, user: CurrentUser):
+    with get_db() as conn:
+        room, _member = _require_membership(conn, room_name, user["id"])
+        return {"roomName": room["name"], "groups": _group_dicts(conn, room, user["id"])}
+
+
+@app.post("/api/rooms/{room_name}/groups")
+def create_group(room_name: str, body: GroupCreate, user: CurrentUser):
+    """创建命名群组（仅房主/roomAgent）。成员名单即白名单，发 `#群名` 展开到全组。"""
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        _require_owner(room, user["id"])
+        if _get_group(conn, room["id"], body.name):
+            raise HTTPException(status_code=409, detail="同名群组已存在")
+        ids = _validate_group_members(conn, room["id"], body.members)
+        conn.execute(
+            "INSERT INTO room_groups (room_id, name, created_by) VALUES (?, ?, ?)",
+            (room["id"], body.name, user["id"]),
+        )
+        gid = conn.execute("SELECT last_insert_rowid() AS gid").fetchone()["gid"]
+        conn.executemany(
+            "INSERT INTO room_group_members (group_id, user_id) VALUES (?, ?)",
+            [(gid, i) for i in ids],
+        )
+        members = [m["username"] for m in _group_members(conn, gid)]
+        name = body.name
+    return {"name": name, "members": members}
+
+
+@app.patch("/api/rooms/{room_name}/groups/{group_name}")
+def update_group(room_name: str, group_name: str, body: GroupUpdate, user: CurrentUser):
+    """整体替换群组成员名单（仅房主/roomAgent）。"""
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        _require_owner(room, user["id"])
+        group = _get_group(conn, room["id"], group_name)
+        if not group:
+            raise HTTPException(status_code=404, detail="群组不存在")
+        ids = _validate_group_members(conn, room["id"], body.members)
+        conn.execute("DELETE FROM room_group_members WHERE group_id = ?", (group["id"],))
+        conn.executemany(
+            "INSERT INTO room_group_members (group_id, user_id) VALUES (?, ?)",
+            [(group["id"], i) for i in ids],
+        )
+        members = [m["username"] for m in _group_members(conn, group["id"])]
+        name = group["name"]
+    return {"name": name, "members": members}
+
+
+@app.delete("/api/rooms/{room_name}/groups/{group_name}")
+def delete_group(room_name: str, group_name: str, user: CurrentUser):
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        _require_owner(room, user["id"])
+        cur = conn.execute(
+            "DELETE FROM room_groups WHERE room_id = ? AND name = ?",
+            (room["id"], group_name),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="群组不存在")
+    return {"deleted": True, "name": group_name}
+
+
+# ---------- 房间模板 ----------
+
+MAX_SCRIPT_BYTES = 5 * 1024 * 1024
+
+
+def _get_template(conn, name: str):
+    return conn.execute(
+        "SELECT * FROM room_templates WHERE name = ? COLLATE NOCASE", (name,)
+    ).fetchone()
+
+
+def _template_dict(row) -> dict:
+    return {
+        "name": row["name"],
+        "title": row["title"],
+        "description": row["description"],
+        "rules": _fill_base_url(row["rules"]),
+        "params": _json_loads(row["params"]),
+        "scriptName": row["script_name"],
+        "scriptSize": len(row["script_data"]) if row["script_data"] else 0,
+        "createdBy": row["created_by"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def _json_loads(raw: str | None) -> dict:
+    import json
+    try:
+        data = json.loads(raw) if raw else {}
+    except Exception:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def _decode_script(script_name: str | None, script_base64: str | None) -> bytes | None:
+    """校验并解码脚本附件；两者必须成对出现，解码后 ≤5MB。"""
+    if script_base64 is None:
+        if script_name is not None:
+            raise HTTPException(status_code=400, detail="提供 scriptName 时必须同时提供 scriptBase64")
+        return None
+    if not script_name:
+        raise HTTPException(status_code=400, detail="提供 scriptBase64 时必须同时提供 scriptName")
+    try:
+        data = base64.b64decode(script_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="scriptBase64 不是合法的 base64") from exc
+    if not data:
+        raise HTTPException(status_code=400, detail="脚本附件不能为空")
+    if len(data) > MAX_SCRIPT_BYTES:
+        raise HTTPException(status_code=400, detail=f"脚本附件不能超过 {MAX_SCRIPT_BYTES // (1024 * 1024)}MB")
+    return data
+
+
+def _attach_template_fields(conn, room, data: dict) -> dict:
+    """房间详情补充模板脚本信息，供 Room Agent 下载脚本（模板已删则只留来源名）。"""
+    name = _row_get(room, "template")
+    if not name:
+        return data
+    tpl = _get_template(conn, name)
+    data["templateTitle"] = tpl["title"] if tpl else None
+    data["templateScript"] = tpl["script_name"] if tpl else None
+    return data
+
+
+@app.get("/api/room-templates")
+def list_room_templates(user: CurrentUser):
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM room_templates ORDER BY (created_by IS NULL) DESC, id ASC"
+        ).fetchall()
+    return {"templates": [_template_dict(r) for r in rows]}
+
+
+@app.post("/api/room-templates")
+def create_room_template(body: TemplateCreate, user: CurrentUser):
+    script_data = _decode_script(body.scriptName, body.scriptBase64)
+    import json
+    params_json = json.dumps(body.params, ensure_ascii=False)
+    with get_db() as conn:
+        try:
+            conn.execute(
+                """
+                INSERT INTO room_templates (name, title, description, rules, params, script_name, script_data, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    body.name, body.title, body.description, body.rules,
+                    params_json, body.scriptName, script_data, user["id"],
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="模板名已存在") from exc
+        row = _get_template(conn, body.name)
+    return _template_dict(row)
+
+
+@app.get("/api/room-templates/{name}")
+def get_room_template(name: str, user: CurrentUser):
+    with get_db() as conn:
+        row = _get_template(conn, name)
+    if not row:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    return _template_dict(row)
+
+
+@app.patch("/api/room-templates/{name}")
+def update_room_template(name: str, body: TemplateUpdate, user: CurrentUser):
+    with get_db() as conn:
+        row = _get_template(conn, name)
+        if not row:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        if row["created_by"] is None:
+            raise HTTPException(status_code=403, detail="系统内置模板不可修改")
+        if row["created_by"] != user["id"]:
+            raise HTTPException(status_code=403, detail="只有模板发布者可以修改")
+        title = row["title"] if body.title is None else body.title
+        description = row["description"] if body.description is None else body.description
+        rules = row["rules"] if body.rules is None else body.rules
+        import json
+        params_json = row["params"] if body.params is None else json.dumps(body.params, ensure_ascii=False)
+        script_data = row["script_data"]
+        script_name = row["script_name"]
+        if body.scriptBase64 is not None:
+            script_data = _decode_script(body.scriptName, body.scriptBase64)
+            script_name = body.scriptName
+        elif body.scriptName is not None:
+            script_name = body.scriptName  # 只改附件名，内容保留
+        conn.execute(
+            """
+            UPDATE room_templates
+            SET title = ?, description = ?, rules = ?, params = ?, script_name = ?, script_data = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (title, description, rules, params_json, script_name, script_data, row["id"]),
+        )
+        row = _get_template(conn, name)
+    return _template_dict(row)
+
+
+@app.delete("/api/room-templates/{name}")
+def delete_room_template(name: str, user: CurrentUser):
+    with get_db() as conn:
+        row = _get_template(conn, name)
+        if not row:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        if row["created_by"] is None:
+            raise HTTPException(status_code=403, detail="系统内置模板不可删除")
+        if row["created_by"] != user["id"]:
+            raise HTTPException(status_code=403, detail="只有模板发布者可以删除")
+        conn.execute("DELETE FROM room_templates WHERE id = ?", (row["id"],))
+    return {"deleted": True, "name": name}
+
+
+def _template_script_response(row) -> Response:
+    script_name = row["script_name"] or "script.bin"
+    return Response(
+        row["script_data"],
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{quote(script_name)}\"; filename*=UTF-8''{quote(script_name)}",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/room-templates/{name}/script")
+def download_room_template_script(name: str, user: CurrentUser):
+    with get_db() as conn:
+        row = _get_template(conn, name)
+    if not row or not row["script_data"]:
+        raise HTTPException(status_code=404, detail="该模板没有脚本附件")
+    return _template_script_response(row)
+
+
+@app.get("/scripts/templates/{name}")
+def download_template_script_static(name: str):
+    """模板脚本免登录静态下载；房间 rules 里写的下载地址就是它。"""
+    with get_db() as conn:
+        row = _get_template(conn, name)
+    if not row or not row["script_data"]:
+        raise HTTPException(status_code=404, detail="该模板没有脚本附件")
+    return _template_script_response(row)
+
+
 # ---------- 消息与附件 ----------
 
 MESSAGE_SELECT = """
@@ -1703,7 +2106,7 @@ def _finalize_stale_streams(conn, room_id: int) -> None:
 
 
 def _visible_rows(rows, room, user_id: int) -> list[dict]:
-    """私聊可见性：只有发送者、全部接收者、房主能看到内容。
+    """私聊可见性：只有发送者、全部接收者、房主与 roomAgent 能看到内容。
 
     其余请求者拿到的行被抹成“空行”——保留 id 让增量游标（afterId）不乱，
     但不泄露发送者、内容与引用目标；UI 端忽略空行不渲染。
@@ -1712,7 +2115,7 @@ def _visible_rows(rows, room, user_id: int) -> list[dict]:
     for row in rows:
         item = dict(row)
         recipients = _whisper_ids(item)
-        if recipients and user_id not in (item["user_id"], *recipients, room["created_by"]):
+        if recipients and user_id not in (item["user_id"], *recipients) and not _is_room_governor(room, user_id):
             item["content"] = ""
             item["username"] = ""
             item["avatarV"] = None
@@ -1732,7 +2135,7 @@ def _require_file_visible(row, room, user_id: int) -> None:
     if row is None:
         raise HTTPException(status_code=404, detail="附件不存在")
     recipients = _whisper_ids(row)
-    if recipients and user_id not in (row["user_id"], *recipients, room["created_by"]):
+    if recipients and user_id not in (row["user_id"], *recipients) and not _is_room_governor(room, user_id):
         raise HTTPException(status_code=403, detail="该附件属于私聊消息，对你不可见")
 
 
@@ -1753,7 +2156,7 @@ def _fetch_messages(
     history_params: list = []
     if (
         not skip_history
-        and room["created_by"] != user_id
+        and not _is_room_governor(room, user_id)
         and member
         and not member["can_view_history"]
     ):
@@ -1837,9 +2240,9 @@ async def recent_messages(
 def send_message(room_name: str, body: MessageCreate, user: CurrentUser):
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
-        _check_action_allowed(room, member, user["id"], "speak")
-        targets = _whisper_targets(conn, room["id"], body.content)
+        targets = _whisper_targets(conn, room, body.content, user["id"])
         _check_whisper_targets(conn, room["id"], user["username"], targets)
+        _check_action_allowed(room, member, user["id"], "speak", whisper=bool(targets))
         whisper_to, whisper_to_ids = _whisper_columns(targets)
         reply_to = _resolve_reply(conn, room, user, body.replyTo)
         now = _db_now(conn)
@@ -1863,9 +2266,9 @@ def start_stream(room_name: str, user: CurrentUser, body: StreamStart = StreamSt
     payload = body or StreamStart()
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
-        _check_action_allowed(room, member, user["id"], "speak")
-        targets = _whisper_targets(conn, room["id"], payload.content or "")
+        targets = _whisper_targets(conn, room, payload.content or "", user["id"])
         _check_whisper_targets(conn, room["id"], user["username"], targets)
+        _check_action_allowed(room, member, user["id"], "speak", whisper=bool(targets))
         whisper_to, whisper_to_ids = _whisper_columns(targets)
         reply_to = _resolve_reply(conn, room, user, payload.replyTo)
         now = _db_now(conn)
@@ -1905,17 +2308,18 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
             raise HTTPException(status_code=400, detail="只有文本消息支持流式更新")
         if not row["streaming"]:
             raise HTTPException(status_code=409, detail="该消息已结束流式，不能再追加")
-        _check_action_allowed(room, member, user["id"], "speak")
+        _check_action_allowed(room, member, user["id"], "speak",
+                              whisper=bool(row["whisper_to_ids"]))
         content = row["content"] or ""
         if body.content is not None:
             content = body.content
         elif body.delta is not None:
             content = content + body.delta
-        if len(content) > 8000:
-            raise HTTPException(status_code=400, detail="消息超过 8000 字上限")
+        if len(content) > 64000:
+            raise HTTPException(status_code=400, detail="消息超过 64000 字上限")
         # 内容变化时重解析 @@ 前缀：新增前缀要重新过私聊规则并改写接收者；
         # 去掉前缀时保留原私聊属性（可见性只紧不松），防止私聊内容被公开广播
-        targets = _whisper_targets(conn, room["id"], content)
+        targets = _whisper_targets(conn, room, content, user["id"])
         if targets:
             _check_whisper_targets(conn, room["id"], user["username"], targets)
             whisper_to, whisper_to_ids = _whisper_columns(targets)
@@ -2106,13 +2510,13 @@ async def send_voice(
     if ext is None:
         raise HTTPException(status_code=400, detail="语音必须是音频文件（webm/ogg/mp4/mp3/wav/aac 等）")
     text = (text or "").strip()
-    if len(text) > 8000:
-        raise HTTPException(status_code=400, detail="语音识别文本超过 8000 字上限")
+    if len(text) > 64000:
+        raise HTTPException(status_code=400, detail="语音识别文本超过 64000 字上限")
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
-        _check_action_allowed(room, member, user["id"], "speak")
-        targets = _whisper_targets(conn, room["id"], text)
+        targets = _whisper_targets(conn, room, text, user["id"])
         _check_whisper_targets(conn, room["id"], user["username"], targets)
+        _check_action_allowed(room, member, user["id"], "speak", whisper=bool(targets))
         whisper_to, whisper_to_ids = _whisper_columns(targets)
         reply_to_id = _resolve_reply(conn, room, user, reply_to)
         now = _db_now(conn)
@@ -2173,6 +2577,26 @@ def _base_url(request: Request) -> str:
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
     host = request.headers.get("host") or request.url.netloc
     return f"{scheme}://{host}"
+
+
+# rules 文本里的 {{BASE_URL}} 占位符按请求来源填充（中间件记录，dict 组装处读取）。
+_request_base_url: ContextVar[str] = ContextVar("request_base_url", default="")
+
+
+@app.middleware("http")
+async def _remember_base_url(request: Request, call_next):
+    token = _request_base_url.set(_base_url(request))
+    try:
+        return await call_next(request)
+    finally:
+        _request_base_url.reset(token)
+
+
+def _fill_base_url(text: str | None) -> str:
+    if not text:
+        return ""
+    base = _request_base_url.get()
+    return text.replace("{{BASE_URL}}", base) if base else text
 
 
 @app.get("/")

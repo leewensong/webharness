@@ -204,6 +204,115 @@ check "成员列表带头像" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/members" -H 
 check "在线列表带头像" "$(curl -sS "$URL/api/rooms/$PUB_ROOM" -H "Authorization: Bearer $HTOK")" "avatarUrl"
 check "Agent 列表带头像" "$(curl -sS "$URL/api/agents" -H "Authorization: Bearer $HTOK")" "avatarUrl"
 
+echo "== roomAgent 治理权 =="
+GOV_ROOM="e2e-gov-$SUF"
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1]}))' "$GOV_ROOM")" >/dev/null
+check "PATCH 设 roomAgent" "$(curl -sS -X PATCH "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"roomAgent":sys.argv[1]}))' "$AGENT")" | python3 -c "import sys,json;print(json.load(sys.stdin)['roomAgent'])")" "$AGENT"
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1]}))' "$GOV_ROOM")" >/dev/null
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1]}))' "$GOV_ROOM")" >/dev/null
+check "roomAgent 读成员列表" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/members" -H "Authorization: Bearer $ATOK")" '"members"'
+check "普通人 PATCH 房间 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"rules":"x"}')" "403"
+check "roomAgent PATCH 房间 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"rules":"治理规则"}')" "200"
+check "roomAgent 禁言普通人" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/permissions/$OTHER" -X PUT -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"canSpeak":false}' | python3 -c "import sys,json;print(json.load(sys.stdin)['canSpeak'])")" "False"
+check "被禁言发消息 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"content":"hi"}')" "403"
+check "被禁言仍可私聊 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "{\"content\":\"@@$HUMAN 悄悄话\"}")" "200"
+check "roomAgent 解禁" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/permissions/$OTHER" -X PUT -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"canSpeak":true}' | python3 -c "import sys,json;print(json.load(sys.stdin)['canSpeak'])")" "True"
+check "解禁后发消息 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"content":"hi"}')" "200"
+check "roomAgent 全体禁言" "$(curl -sS -X PATCH "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"muted":true}' | python3 -c "import sys,json;print(json.load(sys.stdin)['muted'])")" "True"
+check "全体禁言下普通人 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"content":"hi2"}')" "403"
+check "全体禁言下私聊也 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "{\"content\":\"@@$HUMAN 悄悄话\"}")" "403"
+check "全体禁言下 roomAgent 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"content":"主持"}')" "200"
+curl -sS -X PATCH "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"muted":false}' >/dev/null
+check "roomAgent 加 deny */*" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/whisper-rules" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d '{"listType":"deny","priority":0,"sender":"*","receiver":"*"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['listType'])")" "deny"
+curl -sS "$URL/api/rooms/$GOV_ROOM/whisper-rules" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"listType":"allow","priority":10,"sender":sys.argv[1],"receiver":"*"}))' "$AGENT")" >/dev/null
+check "禁后普通人私聊 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "{\"content\":\"@@$HUMAN 悄悄话\"}")" "403"
+check "roomAgent 私聊不受限" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "{\"content\":\"@@$OTHER 提示\"}")" "200"
+curl -sS "$URL/api/rooms/$GOV_ROOM/whisper-rules" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"listType":"allow","priority":10,"sender":sys.argv[1],"receiver":sys.argv[2]}))' "$OTHER" "$HUMAN")" >/dev/null
+WID=$(curl -sS "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "{\"content\":\"@@$HUMAN 狼人刀3号\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+check "roomAgent 看到他人私聊" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/messages?limit=5" -H "Authorization: Bearer $ATOK")" "狼人刀3号"
+check "房主仍能看到他人私聊" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/messages?limit=5" -H "Authorization: Bearer $HTOK")" "狼人刀3号"
+check "限制房主 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/permissions/$HUMAN" -X PUT -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"canSpeak":false}')" "403"
+check "限制 roomAgent 自己 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/permissions/$AGENT" -X PUT -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"canSpeak":false}')" "403"
+check "roomAgent 不能归档 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$GOV_ROOM/archive" -H "Authorization: Bearer $ATOK")" "403"
+check "onlineUsers 带 canSpeak" "$(curl -sS "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $HTOK")" '"canSpeak"'
+curl -sS "$URL/api/rooms/$GOV_ROOM/permissions/$OTHER" -X PUT -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"canSpeak":false}' >/dev/null
+check "禁言后 canSpeak false" "$(curl -sS "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $HTOK")" '"canSpeak":false'
+curl -sS "$URL/api/rooms/$GOV_ROOM/permissions/$OTHER" -X PUT -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"canSpeak":true}' >/dev/null
+
+check "房主仍能管理" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"rules":"still-owner"}')" "200"
+
+echo "== 房间群组（v2.8）=="
+check "roomAgent 建群" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/groups" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"name":"wolves","members":[sys.argv[1],sys.argv[2]]}))' "$HUMAN" "$AGENT")")" '"name":"wolves"'
+check "重复建群 409" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/groups" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"name":"wolves","members":[]}')" "409"
+check "非治理者建群 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/groups" -X POST -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"name":"villagers","members":[]}')" "403"
+check "群成员不在房间 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/groups" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"name":"x","members":["nobody-here"]}')" "400"
+check "成员发 #群组 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"content":"#wolves 群聊你好"}')" "200"
+CNT_IN=$(curl -sS "$URL/api/rooms/$GOV_ROOM/messages?limit=10" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;print(sum('群聊你好' in (m.get('content') or '') for m in json.load(sys.stdin)['messages']))")
+check "群内成员(房主)能看到" "$CNT_IN" "1"
+CNT_OUT=$(curl -sS "$URL/api/rooms/$GOV_ROOM/messages?limit=10" -H "Authorization: Bearer $OTOK" | python3 -c "import sys,json;print(sum('群聊你好' in (m.get('content') or '') for m in json.load(sys.stdin)['messages']))")
+check "群外成员看不到" "$CNT_OUT" "0"
+check "非成员 GET groups 不含 wolves" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/groups" -H "Authorization: Bearer $OTOK" | grep -c wolves)" "0"
+check "群成员 GET groups 含 wolves" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/groups" -H "Authorization: Bearer $HTOK")" '"wolves"'
+check "非成员发 #群组 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"content":"#wolves 试试"}')" "403"
+curl -sS "$URL/api/rooms/$GOV_ROOM/whisper-rules" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"listType":"allow","priority":20,"sender":sys.argv[1],"receiver":"*"}))' "$OTHER")" >/dev/null
+check "PATCH 换群成员名单" "$(curl -sS -X PATCH "$URL/api/rooms/$GOV_ROOM/groups/wolves" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"members":[sys.argv[1],sys.argv[2],sys.argv[3]]}))' "$HUMAN" "$AGENT" "$OTHER")")" '"members"'
+check "进群后 OTHER 可发 #群组" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"content":"#wolves 收到"}')" "200"
+check "非治理者 PATCH 群组 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$GOV_ROOM/groups/wolves" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"members":[]}')" "403"
+check "PATCH 不存在的群 404" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$GOV_ROOM/groups/ghost" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"members":[]}')" "404"
+check "删群" "$(curl -sS -X DELETE "$URL/api/rooms/$GOV_ROOM/groups/wolves" -H "Authorization: Bearer $ATOK")" '"deleted":true'
+check "删群后再发 #群组 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"content":"#wolves hi"}')" "400"
+check "再删群 404" "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$URL/api/rooms/$GOV_ROOM/groups/wolves" -H "Authorization: Bearer $ATOK")" "404"
+
+echo "== 房间模板（v2.9）=="
+TPL_BODY=$(python3 -c '
+import json,sys,base64
+name=sys.argv[1]
+script=base64.b64encode(b"#!/usr/bin/env python3\nprint(\"demo gm\")\n").decode()
+print(json.dumps({"name":name,"title":"模板测试","description":"e2e 临时模板","rules":"模板规则A：请听裁判指挥。","scriptName":"gm.py","scriptBase64":script}))' "e2e-tpl-$SUF")
+check "建模板" "$(curl -sS "$URL/api/room-templates" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d "$TPL_BODY")" '"title":"模板测试"'
+check "重复建模板 409" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/room-templates" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d "$TPL_BODY")" "409"
+check "模板列表含内置 werewolf" "$(curl -sS "$URL/api/room-templates" -H "Authorization: Bearer $ATOK")" '"name":"werewolf"'
+check "模板详情 rules" "$(curl -sS "$URL/api/room-templates/e2e-tpl-$SUF" -H "Authorization: Bearer $HTOK")" '模板规则A'
+check "未知模板 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/room-templates/ghost-$SUF" -H "Authorization: Bearer $HTOK")" "404"
+TPLROOM="e2e-tplroom-$SUF"
+check "用模板建房（rules 复制）" "$(curl -sS "$URL/api/rooms" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"template":sys.argv[2]}))' "$TPLROOM" "e2e-tpl-$SUF")")" '"rules":"模板规则A：请听裁判指挥。"'
+check "建房带模板名回显" "$(curl -sS "$URL/api/rooms/$TPLROOM" -H "Authorization: Bearer $HTOK")" '"template":"e2e-tpl-'"$SUF"'"'
+check "房间详情回显脚本名" "$(curl -sS "$URL/api/rooms/$TPLROOM" -H "Authorization: Bearer $HTOK")" '"templateScript":"gm.py"'
+check "建房显式 rules 优先" "$(curl -sS "$URL/api/rooms" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"template":sys.argv[2],"rules":"自己的规则"}))' "e2e-tplroom2-$SUF" "e2e-tpl-$SUF")")" '"rules":"自己的规则"'
+check "未知模板建房 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"template":"ghost-x"}))' "e2e-tplroom3-$SUF")")" "404"
+curl -sS "$URL/api/room-templates/e2e-tpl-$SUF/script" -H "Authorization: Bearer $ATOK" -o "$TMP/gm.py"
+check "脚本下载内容一致" "$(base64 < "$TMP/gm.py")" "$(python3 -c 'import base64;print(base64.b64encode(b"#!/usr/bin/env python3\nprint(\"demo gm\")\n").decode())')"
+check "内置 werewolf 脚本可下载" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/room-templates/werewolf/script" -H "Authorization: Bearer $HTOK")" "200"
+check "静态脚本免登录下载" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/scripts/templates/werewolf")" "200"
+curl -sS "$URL/scripts/templates/werewolf" -o "$TMP/wf_static.zip"
+curl -sS "$URL/api/room-templates/werewolf/script" -H "Authorization: Bearer $HTOK" -o "$TMP/wf_auth.zip"
+check "静态与登录下载内容一致" "$(base64 < "$TMP/wf_static.zip")" "$(base64 < "$TMP/wf_auth.zip")"
+check "未知模板静态下载 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/scripts/templates/ghost-$SUF")" "404"
+check "模板 rules 含脚本地址" "$(curl -sS "$URL/api/room-templates/werewolf" -H "Authorization: Bearer $HTOK")" "/scripts/templates/werewolf"
+check "rules 占位符已填充" "$(curl -sS "$URL/api/room-templates/werewolf" -H "Authorization: Bearer $HTOK" | grep -c '{{BASE_URL}}')" "0"
+check "werewolf 模板建房 rules 含脚本地址" "$(curl -sS "$URL/api/rooms" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"template":"werewolf"}))' "e2e-wfroom-$SUF")")" "/scripts/templates/werewolf"
+check "非发布者 PATCH 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/room-templates/e2e-tpl-$SUF" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"title":"黑"}')" "403"
+check "发布者 PATCH 200" "$(curl -sS -X PATCH "$URL/api/room-templates/e2e-tpl-$SUF" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"description":"已更新"}')" '"description":"已更新"'
+check "系统模板 PATCH 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/room-templates/werewolf" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"title":"x"}')" "403"
+check "系统模板 DELETE 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$URL/api/room-templates/werewolf" -H "Authorization: Bearer $HTOK")" "403"
+check "非发布者 DELETE 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$URL/api/room-templates/e2e-tpl-$SUF" -H "Authorization: Bearer $ATOK")" "403"
+check "未登录拿模板列表 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/room-templates")" "401"
+check "删模板" "$(curl -sS -X DELETE "$URL/api/room-templates/e2e-tpl-$SUF" -H "Authorization: Bearer $HTOK")" '"deleted":true'
+check "删后再取 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/room-templates/e2e-tpl-$SUF" -H "Authorization: Bearer $HTOK")" "404"
+check "删后房间详情 templateScript 置空" "$(curl -sS "$URL/api/rooms/$TPLROOM" -H "Authorization: Bearer $HTOK" | grep -c '"templateScript":null')" "1"
+
 echo "== Agent 停用 =="
 curl -sS -X PATCH "$URL/api/agents/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"status":"disabled"}' >/dev/null
 check "停用后取挑战 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/agent-auth/challenge" -H 'Content-Type: application/json' \

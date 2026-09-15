@@ -120,6 +120,9 @@
       word-break: break-all; overflow: hidden;
     }
     .person .avatar { width: 24px; height: 24px; border-radius: 7px; }
+    /* 发言权红/绿框：房内有人被禁言时，在线列表头像加环——绿=当前可发言，红=被禁言（狼人杀轮换发言等场景） */
+    #people.frames-on .person[data-speak="1"] .avatar { box-shadow: 0 0 0 2px var(--ok); }
+    #people.frames-on .person[data-speak="0"] .avatar { box-shadow: 0 0 0 2px var(--danger); }
     .avatar-pick { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
     .avatar-pick-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
     #who { display: flex; align-items: center; gap: 8px; cursor: pointer; }
@@ -169,6 +172,66 @@
     }
     .mermaid-box svg { max-width: 100%; height: auto; }
     .chart-box { width: 100%; height: 320px; margin: 6px 0; }
+    /* ```svg：白底画布（生成的 SVG 多按浅色背景设计）；样式经 Shadow DOM 隔离，不影响页面 */
+    .svg-box {
+      background: #fff; border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px; margin: 6px 0; color: #0f1720;
+    }
+    /* ```a2ui：声明式 UI 面板（数据/组件分离，白名单渲染；表格沿用 body 内表格样式） */
+    .a2ui-box { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+    .a2ui-col { display: flex; flex-direction: column; gap: 8px; }
+    .a2ui-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+    .a2ui-card {
+      background: #0f1520; border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+    }
+    .a2ui-row > .a2ui-card { flex: 1 1 160px; }
+    .a2ui-card-title { font-weight: 600; font-size: 13px; }
+    .a2ui-caption { color: var(--muted); font-size: 12px; }
+    .a2ui-divider { border: 0; border-top: 1px solid var(--line); margin: 2px 0; width: 100%; }
+    .a2ui-unsupported { color: var(--muted); font-size: 11px; opacity: 0.7; }
+    .a2ui-chart { height: 240px; }
+    /* 标准样式组件：指标卡 / 进度 / 提示框 / 时间线 */
+    .a2ui-metric {
+      background: #0f1520; border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+    }
+    .a2ui-row > .a2ui-metric { flex: 1 1 120px; }
+    .a2ui-metric-label { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .a2ui-metric-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .a2ui-metric-value { font-size: 22px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+    .a2ui-metric-change { font-size: 12px; color: var(--muted); }
+    .a2ui-metric-change.up { color: var(--ok); }
+    .a2ui-metric-change.down { color: var(--danger); }
+    .a2ui-progress { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .a2ui-progress-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+    .a2ui-progress-num { color: var(--text); font-variant-numeric: tabular-nums; }
+    .a2ui-progress-track { height: 8px; border-radius: 999px; background: #1c2430; overflow: hidden; }
+    .a2ui-progress-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+    .a2ui-progress-fill.success { background: var(--ok); }
+    .a2ui-progress-fill.warning { background: #ffb86b; }
+    .a2ui-progress-fill.danger { background: var(--danger); }
+    .a2ui-callout {
+      border-left: 3px solid var(--accent); background: rgba(91, 140, 255, 0.10);
+      border-radius: 8px; padding: 8px 12px; font-size: 13px;
+    }
+    .a2ui-callout.success { border-color: var(--ok); background: rgba(62, 207, 142, 0.10); }
+    .a2ui-callout.warning { border-color: #ffb86b; background: rgba(255, 184, 107, 0.10); }
+    .a2ui-callout.danger { border-color: var(--danger); background: rgba(255, 107, 122, 0.10); }
+    .a2ui-callout-title { font-weight: 600; margin-bottom: 2px; }
+    .a2ui-callout-text { opacity: 0.92; }
+    .a2ui-timeline { display: flex; flex-direction: column; padding-left: 4px; }
+    .a2ui-tl-item { position: relative; padding: 0 0 12px 18px; border-left: 1px solid var(--line); }
+    .a2ui-tl-item:last-child { border-left-color: transparent; padding-bottom: 2px; }
+    .a2ui-tl-item::before {
+      content: ""; position: absolute; left: -4.5px; top: 4px; width: 8px; height: 8px;
+      border-radius: 50%; background: var(--accent);
+    }
+    .a2ui-tl-item.success::before { background: var(--ok); }
+    .a2ui-tl-item.pending::before { background: var(--muted); }
+    .a2ui-tl-time { font-size: 11px; color: var(--muted); }
+    .a2ui-tl-title { font-size: 13px; font-weight: 600; }
+    .a2ui-tl-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
     .chart-error { color: var(--danger); font-size: 12px; padding: 8px 0; }
     .composer-hint { flex-shrink: 0; text-align: center; font-size: 11px; color: var(--muted); opacity: 0.6; padding: 0 0 8px; }
     .bubble.streaming .body::after {
@@ -318,13 +381,35 @@
 
     @media (max-width: 900px) {
       #app { grid-template-columns: 220px 1fr; }
-      .presence { display: none; }
+      /* 平板/手机：在线成员列表改为右侧抽屉，顶栏 👥 按钮开合，点空白处收起 */
+      .presence {
+        position: fixed; top: 0; right: 0; bottom: 0; z-index: 30;
+        width: min(280px, 82vw); transform: translateX(100%); transition: transform 0.25s ease;
+        box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
+      }
+      .presence.open { transform: translateX(0); }
+      #app.presence-open .chat::before {
+        content: ""; position: fixed; inset: 0; z-index: 29;
+        background: rgba(0, 0, 0, 0.35);
+      }
+      #peopleBtn { display: inline-flex; }
     }
     /* 手机：房间列表改为抽屉，聊天区全宽 */
     @media (max-width: 640px) {
       #app { grid-template-columns: 1fr; }
       .menu-btn { display: inline-flex; }
-      .chat-top { flex-wrap: wrap; }
+      .chat-top { flex-wrap: wrap; padding: 10px 12px; gap: 6px; }
+      .chat-top h2 { font-size: 15px; }
+      .chat-top .btn.small { padding: 6px 8px; font-size: 12px; }
+      .log { padding: 12px 10px 4px; }
+      .bubble { max-width: 88%; }
+      /* 输入区压缩：正文/输入框占更多宽度；16px 字号避免 iOS 聚焦缩放 */
+      .composer { padding: 8px 10px 12px; gap: 6px; }
+      .composer textarea { min-height: 46px; max-height: 120px; font-size: 16px; padding: 12px 58px 12px 12px; }
+      .composer .btn.main { height: 46px; min-width: 46px; font-size: 15px; border-radius: 12px; }
+      #micBtn { width: 46px; font-size: 22px; }
+      #sendBtn { padding: 0 14px; }
+      .composer-hint { font-size: 10px; padding: 0 0 6px; }
       .sidebar {
         position: fixed; top: 0; left: 0; bottom: 0; z-index: 30;
         width: min(280px, 82vw); transform: translateX(-100%); transition: transform 0.25s ease;
@@ -388,12 +473,13 @@
     <main class="chat">
       <div class="chat-top">
         <button class="btn ghost small menu-btn" id="menuBtn" onclick="toggleSidebar()" title="房间列表" data-i18n-title="menuTitle">☰</button>
-        <div><h2 id="roomTitle" data-i18n="chooseRoom">选择或加入一个房间</h2><div class="hint" id="pollHint"></div></div>
+        <div><h2 id="roomTitle" data-i18n="chooseRoom">选择或加入一个房间</h2><div class="hint" id="pollHint"></div><div class="hint" id="roomTpl" style="display:none"></div></div>
         <div class="voice-toggles" id="voiceToggles" style="display:none">
           <button id="autoReadBtn" class="btn ghost small" onclick="toggleAutoRead()" title="自动朗读他人的新消息" data-i18n-title="autoReadTitle">🔊 <span data-i18n="autoRead">自动朗读</span></button>
           <button id="voiceBtn" class="btn ghost small" onclick="openVoiceSettings()" title="语音设置" data-i18n-title="voiceSettingsTitle">🎙 <span data-i18n="voiceSettings">语音设置</span></button>
         </div>
         <button id="manageBtn" class="btn ghost small hidden" onclick="openSettings()" data-i18n="manage">管理</button>
+        <button class="btn ghost small menu-btn" id="peopleBtn" onclick="togglePresence()" title="在线成员" data-i18n-title="peopleTitle">👥 <span id="peopleCount"></span></button>
       </div>
       <div class="log" id="log"><div class="empty" data-i18n="emptyLog">还没有消息。加入房间后开始聊天。</div></div>
       <div class="composer" id="composer">
@@ -428,7 +514,7 @@
           <button class="btn main" id="sendBtn" onclick="sendMessage()" data-i18n="send">发送</button>
         </div>
       </div>
-      <div class="composer-hint" data-i18n="composerHint">支持 Markdown · Mermaid 图表 · ```chart 数据图</div>
+      <div class="composer-hint" data-i18n="composerHint">支持 Markdown · Mermaid · SVG · ```chart 数据图 · ```a2ui 面板</div>
     </main>
     <aside class="presence">
       <div class="presence-top"><strong data-i18n="online">在线</strong><span class="hint" id="onlineCount" data-i18n="onlineHint">5 分钟内有活动</span></div>
@@ -495,7 +581,7 @@
       <input type="checkbox" id="editMuted" style="width:auto;margin:0" /> <span data-i18n="muteAll">全体禁言（仅房主可发言）</span>
     </label>
     <label for="editRules" data-i18n="rulesLabel">房间规则（可空）</label>
-    <textarea id="editRules" rows="3" maxlength="4000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
+    <textarea id="editRules" rows="3" maxlength="32000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
     <label for="editRoomAgent" data-i18n="roomAgentLabel">Room Agent（可空）</label>
     <select id="editRoomAgent"></select>
     <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="roomAgentHint">选中的 Agent 未来可按上面的规则执行房间治理。</p>
@@ -635,8 +721,13 @@
     </select>
     <label for="nrPassword" data-i18n="newRoomPwdLabel">加入密码（可空）</label>
     <input id="nrPassword" type="password" data-i18n-placeholder="roomPasswordPlaceholder" placeholder="房间密码（可空）" />
+    <label for="nrTemplate" data-i18n="templateLabel">模板（可选）</label>
+    <select id="nrTemplate" onchange="onTemplateChange()">
+      <option value="" data-i18n="templateNone">不使用模板</option>
+    </select>
+    <div class="hint hidden" id="nrTplHint" style="white-space:normal;margin:4px 0 0"></div>
     <label for="nrRules" data-i18n="rulesLabel">房间规则（可空）</label>
-    <textarea id="nrRules" rows="3" maxlength="4000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
+    <textarea id="nrRules" rows="3" maxlength="32000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
     <label for="nrAgent" data-i18n="roomAgentLabel">Room Agent（可空）</label>
     <select id="nrAgent"></select>
     <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="roomAgentHint">选中的 Agent 未来可按上面的规则执行房间治理。</p>
@@ -690,7 +781,9 @@
         autoRead: "自动朗读", voiceSettings: "语音设置",
         manage: "管理", emptyLog: "还没有消息。加入房间后开始聊天。",
         composerPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
-        composerHint: "支持 Markdown · Mermaid 图表 · ```chart 数据图",
+        composerHint: "支持 Markdown · Mermaid · SVG · ```chart 数据图 · ```a2ui 面板",
+        chartInvalid: "[chart 配置无效]", svgInvalid: "[svg 内容无效]", a2uiInvalid: "[a2ui 配置无效]",
+        peopleTitle: "在线成员",
         attachTitle: "发送附件", imageTitle: "发送图片", micTitle: "语音输入：说话转文字", send: "发送",
         online: "在线", onlineHint: "5 分钟内有活动", peopleEmpty: "加入房间后显示",
         manageRoom: "管理房间", roomNameLabel: "房间名称", newPwdLabel: "新加入密码（留空表示不修改）",
@@ -732,6 +825,7 @@
         noRooms: "还没有房间", noPublicRooms: "暂无公开房间", noArchives: "还没有归档",
         onlineCountFmt: "{{n}} 在线", unreadAria: "{{n}} 条未读",
         archivedReadOnly: "已归档 · 只读", archivePlaceholder: "归档房间只读", mutedPlaceholder: "你已被禁言",
+        mutedWhisperPlaceholder: "公开发言已被禁言；可用 #群组名 或 @@用户名 私聊",
         onlineFmt: "{{n}} 人 · 5 分钟内", noOnline: "暂无在线用户", meSuffix: "（我）",
         roomPwdPrompt: '房间「{{name}}」需要密码：',
         archiveHint: "只读 · 已归档，房间名可再使用", pollingHint: "长轮询 · 有新消息即刷新",
@@ -770,6 +864,13 @@
         avatarUpdated: "头像已更新", avatarResetDone: "已恢复缺省头像", avatarUploadFail: "头像上传失败",
         changeAvatarTitle: "点击更换头像",
         rulesLabel: "房间规则（可空）",
+        templateLabel: "模板（可选）",
+        templateNone: "不使用模板",
+        templateHintTpl: "{{title}}：将复制模板的房间规则；Room Agent 可从模板下载裁判脚本到本地执行。",
+        templateLoadFail: "模板列表加载失败",
+        roomTplChip: "模板：{{title}}",
+        templateScriptDownload: "下载脚本",
+        templateScriptNone: "无脚本附件",
         rulesPlaceholder: "房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）",
         roomAgentLabel: "Room Agent（可空）",
         roomAgentNone: "不设置",
@@ -838,7 +939,9 @@
         autoRead: "Auto-read", voiceSettings: "Voice settings",
         manage: "Manage", emptyLog: "No messages yet. Join a room to start chatting.",
         composerPlaceholder: "Type a message, Enter to send, Shift+Enter for a newline",
-        composerHint: "Markdown · Mermaid diagrams · ```chart data charts",
+        composerHint: "Markdown · Mermaid · SVG · ```chart charts · ```a2ui panels",
+        chartInvalid: "[invalid chart config]", svgInvalid: "[invalid svg content]", a2uiInvalid: "[invalid a2ui config]",
+        peopleTitle: "Online members",
         attachTitle: "Send attachment", imageTitle: "Send image", micTitle: "Voice input: speak to type", send: "Send",
         online: "Online", onlineHint: "active within 5 min", peopleEmpty: "Shown after joining a room",
         manageRoom: "Manage room", roomNameLabel: "Room name", newPwdLabel: "New join password (empty = keep current)",
@@ -880,6 +983,7 @@
         noRooms: "No rooms yet", noPublicRooms: "No public rooms", noArchives: "Nothing archived",
         onlineCountFmt: "{{n}} online", unreadAria: "{{n}} unread",
         archivedReadOnly: "Archived · read-only", archivePlaceholder: "Read-only archive", mutedPlaceholder: "You are muted",
+        mutedWhisperPlaceholder: "Public speech is muted; you can still whisper via #groupname or @@username",
         onlineFmt: "{{n}} online · within 5 min", noOnline: "No users online", meSuffix: " (me)",
         roomPwdPrompt: 'Room "{{name}}" requires a password:',
         archiveHint: "Read-only · archived; the room name can be reused", pollingHint: "Long-polling · refreshes on new messages",
@@ -918,6 +1022,13 @@
         avatarUpdated: "Avatar updated", avatarResetDone: "Reverted to the default avatar", avatarUploadFail: "Failed to upload avatar",
         changeAvatarTitle: "Click to change avatar",
         rulesLabel: "Room rules (optional)",
+        templateLabel: "Template (optional)",
+        templateNone: "No template",
+        templateHintTpl: "{{title}}: copies the template rules into this room; the Room Agent can download the judge script from the template and run it locally.",
+        templateLoadFail: "Failed to load templates",
+        roomTplChip: "Template: {{title}}",
+        templateScriptDownload: "Download script",
+        templateScriptNone: "No script attached",
         rulesPlaceholder: "Rules written by the owner; a Room Agent will act on them (e.g. whisper allow/deny lists, muting)",
         roomAgentLabel: "Room Agent (optional)",
         roomAgentNone: "None",
@@ -999,7 +1110,7 @@
         [/你已被禁止上传附件/, "You are not allowed to upload attachments"],
         [/只有房主可以管理该房间/, "Only the room owner can manage this room"],
         [/只有房主或 Agent 主人可以归档/, "Only the owner (or the Agent's owner) can archive this room"],
-        [/消息超过 8000 字上限/, "Message exceeds 8000 characters"],
+        [/消息超过 64000 字上限/, "Message exceeds 64000 characters"],
         [/附件超过 20MB 上限/, "Attachment exceeds 20MB"],
         [/token 无效或已过期/, "Token is invalid or expired"],
         [/缺少 token，请先登录/, "Missing token — please log in"],
@@ -1043,7 +1154,7 @@
         [/语音超过 10MB 上限/, "Voice message exceeds the 10MB limit"],
         [/语音内容为空/, "The voice message is empty"],
         [/语音必须是音频文件/, "The voice message must be an audio file (webm/ogg/mp4/mp3/wav/aac)"],
-        [/语音识别文本超过 8000 字上限/, "Voice transcript exceeds 8000 characters"],
+        [/语音识别文本超过 64000 字上限/, "Voice transcript exceeds 64000 characters"],
       ];
       for (const [re, en] of m) {
         const hit = msg.match(re);
@@ -1444,6 +1555,43 @@
       }
     }
 
+    function renderRoomTemplate(info) {
+      const el = $("roomTpl");
+      const name = info.template;
+      store.templateName = name || null;
+      if (!name) { el.style.display = "none"; el.textContent = ""; store.templateScript = null; return; }
+      store.templateScript = info.templateScript || null;
+      el.style.display = "";
+      const title = info.templateTitle || name;
+      const parts = [tf("roomTplChip", { title: escapeHtml(title) })];
+      if (info.templateScript) {
+        parts.push(`<a href="#" onclick="downloadTemplateScript(event);return false">${escapeHtml(info.templateScript)} · ${escapeHtml(t("templateScriptDownload"))} ⬇</a>`);
+      } else {
+        parts.push(escapeHtml(t("templateScriptNone")));
+      }
+      el.innerHTML = parts.join(" · ");
+    }
+
+    async function downloadTemplateScript(event) {
+      if (event) event.preventDefault();
+      const name = store.templateName;
+      if (!name) return;
+      try {
+        const res = await fetch(`/api/room-templates/${encodeURIComponent(name)}/script`, {
+          headers: { Authorization: "Bearer " + store.token },
+        });
+        if (!res.ok) throw new Error(await res.text() || res.statusText);
+        const blob = await res.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = store.templateScript || `${name}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      } catch (err) { setHint(err.message || String(err)); }
+    }
+
     function applyRoom(info) {
       store.viewingArchive = !!info.archivedAt || !!info.readOnly;
       store.archiveId = store.viewingArchive ? info.roomId : null;
@@ -1458,6 +1606,7 @@
       const title = (store.viewingArchive ? "📦 " : "") + roomBadges(info) + "# " + info.roomName
         + (store.viewingArchive ? t("archivedSuffix") : "");
       $("roomTitle").textContent = title;
+      renderRoomTemplate(info);
       $("manageBtn").classList.toggle("hidden", store.viewingArchive || (!store.isOwner && !store.canArchive));
       $("composer").classList.toggle("hidden", store.viewingArchive);
       $("ownerSettings").classList.toggle("hidden", !store.isOwner);
@@ -1472,27 +1621,34 @@
       }
       renderOnline(store.viewingArchive ? [] : (info.onlineUsers || []));
       if (store.viewingArchive) $("onlineCount").textContent = t("archivedReadOnly");
-      const blocked = store.viewingArchive || (!store.isOwner && !store.perms.canSpeak);
-      $("sendBtn").disabled = blocked;
-      $("content").disabled = blocked;
+      const muted = !store.isOwner && !store.perms.canSpeak;
+      // 被禁言不再锁死输入框：私聊（@@用户名）与群组（#群名）仍可用，公开发送由服务端拦
+      $("sendBtn").disabled = store.viewingArchive;
+      $("content").disabled = store.viewingArchive;
       $("content").placeholder = store.viewingArchive
         ? t("archivePlaceholder")
-        : (blocked ? t("mutedPlaceholder") : t("composerPlaceholder"));
+        : (muted ? t("mutedWhisperPlaceholder") : t("composerPlaceholder"));
       $("attachBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
       $("imageBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
-      $("micBtn").disabled = blocked;
+      $("micBtn").disabled = store.viewingArchive;
       renderMicUI();
     }
 
     function renderOnline(users) {
       const box = $("people");
       $("onlineCount").textContent = tf("onlineFmt", { n: users.length });
+      const pc = $("peopleCount");
+      if (pc) pc.textContent = users.length ? String(users.length) : "";
+      // 房内至少有一个人被禁言时才显示红/绿发言权框，普通聊天房保持原样
+      const framesOn = users.some((u) => u.canSpeak === false);
+      box.classList.toggle("frames-on", framesOn);
       if (!users.length) {
         box.innerHTML = '<div class="empty" style="margin-top:32px">' + t("noOnline") + "</div>";
         return;
       }
       box.innerHTML = users.map((u) => `
         <div class="person" data-name="${escapeHtml(u.username)}" data-avatar="${escapeHtml(u.avatarUrl || "")}"
+             data-speak="${u.canSpeak === false ? 0 : 1}"
              title="${u.username === store.username ? "" : escapeHtml(t("personMenuTitle"))}"><span class="dot"></span>
           <img class="avatar" data-src="${escapeHtml(u.avatarUrl || "")}" alt="" />
           <span>${escapeHtml(u.username)}${u.username === store.username ? t("meSuffix") : ""}</span>
@@ -1531,6 +1687,34 @@
       $("newRoom").showModal();
       setTimeout(() => $("nrName").focus(), 0);
       await fillRoomAgentSelect("nrAgent", "");
+      loadTemplateOptions();
+    }
+
+    let templateCache = [];
+    async function loadTemplateOptions() {
+      const sel = $("nrTemplate");
+      while (sel.options.length > 1) sel.remove(1);
+      $("nrTplHint").classList.add("hidden");
+      try {
+        const data = await api("/api/room-templates");
+        templateCache = data.templates || [];
+        for (const tpl of templateCache) {
+          const opt = document.createElement("option");
+          opt.value = tpl.name;
+          opt.textContent = tpl.title;
+          sel.appendChild(opt);
+        }
+      } catch { $("nrTplHint").classList.remove("hidden"); $("nrTplHint").textContent = t("templateLoadFail"); }
+    }
+
+    function onTemplateChange() {
+      const sel = $("nrTemplate");
+      const tpl = templateCache.find((x) => x.name === sel.value);
+      const hint = $("nrTplHint");
+      if (!tpl) { hint.classList.add("hidden"); hint.textContent = ""; return; }
+      if (tpl.rules && !$("nrRules").value.trim()) $("nrRules").value = tpl.rules;
+      hint.classList.remove("hidden");
+      hint.textContent = tf("templateHintTpl", { title: tpl.title }) + (tpl.description ? " " + tpl.description : "");
     }
 
     async function createRoom() {
@@ -1541,6 +1725,8 @@
       if (password) body.password = password;
       const rules = $("nrRules").value.trim();
       if (rules) body.rules = rules;
+      const template = $("nrTemplate").value;
+      if (template) body.template = template;
       const agent = $("nrAgent").value;
       if (agent) body.roomAgent = agent;
       try {
@@ -1572,12 +1758,29 @@
     function toggleSidebar() {
       document.querySelector(".sidebar")?.classList.toggle("open");
     }
+    function closePresence() {
+      document.querySelector(".presence")?.classList.remove("open");
+      document.getElementById("app")?.classList.remove("presence-open");
+    }
+    function togglePresence() {
+      const p = document.querySelector(".presence");
+      if (!p) return;
+      const open = p.classList.toggle("open");
+      document.getElementById("app")?.classList.toggle("presence-open", open);
+    }
     /* 手机抽屉：点击右侧空白（聊天区）自动收起 */
     document.addEventListener("click", (e) => {
       const s = document.querySelector(".sidebar");
       if (!s || !s.classList.contains("open")) return;
       if (e.target.closest(".sidebar") || e.target.closest("#menuBtn")) return;
       s.classList.remove("open");
+    });
+    /* 手机抽屉：在线成员列表同理 */
+    document.addEventListener("click", (e) => {
+      const p = document.querySelector(".presence");
+      if (!p || !p.classList.contains("open")) return;
+      if (e.target.closest(".presence") || e.target.closest("#peopleBtn")) return;
+      closePresence();
     });
 
     function draftKey(name) { return "webharness.draft." + name; }
@@ -1595,6 +1798,7 @@
 
     async function enterRoom(info) {
       document.querySelector(".sidebar")?.classList.remove("open");
+      closePresence();
       stopPoll();
       saveCurrentDraft();
       lastId = 0;
@@ -1775,49 +1979,410 @@
       return null;
     }
 
+    /* 渲染器按代码块语言分发：mermaid / svg / chart / a2ui——数据与渲染方式分离，后续可扩展（如 webxr） */
     function renderDiagrams(root) {
-      if (window.mermaid) {
-        root.querySelectorAll("pre > code.language-mermaid").forEach((code) => {
-          const pre = code.parentElement;
-          if (pre.dataset.processed) return;
-          const src = code.textContent;
-          const box = document.createElement("div");
-          box.className = "mermaid-box";
-          box.textContent = src;
-          pre.replaceWith(box);
-          pre.dataset.processed = "1";
-          mermaid.run({ nodes: [box] }).catch(() => {
-            const pre2 = document.createElement("pre");
-            const code2 = document.createElement("code");
-            code2.className = "language-mermaid";
-            code2.textContent = src;
-            pre2.appendChild(code2);
-            box.replaceWith(pre2);
-          });
+      renderMermaidBlocks(root);
+      renderSvgBlocks(root);
+      renderChartBlocks(root);
+      renderA2uiBlocks(root);
+    }
+
+    function renderMermaidBlocks(root) {
+      if (!window.mermaid) return;
+      root.querySelectorAll("pre > code.language-mermaid").forEach((code) => {
+        const pre = code.parentElement;
+        if (pre.dataset.processed) return;
+        pre.dataset.processed = "1";
+        const src = code.textContent;
+        const box = document.createElement("div");
+        box.className = "mermaid-box";
+        box.textContent = src;
+        pre.replaceWith(box);
+        mermaid.run({ nodes: [box] }).catch(() => {
+          const pre2 = document.createElement("pre");
+          const code2 = document.createElement("code");
+          code2.className = "language-mermaid";
+          code2.textContent = src;
+          pre2.appendChild(code2);
+          box.replaceWith(pre2);
         });
-      }
-      if (window.echarts) {
-        root.querySelectorAll("pre > code.language-chart").forEach((code) => {
-          const pre = code.parentElement;
-          if (pre.dataset.processed) return;
-          pre.dataset.processed = "1";
-          let spec = null;
-          try { spec = JSON.parse(code.textContent); } catch (e) { spec = null; }
-          const box = document.createElement("div");
-          const option = spec && chartOption(spec);
-          if (!option) {
-            box.className = "chart-error";
-            box.textContent = "[chart 配置无效]";
-            pre.replaceWith(box);
-            return;
-          }
-          box.className = "chart-box";
+      });
+    }
+
+    /* ```svg：受控内联 SVG。DOMPurify（svg profile）剥掉 script/事件属性，Shadow DOM 把 <style> 隔离在块内 */
+    function renderSvgBlocks(root) {
+      if (!window.DOMPurify) return;
+      root.querySelectorAll("pre > code.language-svg").forEach((code) => {
+        const pre = code.parentElement;
+        if (pre.dataset.processed) return;
+        pre.dataset.processed = "1";
+        const clean = DOMPurify.sanitize(code.textContent, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ["style"] });
+        const tpl = document.createElement("template");
+        tpl.innerHTML = clean;
+        const svg = tpl.content.querySelector("svg");
+        const box = document.createElement("div");
+        if (!svg) {
+          box.className = "chart-error";
+          box.textContent = t("svgInvalid");
           pre.replaceWith(box);
-          const chart = echarts.init(box, "dark");
+          return;
+        }
+        /* 只有 viewBox 没有宽高时铺满气泡宽度，其余靠 CSS max-width 自适应 */
+        if (!svg.getAttribute("width") && !svg.getAttribute("height") && svg.getAttribute("viewBox")) {
+          svg.style.width = "100%";
+          svg.style.height = "auto";
+        }
+        box.className = "svg-box";
+        const shadow = box.attachShadow({ mode: "open" });
+        shadow.innerHTML = "<style>svg{max-width:100%;height:auto;display:block;margin:0 auto}</style>" + tpl.innerHTML;
+        shadow.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
+        pre.replaceWith(box);
+      });
+    }
+
+    function renderChartBlocks(root) {
+      if (!window.echarts) return;
+      root.querySelectorAll("pre > code.language-chart").forEach((code) => {
+        const pre = code.parentElement;
+        if (pre.dataset.processed) return;
+        pre.dataset.processed = "1";
+        let spec = null;
+        try { spec = JSON.parse(code.textContent); } catch (e) { spec = null; }
+        const box = document.createElement("div");
+        const option = spec && chartOption(spec);
+        if (!option) {
+          box.className = "chart-error";
+          box.textContent = t("chartInvalid");
+          pre.replaceWith(box);
+          return;
+        }
+        box.className = "chart-box";
+        pre.replaceWith(box);
+        const chart = echarts.init(box, "dark");
+        chart.setOption(option);
+        chartInstances.add(chart);
+      });
+    }
+
+    /* ---------- v2.7 ```a2ui：A2UI（Agent-to-UI）最小渲染子集 ----------
+       借鉴 A2UI 协议（github.com/a2ui-project/a2ui）的思路：Agent 只发声明式 JSON
+       （数据与组件分离，Data not Code），客户端用白名单组件本地渲染。
+       同一份数据 JSON 将来可由 webxr 渲染器复用生成 3D 数据 UI。
+       支持消息：createSurface / updateComponents / updateDataModel / deleteSurface（单块内顺序应用）。
+       标准目录 v1：Column / Row / Card / Text / Divider / Table / MetricCard / Progress / Callout /
+       Timeline / PieChart / BarChart / LineChart（只增不改，配方见 /skill.md「常用样式配方」） */
+    const A2UI_TEXT_TAGS = { h1: "h1", h2: "h2", h3: "h3" };
+
+    function a2uiPointerGet(model, path) {
+      if (path === "" || path === "/") return model;
+      if (typeof path !== "string" || path[0] !== "/") return undefined;
+      let cur = model;
+      for (const raw of path.slice(1).split("/")) {
+        if (cur == null) return undefined;
+        const key = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+        cur = Array.isArray(cur) ? cur[Number(key)] : cur[key];
+      }
+      return cur;
+    }
+
+    function a2uiPointerSet(model, path, value) {
+      if (!path || path === "/") return value == null ? {} : value;
+      const parts = path.slice(1).split("/").map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
+      let cur = model;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (cur[parts[i]] == null) cur[parts[i]] = {};
+        cur = cur[parts[i]];
+      }
+      const last = parts[parts.length - 1];
+      if (value == null) delete cur[last]; else cur[last] = value;
+      return model;
+    }
+
+    /* 字面量原样返回；{"path": "/items"} 从 dataModel 取值 */
+    function a2uiValue(v, model) {
+      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.path === "string") return a2uiPointerGet(model, v.path);
+      return v;
+    }
+
+    /* 数组 / 单个 JSON 对象 / JSONL 都接受 */
+    function a2uiParseMessages(text) {
+      const t = text.trim();
+      try {
+        const j = JSON.parse(t);
+        return Array.isArray(j) ? j : [j];
+      } catch (e) {
+        const out = [];
+        for (const line of t.split("\n")) {
+          const s = line.trim();
+          if (s) out.push(JSON.parse(s));
+        }
+        if (!out.length) throw e;
+        return out;
+      }
+    }
+
+    function a2uiBuildNode(comp, ctx) {
+      if (!comp || typeof comp !== "object") return null;
+      const model = ctx.model;
+      const kids = (ids) => (Array.isArray(ids) ? ids : []).map((cid) => a2uiBuildNode(ctx.components.get(String(cid)), ctx)).filter(Boolean);
+      switch (comp.component) {
+        case "Column":
+        case "Row": {
+          const d = document.createElement("div");
+          d.className = comp.component === "Row" ? "a2ui-row" : "a2ui-col";
+          kids(comp.children).forEach((k) => d.appendChild(k));
+          return d;
+        }
+        case "Card": {
+          const d = document.createElement("div");
+          d.className = "a2ui-card";
+          if (comp.title != null) {
+            const h = document.createElement("div");
+            h.className = "a2ui-card-title";
+            h.textContent = String(a2uiValue(comp.title, model) ?? "");
+            d.appendChild(h);
+          }
+          const childIds = Array.isArray(comp.children) ? comp.children : (comp.child ? [comp.child] : []);
+          kids(childIds).forEach((k) => d.appendChild(k));
+          return d;
+        }
+        case "Text": {
+          const d = document.createElement(A2UI_TEXT_TAGS[comp.variant] || "div");
+          d.className = "a2ui-text" + (comp.variant === "caption" ? " a2ui-caption" : "");
+          d.textContent = String(a2uiValue(comp.text, model) ?? "");
+          return d;
+        }
+        case "Divider": {
+          const d = document.createElement("hr");
+          d.className = "a2ui-divider";
+          return d;
+        }
+        case "Table": {
+          const rows = a2uiValue(comp.data, model);
+          const cols = Array.isArray(comp.columns) ? comp.columns : [];
+          if (!Array.isArray(rows) || !cols.length) return null;
+          const table = document.createElement("table");
+          const thead = document.createElement("thead");
+          const trh = document.createElement("tr");
+          cols.forEach((col) => {
+            const th = document.createElement("th");
+            th.textContent = String(col.title ?? col.key ?? "");
+            trh.appendChild(th);
+          });
+          thead.appendChild(trh);
+          table.appendChild(thead);
+          const tbody = document.createElement("tbody");
+          rows.forEach((row) => {
+            const tr = document.createElement("tr");
+            cols.forEach((col) => {
+              const td = document.createElement("td");
+              const v = row && typeof row === "object" ? row[col.key] : "";
+              td.textContent = v == null ? "" : String(v);
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+          return table;
+        }
+        case "PieChart":
+        case "BarChart":
+        case "LineChart": {
+          const data = a2uiValue(comp.data, model);
+          if (!Array.isArray(data) || !data.length) return null;
+          const title = comp.title != null ? String(a2uiValue(comp.title, model) ?? "") : undefined;
+          let spec;
+          if (comp.component === "PieChart") {
+            const nk = comp.nameKey || "name";
+            const vk = comp.valueKey || "value";
+            spec = { type: "pie", title, data: data.map((d) => (d && typeof d === "object" ? { name: String(d[nk]), value: Number(d[vk]) } : { name: String(d), value: 0 })) };
+          } else {
+            const cats = a2uiValue(comp.categories, model);
+            spec = { type: comp.component === "BarChart" ? "bar" : "line", title, categories: Array.isArray(cats) ? cats : [], data: data.map((v) => Number(v)) };
+          }
+          const d = document.createElement("div");
+          d.className = "chart-box a2ui-chart";
+          ctx.pendingCharts.push({ el: d, spec });
+          return d;
+        }
+        case "MetricCard": {
+          const d = document.createElement("div");
+          d.className = "a2ui-metric";
+          const label = document.createElement("div");
+          label.className = "a2ui-metric-label";
+          label.textContent = String(a2uiValue(comp.label, model) ?? "");
+          const row = document.createElement("div");
+          row.className = "a2ui-metric-row";
+          const value = document.createElement("span");
+          value.className = "a2ui-metric-value";
+          value.textContent = String(a2uiValue(comp.value, model) ?? "");
+          row.appendChild(value);
+          if (comp.change != null) {
+            const trend = ["up", "down", "flat"].includes(comp.trend) ? comp.trend : "flat";
+            const chg = document.createElement("span");
+            chg.className = "a2ui-metric-change " + trend;
+            chg.textContent = (trend === "up" ? "▲ " : trend === "down" ? "▼ " : "") + String(a2uiValue(comp.change, model) ?? "");
+            row.appendChild(chg);
+          }
+          d.appendChild(label);
+          d.appendChild(row);
+          if (comp.caption != null) {
+            const cap = document.createElement("div");
+            cap.className = "a2ui-caption";
+            cap.textContent = String(a2uiValue(comp.caption, model) ?? "");
+            d.appendChild(cap);
+          }
+          return d;
+        }
+        case "Progress": {
+          const value = Number(a2uiValue(comp.value, model));
+          if (!Number.isFinite(value)) return null;
+          const maxRaw = Number(a2uiValue(comp.max, model));
+          const max = Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : 100;
+          const pct = Math.max(0, Math.min(100, (value / max) * 100));
+          const tone = ["success", "warning", "danger"].includes(comp.tone) ? comp.tone : "default";
+          const d = document.createElement("div");
+          d.className = "a2ui-progress";
+          const head = document.createElement("div");
+          head.className = "a2ui-progress-head";
+          const label = document.createElement("span");
+          label.textContent = comp.label != null ? String(a2uiValue(comp.label, model) ?? "") : "";
+          const num = document.createElement("span");
+          num.className = "a2ui-progress-num";
+          num.textContent = Math.round(pct) + "%";
+          head.appendChild(label);
+          head.appendChild(num);
+          const track = document.createElement("div");
+          track.className = "a2ui-progress-track";
+          const fill = document.createElement("div");
+          fill.className = "a2ui-progress-fill " + tone;
+          fill.style.width = pct + "%";
+          track.appendChild(fill);
+          d.appendChild(head);
+          d.appendChild(track);
+          return d;
+        }
+        case "Callout": {
+          const sev = ["info", "success", "warning", "danger"].includes(comp.severity) ? comp.severity : "info";
+          const d = document.createElement("div");
+          d.className = "a2ui-callout " + sev;
+          if (comp.title != null) {
+            const h = document.createElement("div");
+            h.className = "a2ui-callout-title";
+            h.textContent = String(a2uiValue(comp.title, model) ?? "");
+            d.appendChild(h);
+          }
+          const p = document.createElement("div");
+          p.className = "a2ui-callout-text";
+          p.textContent = String(a2uiValue(comp.text, model) ?? "");
+          d.appendChild(p);
+          return d;
+        }
+        case "Timeline": {
+          const items = a2uiValue(comp.items, model);
+          if (!Array.isArray(items) || !items.length) return null;
+          const d = document.createElement("div");
+          d.className = "a2ui-timeline";
+          items.forEach((it) => {
+            if (!it || typeof it !== "object") return;
+            const item = document.createElement("div");
+            item.className = "a2ui-tl-item " + (["success", "pending"].includes(it.tone) ? it.tone : "default");
+            if (it.time != null) {
+              const tm = document.createElement("div");
+              tm.className = "a2ui-tl-time";
+              tm.textContent = String(it.time);
+              item.appendChild(tm);
+            }
+            const ti = document.createElement("div");
+            ti.className = "a2ui-tl-title";
+            ti.textContent = String(it.title ?? "");
+            item.appendChild(ti);
+            if (it.description != null) {
+              const de = document.createElement("div");
+              de.className = "a2ui-tl-desc";
+              de.textContent = String(it.description);
+              item.appendChild(de);
+            }
+            d.appendChild(item);
+          });
+          return d;
+        }
+        default: {
+          /* 不在白名单里的组件：留一个可见占位，便于 Agent 自查 */
+          const d = document.createElement("span");
+          d.className = "a2ui-unsupported";
+          d.textContent = "[a2ui: " + String(comp.component || "?") + "]";
+          return d;
+        }
+      }
+    }
+
+    /* 顺序应用消息，返回按出现顺序排列的 surface 根节点 */
+    function a2uiBuildSurfaces(msgs, pendingCharts) {
+      const surfaces = new Map(); // surfaceId -> { components: Map, model: {} }
+      for (const msg of msgs) {
+        if (!msg || typeof msg !== "object") continue;
+        const cs = msg.createSurface;
+        const uc = msg.updateComponents;
+        const ud = msg.updateDataModel;
+        if (cs) {
+          const sid = String(cs.surfaceId || "main");
+          const s = { components: new Map(), model: cs.dataModel && typeof cs.dataModel === "object" ? cs.dataModel : {} };
+          (Array.isArray(cs.components) ? cs.components : []).forEach((c) => { if (c && c.id != null) s.components.set(String(c.id), c); });
+          surfaces.set(sid, s);
+        }
+        if (uc) {
+          const s = surfaces.get(String(uc.surfaceId || "main"));
+          if (s) (Array.isArray(uc.components) ? uc.components : []).forEach((c) => { if (c && c.id != null) s.components.set(String(c.id), c); });
+        }
+        if (ud) {
+          const s = surfaces.get(String(ud.surfaceId || "main"));
+          if (s) s.model = a2uiPointerSet(s.model, ud.path || "/", ud.value);
+        }
+        if (msg.deleteSurface) surfaces.delete(String(msg.deleteSurface.surfaceId || "main"));
+      }
+      const out = [];
+      for (const s of surfaces.values()) {
+        const root = s.components.get("root");
+        const ctx = { components: s.components, model: s.model, pendingCharts };
+        const node = a2uiBuildNode(root, ctx);
+        if (node) out.push(node);
+      }
+      return out;
+    }
+
+    function renderA2uiBlocks(root) {
+      root.querySelectorAll("pre > code.language-a2ui").forEach((code) => {
+        const pre = code.parentElement;
+        if (pre.dataset.processed) return;
+        pre.dataset.processed = "1";
+        const box = document.createElement("div");
+        box.className = "a2ui-box";
+        const pendingCharts = [];
+        try {
+          const surfaces = a2uiBuildSurfaces(a2uiParseMessages(code.textContent), pendingCharts);
+          if (!surfaces.length) throw new Error("no surface");
+          surfaces.forEach((el) => box.appendChild(el));
+        } catch (e) {
+          box.className = "chart-error";
+          box.textContent = t("a2uiInvalid");
+          pre.replaceWith(box);
+          return;
+        }
+        pre.replaceWith(box);
+        /* 图表要等挂到 DOM 后再 init（否则容器 0×0，同 ```chart 的坑） */
+        for (const { el, spec } of pendingCharts) {
+          const option = chartOption(spec);
+          if (!option || !window.echarts) {
+            el.className = "chart-error";
+            el.textContent = t("chartInvalid");
+            continue;
+          }
+          const chart = echarts.init(el, "dark");
           chart.setOption(option);
           chartInstances.add(chart);
-        });
-      }
+        }
+      });
     }
 
     function disposeCharts() {
@@ -1921,6 +2486,9 @@
         });
         meta.appendChild(menuBtn);
         if (m.reply) meta.after(buildQuote(m.reply));
+        /* 先挂到 DOM 再渲染正文：ECharts 初始化时要量容器尺寸，脱离文档流会得到 0×0 空白画布
+           （mermaid 是异步渲染，等挂载后再执行，所以不受影响） */
+        log.appendChild(el);
         if (m.msgType === "image") {
           body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || t("imageAlt"))}" data-src="${escapeHtml(m.downloadUrl)}" />`;
         } else if (m.msgType === "attachment") {
@@ -1958,7 +2526,6 @@
           spk.addEventListener("click", () => handleSpeakClick(m.id, displayContent(m)));
           meta.appendChild(spk);
         }
-        log.appendChild(el);
         hydrateImages(el, pin);
         /* 自动朗读：仅增量到达的他人新文本消息（初次加载 replace=true 不读） */
         if (!replace && voiceCfg.autoRead && m.username !== store.username && isText && !m.streaming && displayContent(m)) {
@@ -1979,7 +2546,8 @@
     function resizeComposer() {
       const input = $("content");
       input.style.height = "auto";
-      input.style.height = Math.min(input.scrollHeight, 160) + "px";
+      /* 空输入时回落到 CSS 最小高度：占位文案换行会把 scrollHeight 撑大，窄屏下输入框会虚高 */
+      input.style.height = input.value ? Math.min(input.scrollHeight, 160) + "px" : "";
       if (store.roomName && !store.viewingArchive) {
         localStorage.setItem(draftKey(store.roomName), input.value);
       }
@@ -2688,7 +3256,7 @@
     $("log").addEventListener("click", (e) => {
       const bubble = e.target.closest(".bubble");
       if (!bubble || !bubble.dataset.msgId) return;
-      if (e.target.closest("a, button, img, audio, .quote, .mermaid-box, .chart-box")) return;
+      if (e.target.closest("a, button, img, audio, .quote, .mermaid-box, .chart-box, .svg-box")) return;
       const sel = window.getSelection && window.getSelection();
       if (sel && String(sel).length) return;
       openMessageMenu(msgIndex.get(bubble.dataset.msgId), e.clientX, e.clientY);

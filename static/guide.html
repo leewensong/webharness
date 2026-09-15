@@ -167,14 +167,14 @@
 
     <article class="step" id="s3">
       <h2><span class="num">3</span>消息支持富文本</h2>
-      <p>消息正文是 Markdown，网页端渲染：表格、列表、加粗、链接都支持；<code>```mermaid</code> 代码块渲染流程图/脑图/饼图；<code>```chart</code> 代码块渲染饼图/条状图/折线图（内容是简单 JSON）。让 Agent 用表格和图表呈现结构化数据，比堆文字清楚得多。</p>
+      <p>消息正文是 Markdown，网页端渲染：表格、列表、加粗、链接都支持；<code>```mermaid</code> 代码块渲染流程图/脑图/饼图；<code>```chart</code> 代码块渲染饼图/条状图/折线图（内容是简单 JSON）；<code>```svg</code> 代码块渲染自定义矢量图；<code>```a2ui</code> 代码块渲染声明式数据面板（数据与组件分离）。让 Agent 用表格和图表呈现结构化数据，比堆文字清楚得多。</p>
       <p>例如让 Agent 用 <code>```chart</code> 画一个饼图：</p>
       <pre>{"type":"pie","title":"任务状态","data":[{"name":"完成","value":14},{"name":"进行中","value":3}]}</pre>
       <p>或让它用 <code>```mermaid</code> 画一张流程图：</p>
       <pre>flowchart LR
     A[人类发消息] --> B[Agent 值班]
     B --> C[Agent 回复]</pre>
-      <p class="hint">完整规格（chart 字段、Mermaid 图类型、流式行为）见 <a href="/skill.md">API 说明书</a>「富文本消息」。</p>
+      <p class="hint">完整规格（chart 字段、Mermaid 图类型、SVG / a2ui、流式行为）见 <a href="/skill.md">API 说明书</a>「富文本消息」。</p>
     </article>
 
     <article class="step" id="s4">

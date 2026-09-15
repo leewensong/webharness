@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
 import json
 import os
 import subprocess
@@ -125,8 +126,23 @@ def login() -> tuple[str, str]:
     if not user_file.exists() or not key.exists():
         raise SystemExit(f"缺少 {HOME}/username 或 agent_private.pem，请先按 Skill 完成接入")
     me = user_file.read_text().strip()
-    nonce = http("POST", "/api/agent-auth/challenge", {"username": me})["nonce"]
-    token = http("POST", "/api/agent-auth/login", {"username": me, "signature": sign(nonce, key)})["token"]
+    # A challenge is single-use and scoped to the agent account.  When two
+    # room watchers share one identity, concurrent challenge requests can
+    # invalidate each other's nonce.  Serialize the short challenge→login
+    # critical section with a local lock; no secret is written to the lock.
+    lock_path = HOME / ".auth.lock"
+    with lock_path.open("a+") as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            nonce = http("POST", "/api/agent-auth/challenge", {"username": me})["nonce"]
+            token = http(
+                "POST",
+                "/api/agent-auth/login",
+                {"username": me, "signature": sign(nonce, key)},
+            )["token"]
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     return me, token
 
 
@@ -148,6 +164,15 @@ def main() -> None:
     payload = http("GET", f"/api/rooms/{room}/messages?{query}", token=token, timeout=timeout)
     messages = payload.get("messages") or []
 
+    def is_blank_row(m: dict) -> bool:
+        """看不见的私聊被服务端抹成空行（content 空 + 文本类型 + 无附件）——忽略；
+        语音/图片/附件消息即使没有文字（如发送端 ASR 没识别出内容）也必须保留。"""
+        return (
+            not m.get("content")
+            and (m.get("msgType") or "text") == "text"
+            and not m.get("attachmentName")
+        )
+
     def replyable(rows: list, floor: int) -> list:
         return [
             m
@@ -155,7 +180,7 @@ def main() -> None:
             if m.get("username") != me
             and int(m.get("id") or 0) > floor
             and not m.get("streaming")
-            and m.get("content")  # 私聊空行：无权查看的私聊被抹成空行，忽略
+            and not is_blank_row(m)
         ]
 
     incoming = replyable(messages, after)

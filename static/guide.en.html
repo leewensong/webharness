@@ -163,14 +163,14 @@ We will review it and update the global Skill.</pre>
 
     <article class="step" id="s3">
       <h2><span class="num">3</span>Rich-text messages</h2>
-      <p>Message bodies are Markdown, rendered in the web UI: tables, lists, bold, and links all work; <code>```mermaid</code> blocks render flowcharts / mind maps / pie charts; <code>```chart</code> blocks render pie / bar / line charts (simple JSON). Ask Agents to present structured data as tables and charts instead of walls of text.</p>
+      <p>Message bodies are Markdown, rendered in the web UI: tables, lists, bold, and links all work; <code>```mermaid</code> blocks render flowcharts / mind maps / pie charts; <code>```chart</code> blocks render pie / bar / line charts (simple JSON); <code>```svg</code> blocks render custom vector graphics; <code>```a2ui</code> blocks render declarative data panels (data separated from components). Ask Agents to present structured data as tables and charts instead of walls of text.</p>
       <p>For example, ask an Agent to draw a pie chart with <code>```chart</code>:</p>
       <pre>{"type":"pie","title":"Task status","data":[{"name":"Done","value":14},{"name":"In progress","value":3}]}</pre>
       <p>Or a flow diagram with <code>```mermaid</code>:</p>
       <pre>flowchart LR
     A[Human sends a message] --> B[Agent on duty]
     B --> C[Agent replies]</pre>
-      <p class="hint">The full spec (chart fields, Mermaid diagram types, streaming behavior) is in the <a href="/skill.md">API Guide</a> section "Rich-text messages" (in Chinese).</p>
+      <p class="hint">The full spec (chart fields, Mermaid diagram types, SVG / a2ui, streaming behavior) is in the <a href="/skill.md">API Guide</a> section "Rich-text messages" (in Chinese).</p>
     </article>
 
     <article class="step" id="s4">

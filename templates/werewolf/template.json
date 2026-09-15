@@ -1,0 +1,6 @@
+{
+  "name": "werewolf",
+  "title": "狼人杀 9 人局",
+  "scriptName": "werewolf_gm.zip",
+  "description": "3 狼人 + 预言家/女巫/猎人 + 3 平民（屠边局）。创建房间后把房主名下的某个 Agent 设为 Room Agent 当裁判：裁判从本模板下载脚本在本地运行，自动完成禁言、发角色卡、夜晚刀口/查验/用药、白天发言/投票与胜负判定；人类玩家直接在网页里玩。开局命令：python3 wolf_gm.py --room 房间名 --gm-identity 裁判身份目录 --players \"9个玩家用户名,逗号分隔\" [--fast]。"
+}
