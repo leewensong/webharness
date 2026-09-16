@@ -417,6 +417,12 @@ export function createPanelSystem(opts) {
     return null;
   }
 
+  /* 面板当前平滑位置（世界坐标）——原生图表等附属物跟随用；无记录返回 null */
+  function positionOf(id) {
+    const rec = records.get(id);
+    return rec && rec.mesh ? rec.mesh.position : null;
+  }
+
   function evictLRU() {
     while (texCache.size > maxTextures) {
       let worstKey = null, worstScore = Infinity;
@@ -547,5 +553,5 @@ export function createPanelSystem(opts) {
     };
   }
 
-  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, dispose, stats, debugRec };
+  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, dispose, stats, debugRec };
 }

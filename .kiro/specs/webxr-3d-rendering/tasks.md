@@ -24,7 +24,7 @@
 
 ## Phase 2：数据驱动 3D（原生图表与 a2ui）
 
-- [ ] 4. ```chart 原生 3D
+- [x] 4. ```chart 原生 3D
   - `static/xr/xr-native.js`：bar → 12 段圆柱柱列 + 数值标签（标签用单行文字小面板）；line → THREE.Line + 关键点标签；pie → ExtrudeGeometry 扇形 + 指向浮签（名称/值/百分比）；标题/图例小面板
   - 图表数据与 2D 同源（同一 chart JSON），面板模式保留为兜底开关（调试/对比用）
   - _需求：3.1、3.2_

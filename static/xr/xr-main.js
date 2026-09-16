@@ -8,6 +8,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { isModelFilename } from "../model-preview.js";
 import { mergeXRI18n } from "./xr-i18n.js";
 import { createPanelSystem } from "./xr-panels.js";
+import { createNativeSystem } from "./xr-native.js";
 
 const R = 6;             // 消息墙半径（米）
 const PITCH = 1.26;      // 面板弧距（米）
@@ -101,6 +102,10 @@ export async function createXR(ctx) {
   });
   scene.add(panels.group);
 
+  /* 原生 3D 图表（```chart 数据驱动，需求 3.1/3.2；面板模式保留为兜底开关） */
+  const native = createNativeSystem({});
+  scene.add(native.group);
+
   /* ---------- HUD（xrRoot 内 HTML 覆盖层） ---------- */
 
   const hudStyle = document.createElement("style");
@@ -124,6 +129,7 @@ export async function createXR(ctx) {
     <div class="xr-top">
       <button type="button" class="xr-btn" data-act="exit">‹ ${t("xrExit")}</button>
       <button type="button" class="xr-btn" data-act="follow"></button>
+      <button type="button" class="xr-btn" data-act="native"></button>
       <span class="xr-title"></span>
     </div>
     <div class="xr-hint">${t("xrHintDesktop")}</div>
@@ -132,10 +138,19 @@ export async function createXR(ctx) {
   ctx.root.appendChild(hud);
   const exitBtn = hud.querySelector('[data-act="exit"]');
   const followBtn = hud.querySelector('[data-act="follow"]');
+  const nativeBtn = hud.querySelector('[data-act="native"]');
   const titleEl = hud.querySelector(".xr-title");
   const statusEl = hud.querySelector(".xr-status");
   const slider = hud.querySelector(".xr-slider");
   exitBtn.addEventListener("click", () => doExit());
+  function refreshNativeBtn() {
+    nativeBtn.textContent = native.isEnabled() ? t("xrNativeOn") : t("xrNativeOff");
+  }
+  nativeBtn.addEventListener("click", () => {
+    native.setEnabled(!native.isEnabled());
+    refreshNativeBtn();
+  });
+  refreshNativeBtn();
 
   /* ---------- 消息条带（最旧 → 最新） ---------- */
 
@@ -250,6 +265,7 @@ export async function createXR(ctx) {
       }),
       dt,
     });
+    native.sync(entries, (id) => panels.positionOf(id), dt);
   }
 
   /* ---------- 控制（桌面第一人称：拖拽环视 / 滚轮走近 / WASD / ←→ 翻历史） ---------- */
@@ -376,6 +392,9 @@ export async function createXR(ctx) {
     const rect = renderer.domElement.getBoundingClientRect();
     ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
+    /* 饼图扇区点击 → 名称/数值/百分比浮签（需求 3.2） */
+    const sector = native.pickSector(raycaster);
+    if (sector) { native.showSectorTip(sector); return; }
     const panelId = panels.raycast(raycaster);
     if (!panelId) return;
     /* 3D 模型附件面板：点击放置/收起（此类面板短、无翻段交互，不与 cycleSegment 冲突） */
@@ -563,7 +582,7 @@ export async function createXR(ctx) {
   /* 桌面调试句柄（验证/排查用；退出 3D 时移除） */
   window.__xrDebug = {
     camera,
-    stats: () => ({ ...panels.stats(), children: panels.group.children.length }),
+    stats: () => ({ ...panels.stats(), children: panels.group.children.length, native: native.stats() }),
     strip: () => strip.length,
     lastLayout: null,
     scene: () => scene.children.map((o) => o.type),
@@ -573,6 +592,7 @@ export async function createXR(ctx) {
     },
     debugRec: (id) => panels.debugRec(String(id)),
     ids: () => panels.group.children.map((m) => m.userData.panelId),
+    nativeGroup: () => native.group,
   };
 
   /* ---------- 退出与释放（需求 7.4） ---------- */
@@ -608,6 +628,7 @@ export async function createXR(ctx) {
     document.removeEventListener("visibilitychange", onVis);
     try { unsubMsg(); } catch (e) {}
     try { unsubRoom(); } catch (e) {}
+    native.dispose();
     panels.dispose();
     disposeScene();
     renderer.dispose();

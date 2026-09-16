@@ -16,6 +16,8 @@ export const XR_I18N = {
     xrPanelDegraded: "（该消息栅格化失败，已降级为文本）",
     xrModelLoading: "正在放置模型…",
     xrModelLoadFail: "模型加载失败（格式或网络问题），已跳过",
+    xrNativeOn: "原生图表：开",
+    xrNativeOff: "原生图表：关（面板模式兜底）",
   },
   en: {
     xrHintDesktop: "Drag to look around · wheel to move · W/S walk · ←/→ browse history · F follow latest · Esc back to 2D",
@@ -30,6 +32,8 @@ export const XR_I18N = {
     xrPanelDegraded: "(rasterization failed, degraded to plain text)",
     xrModelLoading: "Placing model…",
     xrModelLoadFail: "Model failed to load (format or network); skipped",
+    xrNativeOn: "Native charts: on",
+    xrNativeOff: "Native charts: off (panel fallback)",
   },
 };
 
