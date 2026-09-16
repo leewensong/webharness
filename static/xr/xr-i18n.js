@@ -23,6 +23,9 @@ export const XR_I18N = {
     xrExitVR: "退出头显",
     xrVRFail: "无法进入头显（需要 WebXR 设备与授权）",
     xrHudBack: "返回 2D",
+    xrSend: "发送",
+    xrSendPlaceholder: "发消息（复杂编辑请回 2D）…",
+    xrSendFail: "发送失败，请重试",
   },
   en: {
     xrHintDesktop: "Drag to look around · wheel to move · W/S walk · ←/→ browse history · F follow latest · Esc back to 2D",
@@ -44,6 +47,9 @@ export const XR_I18N = {
     xrExitVR: "Exit VR",
     xrVRFail: "Could not enter VR (WebXR device and permission required)",
     xrHudBack: "Back to 2D",
+    xrSend: "Send",
+    xrSendPlaceholder: "Send a message (complex editing in 2D)…",
+    xrSendFail: "Send failed, try again",
   },
 };
 

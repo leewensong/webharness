@@ -222,9 +222,15 @@ export async function createXR(ctx) {
     #xrRoot .xr-btn:hover { border-color: #5b8cff; }
     #xrRoot .xr-title { color: #8fa3bd; font-size: 13px; }
     #xrRoot .xr-hint { position: absolute; top: 18px; right: 18px; color: #7c90aa; font-size: 12px; max-width: 46vw; text-align: right; }
-    #xrRoot .xr-status { position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%); color: #8fa3bd; font-size: 13px; }
-    #xrRoot .xr-slider { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
-      width: min(560px, 70vw); pointer-events: auto; accent-color: #5b8cff; cursor: pointer; }`;
+    #xrRoot .xr-status { position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%); color: #8fa3bd; font-size: 13px; }
+    #xrRoot .xr-slider { position: absolute; bottom: 48px; left: 50%; transform: translateX(-50%);
+      width: min(560px, 70vw); pointer-events: auto; accent-color: #5b8cff; cursor: pointer; }
+    #xrRoot .xr-send { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 8px; pointer-events: auto; }
+    #xrRoot .xr-send-input { width: min(430px, 56vw); padding: 9px 14px; font-size: 13px;
+      border: 1px solid #2c3d58; border-radius: 999px; background: rgba(16, 22, 34, 0.82);
+      color: #dfe8f4; outline: none; }
+    #xrRoot .xr-send-input:focus { border-color: #5b8cff; }`;
   ctx.root.appendChild(hudStyle);
 
   const hud = document.createElement("div");
@@ -239,7 +245,11 @@ export async function createXR(ctx) {
     </div>
     <div class="xr-hint">${t("xrHintDesktop")}</div>
     <div class="xr-status"></div>
-    <input class="xr-slider" type="range" min="0" max="1000" value="1000" />`;
+    <input class="xr-slider" type="range" min="0" max="1000" value="1000" />
+    <div class="xr-send">
+      <input class="xr-send-input" type="text" maxlength="4000" />
+      <button type="button" class="xr-btn" data-act="send"></button>
+    </div>`;
   ctx.root.appendChild(hud);
   const exitBtn = hud.querySelector('[data-act="exit"]');
   const vrBtn = hud.querySelector('[data-act="vr"]');
@@ -259,6 +269,34 @@ export async function createXR(ctx) {
     if (xrInImmersive) exitImmersive();
     else enterImmersive();
   });
+
+  /* ---------- 3D 内发送（需求 6.3 最小入口）：纯文本走 2D 的 POST（ctx.sendText），
+     发出后经 msgEvents.add 自动回流 3D 墙。私聊/引用/附件等复杂编辑引导回 2D。
+     输入框内按键 stopPropagation，避免触发 WASD 移动 / Esc 退出的全局快捷键。 */
+  const sendInput = hud.querySelector(".xr-send-input");
+  const sendBtn = hud.querySelector('[data-act="send"]');
+  sendInput.placeholder = t("xrSendPlaceholder");
+  sendBtn.textContent = t("xrSend");
+  async function xrSend() {
+    const text = sendInput.value.trim();
+    if (!text) return;
+    if (!ctx.sendText) { statusEl.textContent = t("xrSendFail"); return; }
+    sendInput.value = "";
+    try {
+      await ctx.sendText(text);
+      statusEl.textContent = "";
+    } catch (err) {
+      sendInput.value = text; /* 发送失败还原输入 */
+      statusEl.textContent = err && err.message ? err.message : t("xrSendFail");
+    }
+  }
+  sendBtn.addEventListener("click", xrSend);
+  sendInput.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); xrSend(); }
+    else if (e.key === "Escape") sendInput.blur();
+  });
+  sendInput.addEventListener("keyup", (e) => e.stopPropagation());
   function refreshNativeBtn() {
     nativeBtn.textContent = native.isEnabled() ? t("xrNativeOn") : t("xrNativeOff");
   }
