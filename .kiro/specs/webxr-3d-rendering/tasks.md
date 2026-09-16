@@ -46,7 +46,7 @@
   - 加载串行化（同时在途 ≤2），VRM/普通 GLB 分支处理
   - _需求：4.1、4.2、4.5、4.6、4.7、7.2_
 
-- [ ] 8. ARKit 52 / Humanoid 能力接口
+- [x] 8. ARKit 52 / Humanoid 能力接口
   - `model3dArkit`：morph target 字典暴露（ARKit52 命名）+ ARKit→VRM 表情映射表（口型 aa→A 等）；`model3dHumanoid`：内置待机呼吸/挥手两动画（VRMA 或 glTF 动画剪辑），未勾选退化浮动
   - _需求：4.3、4.4_
 

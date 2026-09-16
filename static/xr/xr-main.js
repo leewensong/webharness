@@ -611,6 +611,7 @@ export async function createXR(ctx) {
       syncSlider();
     }
     layout(dt);
+    try { avatars.update(dt); } catch (err) {} /* 形象呼吸/浮动/表情推进（需求 4.4） */
     /* 接近已加载的最旧一端 → 向前分页回填（一次性拉全，需求 2.7） */
     const endArc = (strip.length - 1) * PITCH;
     if (strip.length && !historyEnd && hArc + WIN_OLD * R > endArc - 1.2 && (endArc < WIN_OLD * R - 1 || hArc > 0)) {
@@ -661,6 +662,7 @@ export async function createXR(ctx) {
     ids: () => panels.group.children.map((m) => m.userData.panelId),
     nativeGroup: () => native.group,
     avatarGroup: () => avatars.group,
+    avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */
   };
 
   /* ---------- 退出与释放（需求 7.4） ---------- */

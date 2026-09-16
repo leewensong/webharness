@@ -13,6 +13,45 @@ const AVATAR_H = 1.55;     // 模型归一化目标高度（米）
 const CAP_H = 1.46;        // 缺省胶囊总高
 const PLATE_W = 1.1;       // 名牌精灵宽（米）
 
+/* ---------- ARKit 52 表情接口（需求 4.3） ----------
+   驱动优先级：模型自带 ARKit 命名 morph target（部分 GLB 直接支持）→ 逐 mesh 驱动；
+   VRM 模型经 ARKit→VRM1 预设表情映射表（口型/表情常见项），未映射项静默忽略。 */
+export const ARKIT52 = [
+  "eyeBlinkLeft", "eyeBlinkRight", "eyeLookDownLeft", "eyeLookDownRight",
+  "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft", "eyeLookOutRight",
+  "eyeLookUpLeft", "eyeLookUpRight", "eyeSquintLeft", "eyeSquintRight",
+  "eyeWideLeft", "eyeWideRight", "browDownLeft", "browDownRight", "browInnerUp",
+  "browOuterUpLeft", "browOuterUpRight", "noseSneerLeft", "noseSneerRight",
+  "cheekPuff", "cheekSquintLeft", "cheekSquintRight", "jawOpen", "jawLeft",
+  "jawRight", "jawForward", "mouthLeft", "mouthRight", "mouthFrownLeft",
+  "mouthFrownRight", "mouthSmileLeft", "mouthSmileRight", "mouthDimpleLeft",
+  "mouthDimpleRight", "mouthPucker", "mouthStretchLeft", "mouthStretchRight",
+  "mouthPressLeft", "mouthPressRight", "mouthRollLower", "mouthRollUpper",
+  "mouthShrugLower", "mouthShrugUpper", "mouthClose", "mouthFunnel",
+  "mouthLowerDownLeft", "mouthLowerDownRight", "mouthUpperUpLeft",
+  "mouthUpperUpRight", "tongueOut",
+];
+const ARKIT_SET = new Set(ARKIT52);
+
+const ARKIT_TO_VRM = {
+  jawOpen: [["aa", 1]],
+  mouthFunnel: [["oh", 1]],
+  mouthPucker: [["ou", 1]],
+  mouthStretchLeft: [["ih", 1]],
+  mouthStretchRight: [["ih", 1]],
+  eyeBlinkLeft: [["blinkLeft", 1]],
+  eyeBlinkRight: [["blinkRight", 1]],
+  mouthSmileLeft: [["happy", 0.6]],
+  mouthSmileRight: [["happy", 0.6]],
+  browDownLeft: [["angry", 0.8]],
+  browDownRight: [["angry", 0.8]],
+  mouthFrownLeft: [["sad", 0.7]],
+  mouthFrownRight: [["sad", 0.7]],
+  browInnerUp: [["surprised", 0.7]],
+  eyeWideLeft: [["surprised", 0.5]],
+  eyeWideRight: [["surprised", 0.5]],
+};
+
 function hashStr(s) {
   let h = 2166136261;
   const str = String(s || "");
@@ -147,6 +186,30 @@ export function createAvatarSystem(opts) {
       rec.root.add(model);
       rec.modelApplied = true;
       rec.plate.position.y = AVATAR_H + 0.32;
+      /* 能力捕获（需求 4.3/4.4）：VRM 表情管理器 + Humanoid 待机动画骨骼；
+         非 VRM 模型扫描 ARKit 命名的 morph target 直接驱动 */
+      rec.vrm = vrm || null;
+      rec.humanoidOn = !!(vrm && vrm.humanoid && rec.humanoidFlag);
+      if (rec.humanoidOn) {
+        const hb = vrm.humanoid;
+        rec.breathBone = hb.getNormalizedBoneNode("chest") || hb.getNormalizedBoneNode("spine");
+        rec.armBone = hb.getNormalizedBoneNode("rightUpperArm");
+        rec.foreArm = hb.getNormalizedBoneNode("rightLowerArm");
+      }
+      if (!vrm) {
+        const morphs = new Map();
+        model.traverse((o) => {
+          if (o.isMesh && o.morphTargetDictionary) {
+            for (const [name, idx] of Object.entries(o.morphTargetDictionary)) {
+              if (ARKIT_SET.has(name)) {
+                if (!morphs.has(name)) morphs.set(name, []);
+                morphs.get(name).push({ mesh: o, idx });
+              }
+            }
+          }
+        });
+        rec.arkitMorphs = morphs;
+      }
     } catch (err) {
       /* 静默回退：缺省胶囊保持原位（需求 4.5） */
     } finally {
@@ -178,7 +241,12 @@ export function createAvatarSystem(opts) {
       let rec = avatars.get(u.username);
       if (!rec) {
         const root = new THREE.Group();
-        rec = { root, plate: null, capMesh: null, baseY: 0, disposed: false, modelApplied: false, isOwner: !!u.isRoomOwner };
+        rec = {
+          root, plate: null, capMesh: null, baseY: 0, disposed: false, modelApplied: false,
+          isOwner: !!u.isRoomOwner, humanoidFlag: !!u.model3dHumanoid, arkitFlag: !!u.model3dArkit,
+          vrm: null, arkitMorphs: null, humanoidOn: false, breathBone: null, armBone: null,
+          foreArm: null, waveT: null,
+        };
         buildCapsule(rec, u.username, rec.isOwner);
         rec.plate = buildNamePlate(u.username, rec.isOwner, t("xrOwnerTag"));
         rec.plate.position.y = CAP_H + 0.32;
@@ -197,6 +265,12 @@ export function createAvatarSystem(opts) {
         rec.plate.position.y = rec.modelApplied ? AVATAR_H + 0.32 : CAP_H + 0.32;
         rec.root.add(rec.plate);
       }
+      /* 能力标志可能随后台设置更新；已加载模型即时生效 */
+      if (rec.humanoidFlag !== !!u.model3dHumanoid) {
+        rec.humanoidFlag = !!u.model3dHumanoid;
+        rec.humanoidOn = !!(rec.vrm && rec.vrm.humanoid && rec.humanoidFlag);
+      }
+      rec.arkitFlag = !!u.model3dArkit;
     }
     for (const [name, rec] of Array.from(avatars)) {
       if (!seen.has(name)) { disposeRec(rec); avatars.delete(name); }
@@ -209,6 +283,61 @@ export function createAvatarSystem(opts) {
     return rec && !rec.disposed ? rec.root.position : null;
   }
 
+  /* ---------- ARKit 52 驱动接口（需求 4.3）：口型/表情统一入口。
+     VRM → 映射表转预设表情；GLB（带 ARKit morph）→ 直接驱动 morph target。
+     任务 9 语音口型、任务 10 手柄触发都走这里。 */
+  function setExpression(username, name, weight) {
+    const rec = avatars.get(String(username));
+    if (!rec || rec.disposed || !ARKIT_SET.has(String(name))) return false;
+    const w = THREE.MathUtils.clamp(Number(weight) || 0, 0, 1);
+    if (rec.vrm && rec.vrm.expressionManager) {
+      const map = ARKIT_TO_VRM[String(name)];
+      if (!map) return false;
+      for (const [preset, scale] of map) rec.vrm.expressionManager.setValue(preset, w * scale);
+      return true;
+    }
+    const list = rec.arkitMorphs && rec.arkitMorphs.get(String(name));
+    if (list) {
+      for (const { mesh, idx } of list) mesh.morphTargetInfluences[idx] = w;
+      return true;
+    }
+    return false;
+  }
+
+  /* 挥手（需求 4.4 内置动画之二）：进入 2.4s 挥手窗口，update() 逐帧推进。 */
+  function wave(username) {
+    const rec = avatars.get(String(username));
+    if (rec && !rec.disposed && rec.humanoidOn) rec.waveT = 0;
+  }
+
+  /* 逐帧：未勾选 Humanoid（或缺省胶囊）→ 轻微上下浮动；勾选的 VRM 做呼吸 +
+     挥手窗口，并推进 three-vrm 表情/弹簧骨骼。 */
+  function update(dt) {
+    const now = performance.now() / 1000;
+    for (const [, rec] of avatars) {
+      if (rec.disposed) continue;
+      if (!rec.humanoidOn) {
+        rec.root.position.y = Math.abs(Math.sin(now * 1.5)) * 0.03;
+      } else if (rec.vrm) {
+        if (rec.breathBone) rec.breathBone.rotation.x = Math.sin(now * 1.1) * 0.02; /* 待机呼吸 */
+        if (rec.waveT != null) {
+          rec.waveT += dt;
+          const k = rec.waveT;
+          if (k >= 2.4) {
+            rec.waveT = null;
+            if (rec.armBone) rec.armBone.rotation.z = 0;
+            if (rec.foreArm) rec.foreArm.rotation.z = 0;
+          } else {
+            const raise = Math.min(1, k / 0.4) * (1 - Math.max(0, (k - 1.8) / 0.6));
+            if (rec.armBone) rec.armBone.rotation.z = -2.1 * raise;
+            if (rec.foreArm) rec.foreArm.rotation.z = (-0.5 + Math.sin(k * 12) * 0.5) * raise;
+          }
+        }
+        rec.vrm.update(dt);
+      }
+    }
+  }
+
   function dispose() {
     for (const [, rec] of avatars) disposeRec(rec);
     avatars.clear();
@@ -216,5 +345,5 @@ export function createAvatarSystem(opts) {
     inFlight = 0;
   }
 
-  return { group, applyRoom, positionOf, dispose };
+  return { group, applyRoom, positionOf, setExpression, wave, update, dispose };
 }
