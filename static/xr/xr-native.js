@@ -15,6 +15,14 @@ const PIE_INNER = 0.24;        // 环内半径（与 2D ["35%","65%"] 同比例�
 const PIE_THICK = 0.14;
 const MAX_CHARTS = 40;         // 驻留上限（超出移除最旧的不可见图表）
 const FONT = "'SF Pro Text','PingFang SC','Noto Sans SC',sans-serif";
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
+const IMG_CENTER_Y = 1.15;     // 图片平面正常悬挂高度（中心，米）
+const IMG_TARGET_H = 1.15;     // 图片加载后的目标高度
+const IMG_MAX_W = 2.0;
+const IMG_MAX_H = 1.6;
+const IMG_FRAME = 0.035;       // 白框边宽
+
+export function isImageFilename(name) { return IMAGE_RE.test(String(name || "")); }
 
 const fmtNum = (v) => {
   const n = Number(v);
@@ -493,10 +501,63 @@ function buildA2uiObject(blocks, bridge) {
   return layoutCol(roots).obj;
 }
 
+/* ---------- 图片消息：白框纹理平面（需求 3.6）。本地原点在平面中心 ----------
+   （正常放置 group.position.y = IMG_CENTER_Y；聚焦时由 override 提到视点高度）。
+   纹理异步加载：/api/ 附件经 opts.fetchImage 取 blob URL；失败保持深色占位面，
+   不重试（面板模式的 2D 图片始终兜底可见）。 */
+
+function buildImageObject(msgId) {
+  const g = new THREE.Group();
+  const frame = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0xf2f4f8, roughness: 0.6 }));
+  frame.position.z = -0.008;
+  const pic = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x1a2230 }));
+  g.add(frame, pic);
+  g.userData.isImage = true;
+  g.userData.msgId = msgId;
+  g.userData.pic = pic;
+  g.userData.frame = frame;
+  return g;
+}
+
+function applyImageTexture(rec, tex) {
+  const pic = rec.obj.userData.pic, frame = rec.obj.userData.frame;
+  const iw = (tex.image && tex.image.width) || 1, ih = (tex.image && tex.image.height) || 1;
+  let w = IMG_TARGET_H * (iw / ih), h = IMG_TARGET_H;
+  if (w > IMG_MAX_W) { w = IMG_MAX_W; h = w * (ih / iw); }
+  if (h > IMG_MAX_H) { h = IMG_MAX_H; w = h * (iw / ih); }
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  if (pic.material.map && pic.material.map.dispose) pic.material.map.dispose();
+  pic.material.map = tex;
+  pic.material.color.set(0xffffff);
+  pic.material.needsUpdate = true;
+  pic.scale.set(w, h, 1);
+  frame.scale.set(w + IMG_FRAME * 2, h + IMG_FRAME * 2, 1);
+}
+
+function startImageLoad(rec, msg, fetchImage) {
+  const my = (rec.loadSeq = (rec.loadSeq || 0) + 1);
+  (async () => {
+    let src = String(msg.downloadUrl || "");
+    let objUrl = null;
+    try {
+      if (src.startsWith("/api/")) {
+        if (typeof fetchImage !== "function") return; /* 无鉴权取图通道 → 保持占位面 */
+        objUrl = src = await fetchImage(src);
+      }
+      const tex = await new THREE.TextureLoader().loadAsync(src);
+      if (rec.disposed || my !== rec.loadSeq) { tex.dispose(); return; }
+      applyImageTexture(rec, tex);
+    } catch (e) { /* 占位面兜底，不重试 */ }
+    finally { if (objUrl) URL.revokeObjectURL(objUrl); }
+  })();
+}
+
 /* ---------- 系统：生命周期 + 每帧跟随面板 ---------- */
 
 export function createNativeSystem(opts) {
   const a2ui = (opts && opts.a2ui) || null;   // { parse, value, apply } —— 2D 端 a2ui 数据语义桥
+  const fetchImage = (opts && opts.fetchImage) || null;  // url → blob URL（/api/ 附件带 token）
   const group = new THREE.Group();
   const charts = new Map();   // msgId → { obj, specKey }
   const order = [];
@@ -504,14 +565,20 @@ export function createNativeSystem(opts) {
   let enabled = true;
   let tipSprite = null;
   let tipTimer = 0;
+  let focusedId = null;       // 面板聚焦中的消息：原生物让位（需求 7.2）
+  let overridePose = null;    // 图片聚焦：{x,y,z,rotY}——聚焦平面平滑到此位姿
 
   function remove(id) {
     const rec = charts.get(id);
     if (!rec) return;
+    rec.disposed = true;
     group.remove(rec.obj);
     rec.obj.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
-      if (o.material && o.material.dispose) o.material.dispose();
+      if (o.material && o.material.dispose) {
+        if (o.material.map && o.material.map.dispose && !o.isSprite) o.material.map.dispose();
+        o.material.dispose();
+      }
       if (o.isSprite) disposeSprite(o);
     });
     charts.delete(id);
@@ -535,24 +602,31 @@ export function createNativeSystem(opts) {
       const content = e.msg && e.msg.content;
       const spec = extractChartSpec(content);
       const blocks = spec ? null : extractA2uiBlocks(content);
-      if (!spec && !blocks) continue;
+      const m = e.msg;
+      const isImg = m && (m.msgType === "image" || isImageFilename(m.attachmentName)) && m.downloadUrl;
+      if (!spec && !blocks && !isImg) continue;
       seen.add(e.id);
       let rec = charts.get(e.id);
-      const specKey = (spec ? "c" : "a") + JSON.stringify(spec || blocks);
+      const specKey = (spec ? "c" : blocks ? "a" : "i") + JSON.stringify(spec || blocks || m.downloadUrl);
       if (rec && rec.specKey !== specKey) { remove(e.id); rec = null; } /* 流式/更新后重建 */
       if (!rec && failedA2ui.get(e.id) === specKey) continue; /* a2ui 回退面板：不重复构建 */
       if (!rec) {
         let obj;
-        try { obj = spec ? buildChartObject(spec) : buildA2uiObject(blocks, a2ui); } catch (err) { obj = null; }
+        try { obj = spec ? buildChartObject(spec) : blocks ? buildA2uiObject(blocks, a2ui) : buildImageObject(e.id); } catch (err) { obj = null; }
         if (!obj) {
           if (blocks) failedA2ui.set(e.id, specKey);
           continue;
         }
         failedA2ui.delete(e.id);
         group.add(obj);
-        rec = { obj, specKey };
+        rec = { obj, specKey, baseY: obj.position.y }; /* baseY：聚焦后回归的悬挂高度 */
         charts.set(e.id, rec);
         order.push(e.id);
+        if (blocks == null && spec == null) {
+          rec.obj.position.y = IMG_CENTER_Y;
+          rec.baseY = IMG_CENTER_Y;
+          startImageLoad(rec, m, fetchImage);
+        }
         /* 驻留上限：移除最旧的不可见图表 */
         while (order.length > MAX_CHARTS) {
           const oldest = order.find((id) => !charts.get(id).obj.visible) || order[0];
@@ -560,16 +634,30 @@ export function createNativeSystem(opts) {
           remove(oldest);
         }
       }
-      const pp = panelPos(e.id);
+      if (focusedId === e.id && !overridePose) { rec.obj.visible = false; continue; } /* 面板聚焦 → 原生物让位 */
+      const focusImg = focusedId === e.id && overridePose; /* 图片聚焦：仅目标平面接管位姿（需求 3.6） */
+      const pp = focusImg ? overridePose : panelPos(e.id);
       rec.obj.visible = !!pp;
       if (pp) {
-        const hr = Math.hypot(pp.x, pp.z) || 1;
-        const k = CHART_RADIUS / hr;
-        const tx = pp.x * k, tz = pp.z * k;
         const l = 1 - Math.exp(-(dt || 0.016) * 9);
-        rec.obj.position.x += (tx - rec.obj.position.x) * l;
-        rec.obj.position.z += (tz - rec.obj.position.z) * l;
-        rec.obj.rotation.y = Math.atan2(tx, tz) + Math.PI;
+        if (focusImg) {
+          /* 图片聚焦：整位姿平滑（含高度与朝向），目标 ~40° 视角（需求 7.2） */
+          rec.obj.position.x += (pp.x - rec.obj.position.x) * l;
+          rec.obj.position.y += (pp.y - rec.obj.position.y) * l;
+          rec.obj.position.z += (pp.z - rec.obj.position.z) * l;
+          let dr = pp.rotY - rec.obj.rotation.y;
+          while (dr > Math.PI) dr -= Math.PI * 2;
+          while (dr < -Math.PI) dr += Math.PI * 2;
+          rec.obj.rotation.y += dr * l;
+        } else {
+          const hr = Math.hypot(pp.x, pp.z) || 1;
+          const k = CHART_RADIUS / hr;
+          const tx = pp.x * k, tz = pp.z * k;
+          rec.obj.position.x += (tx - rec.obj.position.x) * l;
+          rec.obj.position.z += (tz - rec.obj.position.z) * l;
+          rec.obj.position.y += ((rec.baseY || 0) - rec.obj.position.y) * l; /* 退聚焦后回到原悬挂高度 */
+          rec.obj.rotation.y = Math.atan2(tx, tz) + Math.PI;
+        }
         rec.obj.visible = true;
       }
     }
@@ -595,6 +683,19 @@ export function createNativeSystem(opts) {
     return null;
   }
 
+  /* 点击拾取：命中图片平面 → 返回 msgId（需求 3.6 指向放大） */
+  function pickImage(raycaster) {
+    if (!enabled) return null;
+    const hits = raycaster.intersectObjects(group.children, true);
+    for (const h of hits) {
+      if (!h.object.visible) continue;
+      let p = h.object;
+      while (p.parent && p.parent !== group) p = p.parent;
+      if (p.visible && p.userData && p.userData.isImage) return p.userData.msgId;
+    }
+    return null;
+  }
+
   function showSectorTip(sector) {
     hideTip();
     const s = sector.userData.pieSector;
@@ -608,5 +709,5 @@ export function createNativeSystem(opts) {
     tipTimer = setTimeout(hideTip, 5000);
   }
 
-  return { group, sync, pickSector, showSectorTip, remove, removeAll, setEnabled: (b) => { enabled = !!b; if (!enabled) hideTip(); }, isEnabled: () => enabled, stats: () => ({ charts: charts.size }), dispose: () => { hideTip(); removeAll(); } };
+  return { group, sync, pickSector, showSectorTip, pickImage, remove, removeAll, setEnabled: (b) => { enabled = !!b; if (!enabled) hideTip(); }, isEnabled: () => enabled, setFocused: (id) => { focusedId = id || null; }, setOverride: (pose) => { overridePose = pose || null; }, stats: () => ({ charts: charts.size }), dispose: () => { hideTip(); removeAll(); focusedId = null; overridePose = null; } };
 }

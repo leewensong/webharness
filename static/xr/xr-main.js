@@ -103,8 +103,41 @@ export async function createXR(ctx) {
   scene.add(panels.group);
 
   /* 原生 3D 图表（```chart 数据驱动，需求 3.1/3.2；面板模式保留为兜底开关） */
-  const native = createNativeSystem({ a2ui: ctx.a2ui });
+  const native = createNativeSystem({ a2ui: ctx.a2ui, fetchImage: fetchImageObjectURL });
   scene.add(native.group);
+
+  /* ---------- 聚焦模式（需求 7.2 / 3.6）：对准一条消息放大到舒适阅读（~40° 视角）。
+     桌面映射：面板双击进入 / 聚焦中单击返回；图片平面单击进入（指向放大）；
+     Esc 先退聚焦再退 3D。头显侧手柄射线在任务 10 接同一 API（enterFocus/exitFocus）。 */
+
+  let focus = null;   // { id, kind: "panel" | "image" } | null
+  let lastClick = { id: null, t: 0 }; /* 双击检测（面板聚焦入口） */
+
+  function enterFocus(id, kind) {
+    focus = { id: String(id), kind };
+  }
+  function exitFocus() {
+    focus = null;
+    native.setOverride(null);
+    native.setFocused(null);
+  }
+
+  function focusPose(hWorld) {
+    const dist = THREE.MathUtils.clamp((hWorld * 0.5) / Math.tan(THREE.MathUtils.degToRad(20)), 0.5, 2.2);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    fwd.y = 0;
+    if (fwd.lengthSq() < 1e-8) fwd.set(0, 0, -1);
+    fwd.normalize();
+    const x = camera.position.x + fwd.x * dist;
+    const z = camera.position.z + fwd.z * dist;
+    return { x, y: EYE_Y, z, rotY: Math.atan2(camera.position.x - x, camera.position.z - z) };
+  }
+
+  async function fetchImageObjectURL(url) {
+    const resp = await fetch(url, { headers: ctx.token ? { Authorization: "Bearer " + ctx.token() } : {} });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return URL.createObjectURL(await resp.blob());
+  }
 
   /* ---------- HUD（xrRoot 内 HTML 覆盖层） ---------- */
 
@@ -254,15 +287,21 @@ export async function createXR(ctx) {
       }
     }
     window.__xrDebug && (window.__xrDebug.lastLayout = { n, entries: entries.length, hArc, follow });
+    /* 聚焦接管：面板聚焦 → 原生物让位；图片聚焦 → 仅目标平面移到视点前放大 */
+    native.setFocused(focus ? focus.id : null);
+    native.setOverride(focus && focus.kind === "image" ? focusPose(1.15) : null);
     panels.sync({
       entries,
       keepIds: strip.map((e) => e.id),
-      place: (e, hWorld) => ({
-        x: R * Math.sin(e._phi),
-        y: FLOOR_Y + hWorld / 2,
-        z: R * Math.cos(e._phi),
-        rotY: e._phi + Math.PI,
-      }),
+      place: (e, hWorld) => {
+        if (focus && focus.kind === "panel" && e.id === focus.id) return focusPose(hWorld);
+        return {
+          x: R * Math.sin(e._phi),
+          y: FLOOR_Y + hWorld / 2,
+          z: R * Math.cos(e._phi),
+          rotY: e._phi + Math.PI,
+        };
+      },
       dt,
     });
     native.sync(entries, (id) => panels.positionOf(id), dt);
@@ -395,6 +434,13 @@ export async function createXR(ctx) {
     /* 饼图扇区点击 → 名称/数值/百分比浮签（需求 3.2） */
     const sector = native.pickSector(raycaster);
     if (sector) { native.showSectorTip(sector); return; }
+    /* 图片平面点击 → 聚焦放大 / 返回（需求 3.6 指向放大） */
+    const imgId = native.pickImage(raycaster);
+    if (imgId != null) {
+      if (focus && focus.kind === "image" && focus.id === imgId) exitFocus();
+      else enterFocus(imgId, "image");
+      return;
+    }
     const panelId = panels.raycast(raycaster);
     if (!panelId) return;
     /* 3D 模型附件面板：点击放置/收起（此类面板短、无翻段交互，不与 cycleSegment 冲突） */
@@ -403,7 +449,15 @@ export async function createXR(ctx) {
       toggleChatModel(String(panelId), m);
       return;
     }
-    panels.cycleSegment(panelId); /* 多段长文点击续读；聚焦模式 Phase 2 接入 */
+    if (focus && focus.id === panelId) { exitFocus(); return; } /* 聚焦中再按一次 → 返回（需求 7.2） */
+    const now = performance.now();
+    if (lastClick.id === panelId && now - lastClick.t < 350) {
+      lastClick = { id: null, t: 0 };
+      enterFocus(panelId, "panel"); /* 双击 → 聚焦阅读（桌面输入映射，需求 7.2） */
+      return;
+    }
+    lastClick = { id: panelId, t: now };
+    panels.cycleSegment(panelId); /* 多段长文点击续读；聚焦模式见 handlePanelClick 双击分支 */
   }
 
   renderer.domElement.addEventListener("wheel", (e) => {
@@ -422,7 +476,11 @@ export async function createXR(ctx) {
 
   function onKeyDown(e) {
     if (disposed) return;
-    if (e.key === "Escape") { doExit(); return; }
+    if (e.key === "Escape") {
+      if (focus) { exitFocus(); return; } /* 先退聚焦，再退 3D（需求 7.2） */
+      doExit();
+      return;
+    }
     const k = e.key.toLowerCase();
     if (k === "f") { toggleFollow(); return; }
     if ("wasd".includes(k) || k.startsWith("arrow")) {
@@ -621,6 +679,7 @@ export async function createXR(ctx) {
     disposed = true;
     cancelAnimationFrame(raf);
     if (resizeTimer) clearTimeout(resizeTimer);
+    focus = null;
     for (const id of Array.from(chatModels.keys())) removeChatModel(id);
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);
