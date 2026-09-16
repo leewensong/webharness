@@ -48,6 +48,9 @@ export async function createXR(ctx) {
   const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 200);
   camera.rotation.order = "YXZ";
   camera.position.set(0, EYE_Y, 2.6);
+  /* 语音空间音频监听者（需求 5.1）：挂相机随视点移动 */
+  const audioListener = new THREE.AudioListener();
+  camera.add(audioListener);
 
   /* 渐变天空（安静展厅，需求 2.x 视觉基调） */
   const skyMat = new THREE.ShaderMaterial({
@@ -113,6 +116,60 @@ export async function createXR(ctx) {
   const avatars = createAvatarSystem({ t, tf, username: ctx.username, token: ctx.token });
   scene.add(avatars.group);
   try { avatars.applyRoom(ctx.roomInfo && ctx.roomInfo()); } catch (err) {}
+
+  /* ---------- 语音空间音频（需求 5.1/5.2）：2D 播放链创建的 audio 元素经
+     setVoiceSpatial 注册的钩子路由进 PositionalAudio(HRTF)；声源绑定发送者形象
+     站位（随站位），无形象回退消息面板位。播放结束自动摘除；进 3D 时 2D 端
+     已停止播放（enterXR 侧），2D/3D 不并存出声。 */
+  const spatialVoices = new Map(); // msgId → { pa, srcNode, el, username, onEnd }
+  function dropSpatialVoice(id) {
+    const e = spatialVoices.get(String(id));
+    if (!e) return;
+    spatialVoices.delete(String(id));
+    try { e.el.removeEventListener("ended", e.onEnd); } catch (err) {}
+    try { e.srcNode.disconnect(); } catch (err) {}
+    /* MediaElementSource 路由是永久的：断开声像图后接回 destination，
+       兜底 2D 侧对同一元素的续播（平铺出声，静默失败也无碍） */
+    try { e.srcNode.connect(audioListener.context.destination); } catch (err) {}
+    try { e.pa.disconnect(); } catch (err) {}
+    if (e.pa.parent) e.pa.parent.remove(e.pa);
+    if (e.username) { try { avatars.setExpression(e.username, "jawOpen", 0); } catch (err) {} }
+  }
+  function spatialHook(audioEl, msg) {
+    if (!audioEl || !msg || msg.id == null) return;
+    const id = String(msg.id);
+    dropSpatialVoice(id); /* 同消息重复播放：先清旧路由 */
+    const ac = audioListener.context;
+    if (ac.state === "suspended") { try { ac.resume(); } catch (err) {} }
+    const pa = new THREE.PositionalAudio(audioListener);
+    pa.setRefDistance(1.6);
+    pa.setRolloffFactor(1.4);
+    const srcNode = ac.createMediaElementSource(audioEl);
+    pa.setNodeSource(srcNode); /* 元素输出 → panner(HRTF) → 监听者 */
+    scene.add(pa);
+    const entry = { pa, srcNode, el: audioEl, username: msg.username || "", onEnd: null };
+    entry.onEnd = () => dropSpatialVoice(id);
+    audioEl.addEventListener("ended", entry.onEnd);
+    spatialVoices.set(id, entry);
+    audioEl.dataset.xrSpatial = "1";
+  }
+  try { ctx.setVoiceSpatial(spatialHook); } catch (err) {}
+
+  function updateSpatialVoices() {
+    const nowS = performance.now() / 1000;
+    for (const [, e] of spatialVoices) {
+      const sp = e.username ? avatars.positionOf(e.username) : null;
+      if (sp) e.pa.position.set(sp.x, sp.y + 1.45, sp.z); /* 形象嘴部高度 */
+      else {
+        const pp = panels.positionOf(e.msgId);
+        if (pp) e.pa.position.copy(pp);
+      }
+      /* 口型 best-effort（需求 5.2）：有表情能力的形象 jawOpen 振荡，其余静默 */
+      if (e.username) {
+        try { avatars.setExpression(e.username, "jawOpen", 0.28 + 0.24 * Math.sin(nowS * 13)); } catch (err) {}
+      }
+    }
+  }
 
   /* ---------- 聚焦模式（需求 7.2 / 3.6）：对准一条消息放大到舒适阅读（~40° 视角）。
      桌面映射：面板双击进入 / 聚焦中单击返回；图片平面单击进入（指向放大）；
@@ -458,6 +515,11 @@ export async function createXR(ctx) {
       return;
     }
     if (focus && focus.id === panelId) { exitFocus(); return; } /* 聚焦中再按一次 → 返回（需求 7.2） */
+    /* 语音面板：点击复用 2D 播放链（需求 5.1，零 2D 逻辑改动），音频经 spatialHook 空间化 */
+    if (m && m.msgType === "voice") {
+      try { ctx.playVoice(m); } catch (err) {}
+      return;
+    }
     const now = performance.now();
     if (lastClick.id === panelId && now - lastClick.t < 350) {
       lastClick = { id: null, t: 0 };
@@ -612,6 +674,7 @@ export async function createXR(ctx) {
     }
     layout(dt);
     try { avatars.update(dt); } catch (err) {} /* 形象呼吸/浮动/表情推进（需求 4.4） */
+    updateSpatialVoices(); /* 语音声源跟随站位/面板位 + 口型推进（任务 9） */
     /* 接近已加载的最旧一端 → 向前分页回填（一次性拉全，需求 2.7） */
     const endArc = (strip.length - 1) * PITCH;
     if (strip.length && !historyEnd && hArc + WIN_OLD * R > endArc - 1.2 && (endArc < WIN_OLD * R - 1 || hArc > 0)) {
@@ -692,6 +755,8 @@ export async function createXR(ctx) {
     cancelAnimationFrame(raf);
     if (resizeTimer) clearTimeout(resizeTimer);
     focus = null;
+    for (const id of Array.from(spatialVoices.keys())) dropSpatialVoice(id); /* 空间音频摘除（需求 7.4） */
+    try { ctx.setVoiceSpatial(null); } catch (e) {}
     for (const id of Array.from(chatModels.keys())) removeChatModel(id);
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);

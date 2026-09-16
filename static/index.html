@@ -1319,6 +1319,7 @@
     async function enterXR() {
       if (!store.roomName || store.viewingArchive) return;
       if (!xrCaps.webgl2) { setHint(t("xrFallback")); return; }
+      stopVoicePlay(); stopSpeaking(); /* 2D/3D 音频不并存：进 3D 时停 2D 端播放（需求 5.3） */
       setHint(t("xrLoading"));
       try {
         const mod = await import("/static/xr/xr-main.js");
@@ -1335,6 +1336,16 @@
           msgEvents,
           roomEvents,
           roomInfo: () => lastRoomInfo,
+          /* 语音（任务 9）：3D 点击语音面板 → 复用 2D 播放链（含 auth/按钮态/ended），
+             音频元素经 setVoiceSpatial 注册的钩子路由为空间声源；退出 3D 时钩子置空 */
+          playVoice: (msg) => {
+            if (!msg || !msg.downloadUrl) return;
+            const m = msgIndex.get(String(msg.id));
+            const btn = (m && $("log").querySelector(`[data-msg-id="${CSS.escape(String(msg.id))}"] .voice-play`))
+              || document.createElement("button");
+            toggleVoicePlay(btn, msg.downloadUrl, m || msg);
+          },
+          setVoiceSpatial: (fn) => { voiceSpatialHook = typeof fn === "function" ? fn : null; },
           /* a2ui 数据语义桥：3D 原生小部件复用 2D 同一份解析/绑定/状态机（不抽文件） */
           a2ui: { parse: a2uiParseMessages, value: a2uiValue, apply: a2uiApplyMessages },
           buildStaged: (m) => buildBubble(m, { container: $("xrStage"), pin: false }),
@@ -2684,7 +2695,7 @@
         play.className = "voice-play";
         play.textContent = "▶";
         play.title = t("voicePlayTitle");
-        play.addEventListener("click", (e) => { e.stopPropagation(); toggleVoicePlay(play, m.downloadUrl); });
+        play.addEventListener("click", (e) => { e.stopPropagation(); toggleVoicePlay(play, m.downloadUrl, m); });
         const main = document.createElement("div");
         main.className = "voice-main";
         const txt = document.createElement("div");
@@ -3468,6 +3479,9 @@
     // ---------- v2.5：语音消息播放 ----------
     let playingAudio = null;
     let playingVoiceBtn = null;
+    /* v2.10：3D 会话注册的语音空间化钩子（audio 元素 + 消息对象）；3D 内 new Audio
+       创建后经它路由进 PositionalAudio（HRTF）。2D 独立运行时为 null，零影响。 */
+    let voiceSpatialHook = null;
     function fmtVoiceDur(ms) {
       const s = Math.round((Number(ms) || 0) / 1000);
       if (!s) return "";
@@ -3483,21 +3497,28 @@
       playingAudio = null;
       playingVoiceBtn = null;
     }
-    async function toggleVoicePlay(btn, url) {
+    async function toggleVoicePlay(btn, url, msg) {
       if (playingAudio && playingVoiceBtn === btn) {
         if (playingAudio.paused) {
-          try { await playingAudio.play(); setVoiceBtn(btn, "⏸"); } catch (e) { stopVoicePlay(); }
+          /* 元素上一轮在 3D 中挂过空间路由且已脱离（重进 3D）→ 换新元素重走 hook */
+          if (voiceSpatialHook && playingAudio.dataset.xrSpatial === "1") {
+            stopVoicePlay();
+          } else {
+            try { await playingAudio.play(); setVoiceBtn(btn, "⏸"); } catch (e) { stopVoicePlay(); }
+            return;
+          }
         } else {
           playingAudio.pause();
           setVoiceBtn(btn, "▶");
+          return;
         }
-        return;
       }
       stopVoicePlay();
       if (!url) { voiceToast(t("voicePlayFail")); return; }
       try {
         const src = await authBlobUrl(url);
         const audio = new Audio(src);
+        if (voiceSpatialHook) { try { voiceSpatialHook(audio, msg || null); } catch (e) {} }
         playingAudio = audio;
         playingVoiceBtn = btn;
         audio.addEventListener("ended", () => {

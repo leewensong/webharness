@@ -50,7 +50,7 @@
   - `model3dArkit`：morph target 字典暴露（ARKit52 命名）+ ARKit→VRM 表情映射表（口型 aa→A 等）；`model3dHumanoid`：内置待机呼吸/挥手两动画（VRMA 或 glTF 动画剪辑），未勾选退化浮动
   - _需求：4.3、4.4_
 
-- [ ] 9. 语音空间音频
+- [x] 9. 语音空间音频
   - 3D 内语音播放走 `AudioContext → MediaElementSource → PannerNode(HRTF)`，声源绑定发送者形象/消息位；进 3D 时暂停 2D 端音频；转写字幕随语音面板展示
   - _需求：5.1、5.2、5.3_
 
