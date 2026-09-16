@@ -70,8 +70,17 @@
 | a2ui Text | 3D 文本（CanvasTexture 文字条） | 目录 v1 内不含富交互，够用 |
 | a2ui Table / 未知组件 | 回退面板模式 | 需求 3.5 |
 | image | PlaneGeometry + 图片纹理，白框 | 指向放大（同聚焦模式） |
+| attachment（.glb/.gltf/.vrm） | 2D 卡片缩略图（外框取景预览）+ 3D 点击放置模型 | 见下节；预览失败降级静态图标 |
 | voice | 语音面板 + PannerNode 空间音频 | 见下 |
 | text/markdown/mermaid/svg | 面板模式 | 示意图不重建，避免语义失真 |
+
+### 3D 模型附件（2D 预览卡片与 3D 点击加载）
+
+聊天记录仍只存「数据 + 形式/意图」——附件就是附件，不新增消息类型；3D 模型文件的识别 purely 按扩展名（`.glb/.gltf/.vrm`，大小写不敏感）。
+
+- **2D 卡片（2D 管线的增量，3D 免费受益）**：`msg_type=attachment` 且扩展名命中 → 2D 渲染分支由「📎 文件名链接」升级为「3D 文件卡片」（缩略图 + 文件名 + 格式徽标）。卡片属于 2D DOM 产物，面板模式栅格化 live 气泡，因此 3D 面板自动带上同样的卡片，管线零改动。
+- **缩略图懒生成**：动态 import vendored GLTFLoader（2D 首屏依旧零 3D 依赖——出现 3D 附件消息才加载）；共享一个离屏 WebGLRenderer（256×256，用完即弃）→ `Box3.setFromObject` 取外框 → 相机按包围盒取景（center 对齐、沿对角线退到全包距离）→ 渲染一帧 → `toDataURL` 塞进 `<img>`。按 `downloadUrl` 缓存（Map），在途并发 ≤1，超时 8s 或解析失败 → 静态 3D 图标 + 文件名；外链 URL 的 CORS 失败同样降级。卡片在 2D 与 3D 里点击行为不同（见下）。
+- **3D 点击放置**：`handlePanelClick` 命中面板后，查 `msgById`——若该消息是 3D 模型附件则放置/收起模型（此类面板短、无翻段交互，不与 cycleSegment 冲突）。取回与解析与形象加载同一 helper（服务器附件需带 token fetch → blob → objectURL；外链直连）→ `Box3` 归一化到 ~1m 高 → 放在面板正前方地面空位，可走近环视；再次点击同一面板收起。场景内聊天模型上限 ≤6（超出移除最旧），退出 3D 并入全量 dispose。
 
 ### 场景布局
 
@@ -121,8 +130,8 @@
 ## 与既有代码的集成
 
 - 版本 2.10.0（仓库当前 2.9.3）；`app/main.py` version 字段照惯例递增。
-- 新文件：`static/xr/xr-main.js`（会话/场景生命周期）、`xr-panels.js`（栅格化+纹理缓存）、`xr-native.js`（chart/a2ui 原生渲染）、`xr-avatars.js`（形象加载）、`xr-i18n.js`（3D 补充键，3D 加载时合并进 `I18N`；顶栏「3D」按钮的键直接进 index.html 字典）。`static/vendor/three/` 新增 vendored three.js/插件。
-- 服务器改动：`GET /api/rooms/{n}/messages` 增加只读可选 `beforeId` 翻页参数（不传即旧行为，Agent API 语义零变）；`_validate_model3d_bytes` 可选增加对 VRM 扩展块的识别提示（现在就能收，因为魔数同为 `glTF`）；消息格式/房间/权限零改动。
+- 新文件：`static/xr/xr-main.js`（会话/场景生命周期）、`xr-panels.js`（栅格化+纹理缓存）、`xr-native.js`（chart/a2ui 原生渲染）、`xr-avatars.js`（形象加载 + 3D 模型附件的取回/解析/放置共用 helper）、`xr-i18n.js`（3D 补充键，3D 加载时合并进 `I18N`；顶栏「3D」按钮的键直接进 index.html 字典）。`static/vendor/three/` 新增 vendored three.js/插件。2D 端的 3D 文件卡片渲染加在 index.html 附件分支（缩略图生成器独立小模块，动态 import，2D 首屏零 3D 依赖）。
+- 服务器改动：`GET /api/rooms/{n}/messages` 增加只读可选 `beforeId` 翻页参数（不传即旧行为，Agent API 语义零变）；`_validate_model3d_bytes` 可选增加对 VRM 扩展块的识别提示（现在就能收，因为魔数同为 `glTF`）；**房间 3D 预留字段（需求 9）**——`rooms` 表新增 `xr_state`、`map3d` 两个透传 TEXT 列（SQLite `ALTER TABLE ADD COLUMN`，沿用既有迁移模式），API 透出但服务器不解析不赋义，本期 3D 端不消费；消息格式/房间/权限零改动。
 - 发布/备份流程不变；服务器运维信息不进公开仓库（惯例）。
 
 ## 暂缓项（明确不做，防范围膨胀）
@@ -131,7 +140,7 @@
 - **移动 AR（immersive-ar）**、WebGPU 管线、KTX2/Draco 压缩：待 VR 验证后再评估。
 - **troika/three-mesh-ui 引入**：面板模式已覆盖文本；仅当出现「高频可编辑 3D 文本」需求再评估。
 - **3D 端完整输入能力**（语音录制、私聊选择器、图表交互编辑）：一律引导回 2D。
-- **房间 3D 场景个性化**（房间模型/主题）：MVP 用统一简洁场景。
+- **房间 3D 场景个性化（房间模型/主题）的"实现"**：MVP 用统一简洁场景；数据层已预留 `map3d`/`xr_state` 字段（需求 9），但地图格式与渲染端消费另行设计，不在本规格实现。
 
 ## 风险与对策
 

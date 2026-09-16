@@ -242,6 +242,26 @@
     }
     @keyframes caret { 50% { opacity: 0; } }
     .bubble .file { color: var(--accent); text-decoration: none; }
+    /* 3D 模型附件卡片（glb/gltf/vrm）：缩略图 + 文件名 + 格式徽标；缩略图懒生成，占位先出 */
+    .bubble .model-card {
+      display: flex; gap: 10px; align-items: center; margin-top: 4px;
+      border: 1px solid var(--line); border-radius: 10px; padding: 8px;
+      background: color-mix(in srgb, var(--panel) 72%, transparent);
+      color: var(--text); text-decoration: none; max-width: 340px;
+    }
+    .bubble .model-card:hover { border-color: var(--accent); }
+    .bubble .model-thumb {
+      flex: 0 0 84px; width: 84px; height: 84px; border-radius: 8px;
+      background: #0b1018; display: flex; align-items: center; justify-content: center;
+      font-size: 30px; overflow: hidden;
+    }
+    .bubble .model-thumb img { width: 100%; height: 100%; object-fit: contain; }
+    .bubble .model-meta { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .bubble .model-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bubble .model-badge {
+      align-self: flex-start; font-size: 11px; color: var(--accent);
+      border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+    }
     .bubble .chat-img {
       display: block; max-width: 100%; max-height: 360px;
       border-radius: 10px; margin-top: 4px; cursor: zoom-in; background: #0b1018;
@@ -949,6 +969,8 @@
         xrLoading: "3D 模块加载中…",
         xrFallback: "此浏览器不支持 WebGL2，已留在 2D 视图",
         xrTruncated: "内容过长已截断，点击面板展开",
+        modelCardBadge: "3D 模型",
+        modelCardTitle: "3D 模型附件 · 点击下载；进入 3D 视图后点击该消息面板可放置到场景中",
       },
       en: {
         langSwitchTitle: "Switch to Chinese",
@@ -1116,6 +1138,8 @@
         xrLoading: "Loading 3D module…",
         xrFallback: "WebGL2 is not supported; staying in 2D",
         xrTruncated: "Long content truncated; click a panel to expand",
+        modelCardBadge: "3D model",
+        modelCardTitle: "3D model attachment · click to download; in 3D view, click the message panel to place it",
       },
     };
 
@@ -2627,7 +2651,18 @@
       if (m.msgType === "image") {
         body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || t("imageAlt"))}" data-src="${escapeHtml(m.downloadUrl)}" />`;
       } else if (m.msgType === "attachment") {
-        body.innerHTML = `<a class="file" href="${m.downloadUrl}">📎 ${escapeHtml(m.attachmentName)}</a>`;
+        /* 3D 模型附件（.glb/.gltf/.vrm，与 /static/model-preview.js 的判定保持一致）：
+           渲染「3D 文件卡片」——缩略图懒生成，占位图标先出；其余附件仍是 📎 链接 */
+        if (/\.(glb|gltf|vrm)$/i.test(String(m.attachmentName || ""))) {
+          const ext = (String(m.attachmentName).match(/\.([a-z0-9]+)$/i) || [0, ""])[1].toUpperCase();
+          body.innerHTML = `<a class="file model-card" href="${m.downloadUrl}" title="${escapeHtml(t("modelCardTitle"))}">`
+            + `<span class="model-thumb">🧊</span>`
+            + `<span class="model-meta"><span class="model-name">${escapeHtml(m.attachmentName)}</span>`
+            + `<span class="model-badge">${escapeHtml(ext)} · ${escapeHtml(t("modelCardBadge"))}</span></span></a>`;
+          hydrateModelCard(body.querySelector(".model-card"), m);
+        } else {
+          body.innerHTML = `<a class="file" href="${m.downloadUrl}">📎 ${escapeHtml(m.attachmentName)}</a>`;
+        }
       } else if (m.msgType === "voice") {
         const wrap = document.createElement("div");
         wrap.className = "voice-msg";
@@ -2663,6 +2698,27 @@
       }
       hydrateImages(el, pin);
       return el;
+    }
+
+    /* 3D 模型卡片的预览缩略图：动态 import 缩略图生成器（2D 首屏零 3D 依赖——
+       只有消息里真出现 3D 附件才会加载），按 downloadUrl 缓存；失败保持占位图标。
+       生成出的 <img src=data:> 会随面板模式管线一起被栅格化进 3D 面板。 */
+    function hydrateModelCard(cardEl, m) {
+      import("/static/model-preview.js").then((mod) => {
+        const thumb = cardEl && cardEl.querySelector(".model-thumb");
+        if (!thumb) return;
+        return mod.renderModelPreview(m.downloadUrl, {
+          getBlob: (u) => fetch(u, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} })
+            .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); }),
+        }).then((dataUrl) => {
+          if (!dataUrl || !thumb.isConnected) return;
+          thumb.textContent = "";
+          const img = document.createElement("img");
+          img.alt = m.attachmentName || "";
+          img.src = dataUrl;
+          thumb.appendChild(img);
+        });
+      }).catch(() => {});
     }
 
     function onComposerKey(event) {

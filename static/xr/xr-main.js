@@ -4,6 +4,8 @@
    任何 3D 故障不得影响 2D 正常聊天（需求 1.5、7.4）。 */
 
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { isModelFilename } from "../model-preview.js";
 import { mergeXRI18n } from "./xr-i18n.js";
 import { createPanelSystem } from "./xr-panels.js";
 
@@ -279,12 +281,110 @@ export async function createXR(ctx) {
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
+
+  /* ---------- 3D 模型附件放置（需求 3.9）：点击 3D 文件卡片所在面板 → 放置/收起模型。
+     取回/解析与形象加载同一思路（服务器附件带 token 取 blob）；场景内上限 LRU，
+     退出时随 dispose 全量释放。VRM 也由 GLTFLoader 解析（VRM 即 GLB），专属处理 Phase 3。 */
+
+  const MODEL_CAP = 6;
+  const chatModels = new Map();  // msgId → THREE.Group（已归一化）
+  const modelOrder = [];
+  const placingModels = new Set();
+  const gltfLoader = new GLTFLoader();
+
+  function disposeObjectTree(obj) {
+    obj.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const mt of mats) {
+          for (const key of ["map", "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "aoMap"]) {
+            if (mt[key] && mt[key].dispose) mt[key].dispose();
+          }
+          mt.dispose();
+        }
+      }
+    });
+  }
+
+  function removeChatModel(id) {
+    const obj = chatModels.get(id);
+    if (!obj) return false;
+    scene.remove(obj);
+    disposeObjectTree(obj);
+    chatModels.delete(id);
+    const i = modelOrder.indexOf(id);
+    if (i >= 0) modelOrder.splice(i, 1);
+    return true;
+  }
+
+  async function placeChatModel(id, msg) {
+    if (placingModels.has(id) || disposed) return;
+    placingModels.add(id);
+    statusEl.textContent = t("xrModelLoading");
+    let objUrl = null;
+    try {
+      const url = msg.downloadUrl;
+      let src = url;
+      if (url && url.startsWith("/api/")) {
+        /* 服务器附件端点要求鉴权，GLTFLoader 不带 Authorization：先取 blob 再加载 */
+        const resp = await fetch(url, { headers: ctx.token ? { Authorization: "Bearer " + ctx.token() } : {} });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        objUrl = URL.createObjectURL(await resp.blob());
+        src = objUrl;
+      }
+      const gltf = await gltfLoader.loadAsync(src);
+      const model = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+      if (!model) throw new Error("empty model");
+      /* 外框包围盒归一化到 ~1m，底边落地，放在面板正前方地面 */
+      const box = new THREE.Box3().setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const holder = new THREE.Group();
+      model.position.copy(center).negate();
+      holder.add(model);
+      holder.scale.setScalar(1.0 / maxDim);
+      const entry = strip.find((e) => e.id === id);
+      const phi = entry && entry._phi != null ? entry._phi : ANCHOR;
+      const rr = R - 1.7;
+      holder.position.set(rr * Math.sin(phi), 0, rr * Math.cos(phi));
+      holder.rotation.y = phi + Math.PI;
+      scene.add(holder);
+      while (chatModels.size >= MODEL_CAP) removeChatModel(modelOrder[0]);
+      chatModels.set(id, holder);
+      modelOrder.push(id);
+      statusEl.textContent = "";
+    } catch (err) {
+      if (!disposed) statusEl.textContent = t("xrModelLoadFail");
+    } finally {
+      if (objUrl) URL.revokeObjectURL(objUrl);
+      placingModels.delete(id);
+    }
+  }
+
+  function toggleChatModel(id, msg) {
+    if (chatModels.has(id)) {
+      removeChatModel(id);
+      statusEl.textContent = "";
+      return;
+    }
+    placeChatModel(id, msg);
+  }
+
   function handlePanelClick(e) {
     const rect = renderer.domElement.getBoundingClientRect();
     ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
     const panelId = panels.raycast(raycaster);
-    if (panelId) panels.cycleSegment(panelId); /* 多段长文点击续读；聚焦模式 Phase 2 接入 */
+    if (!panelId) return;
+    /* 3D 模型附件面板：点击放置/收起（此类面板短、无翻段交互，不与 cycleSegment 冲突） */
+    const m = ctx.msgById(panelId);
+    if (m && m.msgType === "attachment" && isModelFilename(m.attachmentName)) {
+      toggleChatModel(String(panelId), m);
+      return;
+    }
+    panels.cycleSegment(panelId); /* 多段长文点击续读；聚焦模式 Phase 2 接入 */
   }
 
   renderer.domElement.addEventListener("wheel", (e) => {
@@ -501,6 +601,7 @@ export async function createXR(ctx) {
     disposed = true;
     cancelAnimationFrame(raf);
     if (resizeTimer) clearTimeout(resizeTimer);
+    for (const id of Array.from(chatModels.keys())) removeChatModel(id);
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);
     window.removeEventListener("resize", onResize);

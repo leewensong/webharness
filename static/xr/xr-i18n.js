@@ -14,6 +14,8 @@ export const XR_I18N = {
     xrBackfillFail: "历史回填失败，可稍后滚动重试",
     xrSegmentHint: "内容较长 · 点击面板继续阅读",
     xrPanelDegraded: "（该消息栅格化失败，已降级为文本）",
+    xrModelLoading: "正在放置模型…",
+    xrModelLoadFail: "模型加载失败（格式或网络问题），已跳过",
   },
   en: {
     xrHintDesktop: "Drag to look around · wheel to move · W/S walk · ←/→ browse history · F follow latest · Esc back to 2D",
@@ -26,6 +28,8 @@ export const XR_I18N = {
     xrBackfillFail: "History backfill failed, scroll to retry",
     xrSegmentHint: "Long content · click panel to continue",
     xrPanelDegraded: "(rasterization failed, degraded to plain text)",
+    xrModelLoading: "Placing model…",
+    xrModelLoadFail: "Model failed to load (format or network); skipped",
   },
 };
 
