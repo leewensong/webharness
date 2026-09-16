@@ -421,6 +421,10 @@
         background: rgba(0, 0, 0, 0.35);
       }
     }
+
+    /* ---- v2.10 WebXR 3D 渲染端 ---- */
+    #xrStage { position: fixed; left: -10000px; top: 0; width: 720px; visibility: hidden; pointer-events: none; }
+    #xrRoot { position: fixed; inset: 0; z-index: 90; background: #070b13; }
   </style>
 </head>
 <body>
@@ -480,6 +484,7 @@
         </div>
         <button id="manageBtn" class="btn ghost small hidden" onclick="openSettings()" data-i18n="manage">管理</button>
         <button class="btn ghost small menu-btn" id="peopleBtn" onclick="togglePresence()" title="在线成员" data-i18n-title="peopleTitle">👥 <span id="peopleCount"></span></button>
+        <button id="view3dBtn" class="btn ghost small hidden" onclick="toggleXR()" data-i18n="view3d" data-i18n-title="view3dTitle">3D</button>
       </div>
       <div class="log" id="log"><div class="empty" data-i18n="emptyLog">还没有消息。加入房间后开始聊天。</div></div>
       <div class="composer" id="composer">
@@ -757,10 +762,22 @@
 
   <div id="popMenu" class="pop-menu hidden"></div>
 
+  <div id="xrStage" aria-hidden="true"></div>
+  <div id="xrRoot" class="hidden"></div>
+
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
   <script src="/static/vendor/mermaid.min.js"></script>
   <script src="/static/vendor/echarts.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/static/vendor/three/three.module.js",
+      "three/addons/": "/static/vendor/three/addons/",
+      "@pixiv/three-vrm": "/static/vendor/three-vrm/three-vrm.module.min.js"
+    }
+  }
+  </script>
   <script>
     // ---------- i18n（v2.1：中 / E 切换） ----------
     /* 私聊语法：@@用户名 开头的消息只对发送者、接收者、房主可见。
@@ -923,6 +940,15 @@
         regUsernameBad: "用户名只能用字母、数字、下划线、点、连字符（2–32 位）",
         regPasswordShort: "密码至少 4 位",
         regPwdMismatch: "两次输入的密码不一致",
+        view3d: "3D",
+        view3dTitle: "3D 房间视图",
+        xrExit: "返回 2D",
+        xrExitTitle: "退出 3D，回到网页视图",
+        xrFollow: "跟随最新",
+        xrFollowHint: "跟随最新消息；浏览旧消息时自动暂停",
+        xrLoading: "3D 模块加载中…",
+        xrFallback: "此浏览器不支持 WebGL2，已留在 2D 视图",
+        xrTruncated: "内容过长已截断，点击面板展开",
       },
       en: {
         langSwitchTitle: "Switch to Chinese",
@@ -1081,6 +1107,15 @@
         regUsernameBad: "Username may only contain letters, digits, _ . - (2–32 chars)",
         regPasswordShort: "Password must be at least 4 characters",
         regPwdMismatch: "The two passwords do not match",
+        view3d: "3D",
+        view3dTitle: "3D room view",
+        xrExit: "Back to 2D",
+        xrExitTitle: "Leave 3D and return to the web view",
+        xrFollow: "Follow latest",
+        xrFollowHint: "Follow the latest messages; pauses while browsing older ones",
+        xrLoading: "Loading 3D module…",
+        xrFallback: "WebGL2 is not supported; staying in 2D",
+        xrTruncated: "Long content truncated; click a panel to expand",
       },
     };
 
@@ -1227,6 +1262,76 @@
     const msgIndex = new Map();     // id -> 消息对象（消息菜单）
     const msgArrival = new Map();   // id -> 本地到达时间（撤回窗口 / streamIds 新鲜度）
     const MAX_CLIENT_STREAM_IDS = 50;
+
+    /* ---- v2.10 WebXR：2D→3D 桥（3D 只订阅消息/房间状态，不写共享状态；轮询仍归 2D） ---- */
+    const msgEvents = (() => {
+      const listeners = new Set();
+      return {
+        emit(type, message) { listeners.forEach((fn) => { try { fn(type, message); } catch (e) {} }); },
+        subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+      };
+    })();
+    const roomEvents = (() => {
+      const listeners = new Set();
+      return {
+        emit(info) { listeners.forEach((fn) => { try { fn(info); } catch (e) {} }); },
+        subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+      };
+    })();
+    let xrSession = null;
+    const xrCaps = { webgl2: false, vr: false };
+    (() => {
+      try { xrCaps.webgl2 = !!document.createElement("canvas").getContext("webgl2"); } catch (e) {}
+      if (navigator.xr && navigator.xr.isSessionSupported) {
+        navigator.xr.isSessionSupported("immersive-vr").then((v) => { xrCaps.vr = !!v; }).catch(() => {});
+      }
+    })();
+
+    async function toggleXR() {
+      if (xrSession) { exitXR(); return; }
+      await enterXR();
+    }
+    async function enterXR() {
+      if (!store.roomName || store.viewingArchive) return;
+      if (!xrCaps.webgl2) { setHint(t("xrFallback")); return; }
+      setHint(t("xrLoading"));
+      try {
+        const mod = await import("/static/xr/xr-main.js");
+        xrSession = await mod.createXR({
+          root: $("xrRoot"),
+          t, tf, api,
+          I18N,
+          token: () => store.token,
+          username: () => store.username,
+          avatarUrl: () => store.avatarUrl,
+          roomName: () => store.roomName,
+          msgById: (id) => msgIndex.get(String(id)),
+          isBlankRow,
+          msgEvents,
+          roomEvents,
+          buildStaged: (m) => buildBubble(m, { container: $("xrStage"), pin: false }),
+          clearStaged: () => {
+            /* staging 区气泡可能带 echarts 实例（a2ui/chart），退出 3D 时随实例一并释放 */
+            const st = $("xrStage");
+            if (window.echarts) {
+              const doomed = [];
+              chartInstances.forEach((c) => { try { if (st.contains(c.getDom())) doomed.push(c); } catch (e) {} });
+              doomed.forEach((c) => { chartInstances.delete(c); try { c.dispose(); } catch (e) {} });
+            }
+            st.textContent = "";
+          },
+          logElement: $("log"),
+          onExit: () => { xrSession = null; },
+        });
+        setHint("");
+      } catch (err) {
+        setHint(err && err.message ? err.message : t("xrFallback"));
+        xrSession = null;
+      }
+    }
+    function exitXR() {
+      if (xrSession) { const s = xrSession; xrSession = null; s.dispose(); }
+    }
 
     const $ = (id) => document.getElementById(id);
 
@@ -1465,6 +1570,8 @@
     }
 
     function logout() {
+      exitXR();
+      $("view3dBtn").classList.add("hidden");
       store.token = ""; store.username = ""; store.roomName = ""; store.isOwner = false;
       store.avatarUrl = "";
       lastId = 0;
@@ -1632,6 +1739,13 @@
       $("imageBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
       $("micBtn").disabled = store.viewingArchive;
       renderMicUI();
+      $("view3dBtn").classList.toggle("hidden", !store.roomName || store.viewingArchive);
+      roomEvents.emit({
+        roomName: info.roomName,
+        isOwner: !!info.isOwner,
+        viewingArchive: store.viewingArchive,
+        onlineUsers: info.onlineUsers || [],
+      });
     }
 
     function renderOnline(users) {
@@ -1926,6 +2040,8 @@
       saveSession();
       $("roomTitle").textContent = t("chooseRoom");
       $("manageBtn").classList.add("hidden");
+      $("view3dBtn").classList.add("hidden");
+      roomEvents.emit({ closed: true });
       $("composer").classList.remove("hidden");
       disposeCharts();
       $("log").innerHTML = `<div class="empty">${escapeHtml(message || t("roomArchived"))}</div>`;
@@ -2408,9 +2524,12 @@
     function renderMessages(messages, replace, forceScroll) {
       const log = $("log");
       const pin = forceScroll || replace || logPinnedToBottom();
-      if (replace) { disposeCharts(); log.innerHTML = ""; }
+      if (replace) {
+        disposeCharts();
+        log.innerHTML = "";
+        msgEvents.emit("reset");
+      }
       /* 服务端对不可见的私聊返回“空行”（content 为空且非流式）：推进游标但不渲染 */
-      const isBlankRow = (m) => !m.content && !m.streaming && (!m.msgType || m.msgType === "text") && !m.attachmentName;
       if (replace && !messages.some((m) => !isBlankRow(m))) {
         messages.forEach((m) => noteMessage(m));
         log.innerHTML = '<div class="empty">' + t("noMessages") + "</div>";
@@ -2426,9 +2545,10 @@
             msgIndex.delete(key);
             msgArrival.delete(key);
             removeBubble(m.id);
+            msgEvents.emit("remove", m);
             continue;
           }
-          if (isBlankRow(m)) { msgIndex.delete(key); continue; }
+          if (isBlankRow(m)) { msgIndex.delete(key); msgEvents.emit("remove", m); continue; }
           msgIndex.set(key, m);
           if (!msgArrival.has(key)) msgArrival.set(key, Date.now());
         }
@@ -2450,89 +2570,99 @@
               && (!m.msgType || m.msgType === "text") && displayContent(m)) {
             speakText(displayContent(m), true, m.id);
           }
+          msgEvents.emit("update", m);
           continue;
         }
-        const mine = m.username === store.username;
         const isText = !m.msgType || m.msgType === "text";
-        const el = document.createElement("div");
-        el.className = "bubble" + (mine ? " mine" : "") + (m.streaming ? " streaming" : "");
-        if (m.id) el.dataset.msgId = String(m.id);
-        if (m.whisper) {
-          el.className += " whisper";
-        }
-        el.innerHTML = `<div class="meta"><img class="avatar sm" data-src="${escapeHtml(m.avatarUrl || "")}" alt="" />${escapeHtml(m.username)} · ${escapeHtml(m.createdAt)}</div><div class="body"></div>`;
-        const meta = el.querySelector(".meta");
-        const body = el.querySelector(".body");
-        if (m.whisper) {
-          /* 接收者（排除自己，避免自聊时重复）；发言人已在 meta 首位 */
-          const members = Array.isArray(m.whisperTo)
-            ? m.whisperTo.filter((u) => u && u.username && u.username !== m.username)
-            : [];
-          const tag = document.createElement("span");
-          tag.className = "whisper-tag";
-          tag.textContent = members.length ? tf("whisperTagN", { n: members.length + 1 }) : t("whisperTag");
-          meta.appendChild(tag);
-          if (members.length) meta.insertBefore(buildWhisperMembers(members), tag);
-        }
-        const menuBtn = document.createElement("button");
-        menuBtn.type = "button";
-        menuBtn.className = "msg-menu-btn";
-        menuBtn.textContent = "⋯";
-        menuBtn.title = t("msgMenuTitle");
-        menuBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const r = menuBtn.getBoundingClientRect();
-          openMessageMenu(msgIndex.get(String(m.id)) || m, r.left, r.bottom + 4);
-        });
-        meta.appendChild(menuBtn);
-        if (m.reply) meta.after(buildQuote(m.reply));
-        /* 先挂到 DOM 再渲染正文：ECharts 初始化时要量容器尺寸，脱离文档流会得到 0×0 空白画布
-           （mermaid 是异步渲染，等挂载后再执行，所以不受影响） */
-        log.appendChild(el);
-        if (m.msgType === "image") {
-          body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || t("imageAlt"))}" data-src="${escapeHtml(m.downloadUrl)}" />`;
-        } else if (m.msgType === "attachment") {
-          body.innerHTML = `<a class="file" href="${m.downloadUrl}">📎 ${escapeHtml(m.attachmentName)}</a>`;
-        } else if (m.msgType === "voice") {
-          const wrap = document.createElement("div");
-          wrap.className = "voice-msg";
-          const play = document.createElement("button");
-          play.type = "button";
-          play.className = "voice-play";
-          play.textContent = "▶";
-          play.title = t("voicePlayTitle");
-          play.addEventListener("click", (e) => { e.stopPropagation(); toggleVoicePlay(play, m.downloadUrl); });
-          const main = document.createElement("div");
-          main.className = "voice-main";
-          const txt = document.createElement("div");
-          txt.className = "voice-text" + (displayContent(m) ? "" : " muted");
-          txt.textContent = displayContent(m) || t("voiceEmpty");
-          const dur = document.createElement("div");
-          dur.className = "voice-dur";
-          dur.textContent = fmtVoiceDur(m.durationMs);
-          main.appendChild(txt);
-          main.appendChild(dur);
-          wrap.appendChild(play);
-          wrap.appendChild(main);
-          body.appendChild(wrap);
-        } else {
-          renderBody(body, displayContent(m), !!m.streaming);
-          const spk = document.createElement("button");
-          spk.type = "button";
-          spk.className = "speak-btn";
-          spk.dataset.msgId = String(m.id);
-          spk.textContent = "🔊";
-          spk.title = t("speakBtnTitle");
-          spk.addEventListener("click", () => handleSpeakClick(m.id, displayContent(m)));
-          meta.appendChild(spk);
-        }
-        hydrateImages(el, pin);
+        const el = buildBubble(m, { container: log, pin });
+        msgEvents.emit("add", m);
         /* 自动朗读：仅增量到达的他人新文本消息（初次加载 replace=true 不读） */
         if (!replace && voiceCfg.autoRead && m.username !== store.username && isText && !m.streaming && displayContent(m)) {
           speakText(displayContent(m), true, m.id);
         }
       }
       if (pin) scrollLogToBottom();
+    }
+
+    /* 构造一条消息气泡并挂进 container；正文在挂载后渲染（ECharts 初始化要量容器尺寸，
+       脱离文档流会得到 0×0 空白画布；mermaid 是异步渲染等挂载后再执行，不受影响）。
+       2D 列表与 3D 面板模式的 staging 共用同一实现——2D 管线是唯一 DOM 生产者。 */
+    function buildBubble(m, opts) {
+      const container = (opts && opts.container) || $("log");
+      const pin = !!(opts && opts.pin);
+      const mine = m.username === store.username;
+      const el = document.createElement("div");
+      el.className = "bubble" + (mine ? " mine" : "") + (m.streaming ? " streaming" : "");
+      if (m.id) el.dataset.msgId = String(m.id);
+      if (m.whisper) {
+        el.className += " whisper";
+      }
+      el.innerHTML = `<div class="meta"><img class="avatar sm" data-src="${escapeHtml(m.avatarUrl || "")}" alt="" />${escapeHtml(m.username)} · ${escapeHtml(m.createdAt)}</div><div class="body"></div>`;
+      const meta = el.querySelector(".meta");
+      const body = el.querySelector(".body");
+      if (m.whisper) {
+        /* 接收者（排除自己，避免自聊时重复）；发言人已在 meta 首位 */
+        const members = Array.isArray(m.whisperTo)
+          ? m.whisperTo.filter((u) => u && u.username && u.username !== m.username)
+          : [];
+        const tag = document.createElement("span");
+        tag.className = "whisper-tag";
+        tag.textContent = members.length ? tf("whisperTagN", { n: members.length + 1 }) : t("whisperTag");
+        meta.appendChild(tag);
+        if (members.length) meta.insertBefore(buildWhisperMembers(members), tag);
+      }
+      const menuBtn = document.createElement("button");
+      menuBtn.type = "button";
+      menuBtn.className = "msg-menu-btn";
+      menuBtn.textContent = "⋯";
+      menuBtn.title = t("msgMenuTitle");
+      menuBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const r = menuBtn.getBoundingClientRect();
+        openMessageMenu(msgIndex.get(String(m.id)) || m, r.left, r.bottom + 4);
+      });
+      meta.appendChild(menuBtn);
+      if (m.reply) meta.after(buildQuote(m.reply));
+      container.appendChild(el);
+      if (m.msgType === "image") {
+        body.innerHTML = `<img class="chat-img" alt="${escapeHtml(m.attachmentName || t("imageAlt"))}" data-src="${escapeHtml(m.downloadUrl)}" />`;
+      } else if (m.msgType === "attachment") {
+        body.innerHTML = `<a class="file" href="${m.downloadUrl}">📎 ${escapeHtml(m.attachmentName)}</a>`;
+      } else if (m.msgType === "voice") {
+        const wrap = document.createElement("div");
+        wrap.className = "voice-msg";
+        const play = document.createElement("button");
+        play.type = "button";
+        play.className = "voice-play";
+        play.textContent = "▶";
+        play.title = t("voicePlayTitle");
+        play.addEventListener("click", (e) => { e.stopPropagation(); toggleVoicePlay(play, m.downloadUrl); });
+        const main = document.createElement("div");
+        main.className = "voice-main";
+        const txt = document.createElement("div");
+        txt.className = "voice-text" + (displayContent(m) ? "" : " muted");
+        txt.textContent = displayContent(m) || t("voiceEmpty");
+        const dur = document.createElement("div");
+        dur.className = "voice-dur";
+        dur.textContent = fmtVoiceDur(m.durationMs);
+        main.appendChild(txt);
+        main.appendChild(dur);
+        wrap.appendChild(play);
+        wrap.appendChild(main);
+        body.appendChild(wrap);
+      } else {
+        renderBody(body, displayContent(m), !!m.streaming);
+        const spk = document.createElement("button");
+        spk.type = "button";
+        spk.className = "speak-btn";
+        spk.dataset.msgId = String(m.id);
+        spk.textContent = "🔊";
+        spk.title = t("speakBtnTitle");
+        spk.addEventListener("click", () => handleSpeakClick(m.id, displayContent(m)));
+        meta.appendChild(spk);
+      }
+      hydrateImages(el, pin);
+      return el;
     }
 
     function onComposerKey(event) {
@@ -3066,6 +3196,10 @@
     /* 显示用正文：私聊消息剥掉开头的 @@用户名（存储与 API 响应保持原样） */
     function displayContent(m) {
       return m.whisper ? stripWhisperPrefix(m.content || "") : (m.content || "");
+    }
+    /* 服务端对不可见的私聊返回“空行”（content 为空且非流式）：推进游标但不渲染（顶层定义，3D 桥复用） */
+    function isBlankRow(m) {
+      return !m.content && !m.streaming && (!m.msgType || m.msgType === "text") && !m.attachmentName;
     }
     /* 气泡头部：发言人（已有的头像+名称）之后 → 其他接收者（头像+名称） */
     function buildWhisperMembers(members) {

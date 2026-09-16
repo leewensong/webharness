@@ -2147,6 +2147,7 @@ def _fetch_messages(
     limit: int,
     after_id: int | None,
     *,
+    before_id: int | None = None,
     skip_history: bool = False,
     stream_ids: list[int] | None = None,
     since_updated: str | None = None,
@@ -2163,6 +2164,16 @@ def _fetch_messages(
         history_filter = "AND m.id > ?"
         history_params.append(member["first_visible_msg_id"])
     if after_id is None:
+        if before_id is not None:
+            rows = conn.execute(
+                f"""
+                {MESSAGE_SELECT}
+                WHERE m.room_id = ? {history_filter} AND m.id < ?
+                ORDER BY m.id DESC LIMIT ?
+                """,
+                (room["id"], *history_params, before_id, limit),
+            ).fetchall()
+            return _visible_rows(reversed(rows), room, user_id)
         rows = conn.execute(
             f"""
             {MESSAGE_SELECT}
@@ -2201,17 +2212,19 @@ async def recent_messages(
     user: CurrentUser,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     after_id: Annotated[int | None, Query(alias="afterId", ge=0)] = None,
+    before_id: Annotated[int | None, Query(alias="beforeId", ge=0)] = None,
     wait: Annotated[int, Query(ge=0, le=MAX_LONG_POLL_SECONDS)] = 0,
     stream_ids: Annotated[str | None, Query(alias="streamIds")] = None,
     since_updated_at: Annotated[str | None, Query(alias="sinceUpdatedAt", max_length=40)] = None,
 ):
-    """读消息。`afterId` 增量；`wait` 长轮询；`streamIds`+`sinceUpdatedAt` 用来拉取仍在流式更新的旧消息。"""
+    """读消息。`afterId` 增量；`beforeId` 向前翻页（仅当不带 afterId 时生效，供 3D 渲染端回填历史）；`wait` 长轮询；`streamIds`+`sinceUpdatedAt` 用来拉取仍在流式更新的旧消息。"""
     wanted_ids = _parse_stream_ids(stream_ids)
     since = (since_updated_at or "").strip() or None
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
         rows = _fetch_messages(
             conn, room, member, user["id"], limit, after_id,
+            before_id=before_id,
             stream_ids=wanted_ids, since_updated=since,
         )
         _mark_room_read(conn, room["id"], user["id"])
