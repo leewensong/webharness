@@ -1346,6 +1346,7 @@
             toggleVoicePlay(btn, msg.downloadUrl, m || msg);
           },
           setVoiceSpatial: (fn) => { voiceSpatialHook = typeof fn === "function" ? fn : null; },
+          immersible: () => xrCaps.vr, /* WebXR 沉浸式能力（需求 1.2，3D HUD 按钮显隐） */
           /* a2ui 数据语义桥：3D 原生小部件复用 2D 同一份解析/绑定/状态机（不抽文件） */
           a2ui: { parse: a2uiParseMessages, value: a2uiValue, apply: a2uiApplyMessages },
           buildStaged: (m) => buildBubble(m, { container: $("xrStage"), pin: false }),

@@ -41,6 +41,7 @@ export async function createXR(ctx) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.domElement.style.cssText = "position:absolute;inset:0;display:block;";
+  renderer.xr.enabled = true; /* 沉浸式会话接入（任务 10）；无会话时为普通桌面渲染 */
   ctx.root.classList.remove("hidden");
   ctx.root.appendChild(renderer.domElement);
 
@@ -48,6 +49,11 @@ export async function createXR(ctx) {
   const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 200);
   camera.rotation.order = "YXZ";
   camera.position.set(0, EYE_Y, 2.6);
+  /* rig：用户在场景中的「载体」。桌面模式 rig 恒等（相机行为与此前完全一致）；
+     沉浸式下 XR 位姿写入 camera（相对 rig），传送/平移/转向作用于 rig。 */
+  const rig = new THREE.Group();
+  rig.add(camera);
+  scene.add(rig);
   /* 语音空间音频监听者（需求 5.1）：挂相机随视点移动 */
   const audioListener = new THREE.AudioListener();
   camera.add(audioListener);
@@ -226,6 +232,7 @@ export async function createXR(ctx) {
   hud.innerHTML = `
     <div class="xr-top">
       <button type="button" class="xr-btn" data-act="exit">‹ ${t("xrExit")}</button>
+      <button type="button" class="xr-btn" data-act="vr"></button>
       <button type="button" class="xr-btn" data-act="follow"></button>
       <button type="button" class="xr-btn" data-act="native"></button>
       <span class="xr-title"></span>
@@ -235,12 +242,23 @@ export async function createXR(ctx) {
     <input class="xr-slider" type="range" min="0" max="1000" value="1000" />`;
   ctx.root.appendChild(hud);
   const exitBtn = hud.querySelector('[data-act="exit"]');
+  const vrBtn = hud.querySelector('[data-act="vr"]');
   const followBtn = hud.querySelector('[data-act="follow"]');
   const nativeBtn = hud.querySelector('[data-act="native"]');
   const titleEl = hud.querySelector(".xr-title");
   const statusEl = hud.querySelector(".xr-status");
   const slider = hud.querySelector(".xr-slider");
   exitBtn.addEventListener("click", () => doExit());
+  /* 沉浸式入口（需求 1.2）：仅当浏览器报告支持 immersive-vr 时显示 */
+  function refreshVRBtn() {
+    if (!ctx.immersible || !ctx.immersible()) { vrBtn.style.display = "none"; return; }
+    vrBtn.style.display = "";
+    vrBtn.textContent = xrInImmersive ? t("xrExitVR") : t("xrEnterVR");
+  }
+  vrBtn.addEventListener("click", () => {
+    if (xrInImmersive) exitImmersive();
+    else enterImmersive();
+  });
   function refreshNativeBtn() {
     nativeBtn.textContent = native.isEnabled() ? t("xrNativeOn") : t("xrNativeOff");
   }
@@ -492,21 +510,18 @@ export async function createXR(ctx) {
     placeChatModel(id, msg);
   }
 
-  function handlePanelClick(e) {
-    const rect = renderer.domElement.getBoundingClientRect();
-    ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-    raycaster.setFromCamera(ndc, camera);
+  function handlePick(pickRay) {
     /* 饼图扇区点击 → 名称/数值/百分比浮签（需求 3.2） */
-    const sector = native.pickSector(raycaster);
+    const sector = native.pickSector(pickRay);
     if (sector) { native.showSectorTip(sector); return; }
     /* 图片平面点击 → 聚焦放大 / 返回（需求 3.6 指向放大） */
-    const imgId = native.pickImage(raycaster);
+    const imgId = native.pickImage(pickRay);
     if (imgId != null) {
       if (focus && focus.kind === "image" && focus.id === imgId) exitFocus();
       else enterFocus(imgId, "image");
       return;
     }
-    const panelId = panels.raycast(raycaster);
+    const panelId = panels.raycast(pickRay);
     if (!panelId) return;
     /* 3D 模型附件面板：点击放置/收起（此类面板短、无翻段交互，不与 cycleSegment 冲突） */
     const m = ctx.msgById(panelId);
@@ -528,6 +543,13 @@ export async function createXR(ctx) {
     }
     lastClick = { id: panelId, t: now };
     panels.cycleSegment(panelId); /* 多段长文点击续读；聚焦模式见 handlePanelClick 双击分支 */
+  }
+
+  function handlePanelClick(e) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    handlePick(raycaster);
   }
 
   renderer.domElement.addEventListener("wheel", (e) => {
@@ -585,13 +607,13 @@ export async function createXR(ctx) {
 
   function refreshFollowBtn() {
     followBtn.textContent = follow ? t("xrFollowOn") : t("xrFollowOff");
+    refreshHud3D(); /* 3D HUD 同步（非沉浸式时 no-op） */
   }
   function toggleFollow() {
     follow = !follow;
     refreshFollowBtn();
   }
   followBtn.addEventListener("click", toggleFollow);
-  refreshFollowBtn();
 
   function syncSlider() {
     if (sliderActive) return;
@@ -612,6 +634,167 @@ export async function createXR(ctx) {
       refreshFollowBtn();
     }
   });
+
+  /* ---------- WebXR 沉浸式会话（任务 10）：renderer.xr + 手柄射线拾取 + 摇杆平移/转向。
+     输入抽象层三动作：确认（trigger→射线拾取，桌面=鼠标点击）、移动（左摇杆平移，
+     桌面=滚轮/WASD）、旋转（右摇杆转向，桌面=拖拽环视）。无手柄时头向环视天然可用。
+     3D HUD 两按钮（返回 2D / 跟随开关）挂在用户前方，手柄射线可点；桌面 DOM HUD
+     在头显内不可见。真机行为留任务 12 用户抽查。 */
+
+  let xrInImmersive = false;
+  const _xrV1 = new THREE.Vector3();
+  const _xrV2 = new THREE.Vector3();
+  const _xrQ1 = new THREE.Quaternion();
+  const xrRay = new THREE.Raycaster();
+
+  const hud3D = new THREE.Group();
+  hud3D.visible = false;
+  scene.add(hud3D);
+  function drawHudButton(mesh, label) {
+    const c = mesh.userData.hudCanvas;
+    const g = c.g;
+    g.clearRect(0, 0, 512, 128);
+    g.beginPath();
+    g.roundRect(8, 16, 496, 96, 48);
+    g.fillStyle = "rgba(16,22,34,0.88)";
+    g.fill();
+    g.lineWidth = 4;
+    g.strokeStyle = "rgba(91,140,255,0.9)";
+    g.stroke();
+    g.fillStyle = "#dfe8f4";
+    g.font = "bold 50px system-ui, sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(label, 256, 68);
+    mesh.material.map.needsUpdate = true;
+  }
+  function buildHudButton(label) {
+    const c = document.createElement("canvas");
+    c.width = 512;
+    c.height = 128;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.46, 0.115),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false })
+    );
+    mesh.material.map.colorSpace = THREE.SRGBColorSpace;
+    mesh.userData.hudCanvas = { c, g: c.getContext("2d") };
+    drawHudButton(mesh, label);
+    return mesh;
+  }
+  const hudBackBtn = buildHudButton(t("xrHudBack"));
+  const hudFollowBtn = buildHudButton(t("xrFollowOn"));
+  hudBackBtn.position.y = 0.1;
+  hudFollowBtn.position.y = -0.1;
+  hud3D.add(hudBackBtn, hudFollowBtn);
+  function refreshHud3D() {
+    drawHudButton(hudFollowBtn, follow ? t("xrFollowOn") : t("xrFollowOff"));
+  }
+
+  /* 手柄：targetRaySpace（射线）挂 rig——rig 即用户载体，传送/转向随体 */
+  const xrControllers = [];
+  for (let i = 0; i < 2; i++) {
+    const c = renderer.xr.getController(i);
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]),
+      new THREE.LineBasicMaterial({ color: 0x6ea8ff, transparent: true, opacity: 0.85 })
+    );
+    line.scale.z = 4;
+    line.visible = false;
+    c.add(line);
+    c.userData.xrLine = line;
+    c.addEventListener("selectstart", () => onXRSelect(c));
+    rig.add(c);
+    xrControllers.push(c);
+  }
+  renderer.xr.addEventListener("sessionstart", () => {
+    xrInImmersive = true;
+    for (const c of xrControllers) c.userData.xrLine.visible = true;
+    refreshVRBtn();
+    refreshHud3D();
+  });
+  renderer.xr.addEventListener("sessionend", () => {
+    xrInImmersive = false;
+    for (const c of xrControllers) c.userData.xrLine.visible = false;
+    refreshVRBtn();
+  });
+
+  async function enterImmersive() {
+    if (disposed || xrInImmersive) return;
+    if (!navigator.xr || !navigator.xr.requestSession) { statusEl.textContent = t("xrVRFail"); return; }
+    try {
+      const session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor", "bounded-floor"] });
+      await renderer.xr.setSession(session);
+      refreshVRBtn();
+    } catch (err) {
+      statusEl.textContent = t("xrVRFail");
+    }
+  }
+  function exitImmersive() {
+    const s = renderer.xr.getSession();
+    if (s) { try { s.end().catch(() => {}); } catch (err) {} }
+  }
+
+  /* 确认动作（手柄）：射线先试 3D HUD 按钮，再走与桌面一致的拾取链 */
+  function onXRSelect(c) {
+    if (disposed || !renderer.xr.isPresenting) return;
+    c.getWorldQuaternion(_xrQ1);
+    xrRay.ray.origin.setFromMatrixPosition(c.matrixWorld);
+    xrRay.ray.direction.set(0, 0, -1).applyQuaternion(_xrQ1).normalize();
+    const hudHits = xrRay.intersectObjects(hud3D.children, false);
+    if (hudHits.length) {
+      if (hudHits[0].object === hudBackBtn) { doExit(); return; }
+      if (hudHits[0].object === hudFollowBtn) { toggleFollow(); return; }
+      return;
+    }
+    handlePick(xrRay);
+  }
+
+  /* 移动/旋转（手柄摇杆，xr-standard：axes[2]=X axes[3]=Y，死区 0.15） */
+  function updateXRInput(dt) {
+    const session = renderer.xr.getSession();
+    if (!session || disposed) return;
+    for (const src of session.inputSources) {
+      const gp = src && src.gamepad;
+      if (!gp || !gp.axes || gp.axes.length < 4) continue;
+      const ax = gp.axes[2] || 0;
+      const ay = gp.axes[3] || 0;
+      if (src.handedness === "right") {
+        if (Math.abs(ax) > 0.15) rig.rotation.y -= ax * dt * 2.4; /* 旋转动作 */
+      } else if (Math.abs(ax) > 0.15 || Math.abs(ay) > 0.15) {
+        /* 移动动作：以头向水平 yaw 为基准推杆平移 */
+        camera.getWorldDirection(_xrV1);
+        _xrV1.y = 0;
+        if (_xrV1.lengthSq() < 1e-6) _xrV1.set(0, 0, -1); else _xrV1.normalize();
+        _xrV2.crossVectors(_xrV1, camera.up).normalize();
+        const spd = 1.7 * dt;
+        rig.position.addScaledVector(_xrV1, -ay * spd).addScaledVector(_xrV2, ax * spd);
+        const hr = Math.hypot(rig.position.x, rig.position.z);
+        if (hr > MAX_RADIUS) {
+          rig.position.x *= MAX_RADIUS / hr;
+          rig.position.z *= MAX_RADIUS / hr;
+        }
+        rig.position.y = 0;
+      }
+    }
+  }
+
+  /* 3D HUD 跟随视点（仅沉浸式可见）：置于头前 1.15m 水平方向，直立面向用户 */
+  function updateXRHud() {
+    const presenting = renderer.xr.isPresenting;
+    hud3D.visible = presenting;
+    if (!presenting || disposed) return;
+    camera.getWorldPosition(_xrV1);
+    camera.getWorldDirection(_xrV2);
+    _xrV2.y = 0;
+    if (_xrV2.lengthSq() < 1e-6) _xrV2.set(0, 0, -1); else _xrV2.normalize();
+    hud3D.position.copy(_xrV1).addScaledVector(_xrV2, 1.15);
+    hud3D.position.y = _xrV1.y - 0.12;
+    hud3D.lookAt(_xrV1);
+  }
+
+  /* 按钮初始文字：3D HUD（canvas）与 DOM HUD 都就绪后再刷（避免声明顺序依赖） */
+  refreshFollowBtn();
+  refreshVRBtn();
 
   /* ---------- 2D 事件订阅（3D 只读，不写共享状态） ---------- */
 
@@ -656,16 +839,17 @@ export async function createXR(ctx) {
 
   /* ---------- 主循环 ---------- */
 
-  let raf = 0;
   let lastT = 0;
 
   function frame(tNow) {
     if (disposed) return;
-    raf = requestAnimationFrame(frame);
     /* 页面隐藏时浏览器本就停发 rAF（需求 7.3 的暂停由浏览器保证）；
-       这里不再叠加 running 门控，避免可见性误报导致黑屏。 */
+       这里不再叠加 running 门控，避免可见性误报导致黑屏。
+       沉浸式下 setAnimationLoop 由 XR 帧驱动（同一路径，任务 10）。 */
     const dt = Math.min(0.05, (tNow - lastT) / 1000 || 0.016);
     lastT = tNow;
+    updateXRInput(dt);  /* 手柄摇杆平移/转向（无会话 no-op） */
+    updateXRHud();      /* 3D HUD 跟随视点（无会话隐藏） */
     updateControls(dt);
     if (follow && hArc > 0.001) {
       hArc *= Math.exp(-dt * 4);
@@ -683,7 +867,7 @@ export async function createXR(ctx) {
     renderer.render(scene, camera);
   }
   lastT = performance.now();
-  raf = requestAnimationFrame(frame);
+  renderer.setAnimationLoop(frame);
 
   let lastViewportW = window.innerWidth;
   let resizeTimer = null;
@@ -752,7 +936,8 @@ export async function createXR(ctx) {
   function dispose() {
     if (disposed) return;
     disposed = true;
-    cancelAnimationFrame(raf);
+    renderer.setAnimationLoop(null);
+    exitImmersive(); /* 头显会话随 3D 退出一并结束（需求 7.4） */
     if (resizeTimer) clearTimeout(resizeTimer);
     focus = null;
     for (const id of Array.from(spatialVoices.keys())) dropSpatialVoice(id); /* 空间音频摘除（需求 7.4） */

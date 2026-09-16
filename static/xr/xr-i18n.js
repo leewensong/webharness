@@ -19,6 +19,10 @@ export const XR_I18N = {
     xrNativeOn: "原生图表：开",
     xrNativeOff: "原生图表：关（面板模式兜底）",
     xrOwnerTag: "房主",
+    xrEnterVR: "进入头显",
+    xrExitVR: "退出头显",
+    xrVRFail: "无法进入头显（需要 WebXR 设备与授权）",
+    xrHudBack: "返回 2D",
   },
   en: {
     xrHintDesktop: "Drag to look around · wheel to move · W/S walk · ←/→ browse history · F follow latest · Esc back to 2D",
@@ -36,6 +40,10 @@ export const XR_I18N = {
     xrNativeOn: "Native charts: on",
     xrNativeOff: "Native charts: off (panel fallback)",
     xrOwnerTag: "Owner",
+    xrEnterVR: "Enter VR",
+    xrExitVR: "Exit VR",
+    xrVRFail: "Could not enter VR (WebXR device and permission required)",
+    xrHudBack: "Back to 2D",
   },
 };
 
