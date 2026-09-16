@@ -18,6 +18,7 @@ export const XR_I18N = {
     xrModelLoadFail: "模型加载失败（格式或网络问题），已跳过",
     xrNativeOn: "原生图表：开",
     xrNativeOff: "原生图表：关（面板模式兜底）",
+    xrOwnerTag: "房主",
   },
   en: {
     xrHintDesktop: "Drag to look around · wheel to move · W/S walk · ←/→ browse history · F follow latest · Esc back to 2D",
@@ -34,6 +35,7 @@ export const XR_I18N = {
     xrModelLoadFail: "Model failed to load (format or network); skipped",
     xrNativeOn: "Native charts: on",
     xrNativeOff: "Native charts: off (panel fallback)",
+    xrOwnerTag: "Owner",
   },
 };
 

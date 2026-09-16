@@ -459,6 +459,8 @@ def _online_users(conn, room) -> list[dict]:
     """在线成员（带有效发言权 canSpeak，供前端画红/绿框）。
 
     有效发言权 = 房主/roomAgent 恒可发言；否则受全体禁言与成员禁言影响。
+    另附 3D 渲染端所需的形象字段（model3dUrl/Arkit/Humanoid，轻量列不含 BLOB 本体）
+    与 isRoomOwner 标识——2D 端忽略这些多余键，属纯增量。
     """
     gov_ids = {room["created_by"]}
     if room["room_agent_id"]:
@@ -466,7 +468,9 @@ def _online_users(conn, room) -> list[dict]:
     rows = conn.execute(
         """
         SELECT u.username, u.avatar_updated_at AS avatarV, m.last_seen_at AS lastSeenAt,
-               u.id AS uid, m.can_speak AS canSpeak
+               u.id AS uid, m.can_speak AS canSpeak,
+               u.model3d_url, u.model3d_arkit, u.model3d_humanoid, u.model3d_updated_at,
+               (u.model3d IS NOT NULL) AS has_model3d
         FROM room_members m
         JOIN users u ON u.id = m.user_id
         WHERE m.room_id = ? AND m.last_seen_at > datetime('now', ?)
@@ -478,9 +482,10 @@ def _online_users(conn, room) -> list[dict]:
         {
             "username": row["username"],
             "lastSeenAt": row["lastSeenAt"],
-            "avatarUrl": _avatar_url(row["username"], row["avatarV"]),
+            **_profile_fields(row),
             "canSpeak": row["uid"] in gov_ids
             or (not room["muted"] and bool(row["canSpeak"])),
+            "isRoomOwner": row["uid"] == room["created_by"],
         }
         for row in rows
     ]

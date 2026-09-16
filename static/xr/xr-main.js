@@ -9,6 +9,7 @@ import { isModelFilename } from "../model-preview.js";
 import { mergeXRI18n } from "./xr-i18n.js";
 import { createPanelSystem } from "./xr-panels.js";
 import { createNativeSystem } from "./xr-native.js";
+import { createAvatarSystem } from "./xr-avatars.js";
 
 const R = 6;             // 消息墙半径（米）
 const PITCH = 1.26;      // 面板弧距（米）
@@ -105,6 +106,13 @@ export async function createXR(ctx) {
   /* 原生 3D 图表（```chart 数据驱动，需求 3.1/3.2；面板模式保留为兜底开关） */
   const native = createNativeSystem({ a2ui: ctx.a2ui, fetchImage: fetchImageObjectURL });
   scene.add(native.group);
+
+  /* ---------- 成员形象（需求 4）：xr-avatars 加载 GLB/VRM + 缺省胶囊，站位按用户名散列。
+     初始成员取 roomInfo()（进入 3D 时已错过的最后一次 roomEvents 快照），之后随
+     roomEvents 增量同步。加载失败静默回退胶囊（需求 4.5）。 */
+  const avatars = createAvatarSystem({ t, tf, username: ctx.username, token: ctx.token });
+  scene.add(avatars.group);
+  try { avatars.applyRoom(ctx.roomInfo && ctx.roomInfo()); } catch (err) {}
 
   /* ---------- 聚焦模式（需求 7.2 / 3.6）：对准一条消息放大到舒适阅读（~40° 视角）。
      桌面映射：面板双击进入 / 聚焦中单击返回；图片平面单击进入（指向放大）；
@@ -579,7 +587,8 @@ export async function createXR(ctx) {
   const unsubRoom = ctx.roomEvents.subscribe((info) => {
     if (disposed) return;
     try {
-      if (info && info.closed) doExit();
+      if (info && info.closed) { doExit(); return; }
+      avatars.applyRoom(info); /* 形象随在线成员增量同步（需求 4.1） */
     } catch (err) {}
   });
 
@@ -651,6 +660,7 @@ export async function createXR(ctx) {
     debugRec: (id) => panels.debugRec(String(id)),
     ids: () => panels.group.children.map((m) => m.userData.panelId),
     nativeGroup: () => native.group,
+    avatarGroup: () => avatars.group,
   };
 
   /* ---------- 退出与释放（需求 7.4） ---------- */
@@ -688,6 +698,7 @@ export async function createXR(ctx) {
     try { unsubMsg(); } catch (e) {}
     try { unsubRoom(); } catch (e) {}
     native.dispose();
+    avatars.dispose();
     panels.dispose();
     disposeScene();
     renderer.dispose();

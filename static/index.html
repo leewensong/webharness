@@ -1277,6 +1277,7 @@
     let roomsPollTimer = null;
     let lastId = 0;
     let lastUpdatedAt = "";
+    let lastRoomInfo = null;     // 最近一次房间在线成员快照（3D 进入时取初始成员）
     let regAvatarData = null;
     let regModel3dFile = null;   // 注册弹窗里选的 3D 模型文件（注册成功后上传）
 
@@ -1333,6 +1334,7 @@
           isBlankRow,
           msgEvents,
           roomEvents,
+          roomInfo: () => lastRoomInfo,
           /* a2ui 数据语义桥：3D 原生小部件复用 2D 同一份解析/绑定/状态机（不抽文件） */
           a2ui: { parse: a2uiParseMessages, value: a2uiValue, apply: a2uiApplyMessages },
           buildStaged: (m) => buildBubble(m, { container: $("xrStage"), pin: false }),
@@ -1772,6 +1774,8 @@
         viewingArchive: store.viewingArchive,
         onlineUsers: info.onlineUsers || [],
       });
+      /* 3D 进入时 roomEvents 已错过最后一次 emit：缓存最近一份供 xr-main 取初始成员 */
+      lastRoomInfo = { roomName: info.roomName, isOwner: !!info.isOwner, onlineUsers: info.onlineUsers || [] };
     }
 
     function renderOnline(users) {

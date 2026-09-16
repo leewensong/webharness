@@ -41,7 +41,7 @@
 
 ## Phase 3：形象与语音
 
-- [ ] 7. 形象加载
+- [x] 7. 形象加载
   - `static/xr/xr-avatars.js`：GLTFLoader + three-vrm；服务器文件走 `/api/users/{u}/model3d`，外链直连；加载失败静默回退缺省化身（胶囊体 + 用户名 hash 配色 + 名牌）；站位按 `hash(username)` 稳定散列；房主标识
   - 加载串行化（同时在途 ≤2），VRM/普通 GLB 分支处理
   - _需求：4.1、4.2、4.5、4.6、4.7、7.2_
