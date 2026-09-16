@@ -1,8 +1,9 @@
-/* 原生 3D 模式（数据驱动）：不经过 DOM，直接用消息里的 ```chart JSON 重建 3D 图形。
-   数据与 2D 同源——同一份 spec（type: bar/line/pie + categories/data），只是渲染端换成
-   几何体（需求 3.1/3.2）；面板模式保留为兜底开关（xr-main 里的「原生图表」HUD 按钮）。
-   每条含图表的消息 → 一个 chart Group，跟随其面板位置滑入滑出（面板前方空地，落地放置）；
-   点击饼图扇区显示名称/数值/百分比浮签（需求 3.2）。 */
+/* 原生 3D 模式（数据驱动）：不经过 DOM，直接用消息里的数据重建 3D 图形——
+   ```chart JSON（与 2D 同源）→ bar/line/pie 几何体；```a2ui 组件树 → 原生 3D
+   小部件（解析/绑定/状态机经桥复用 2D 端实现，见下方 a2ui 段注释）。
+   面板模式保留为兜底开关（xr-main 里的「原生图表」HUD 按钮）。
+   每条含图表/a2ui 的消息 → 一个 Group，跟随其面板位置滑入滑出（面板前方空地，
+   落地放置）；点击饼图扇区显示名称/数值/百分比浮签（需求 3.1–3.5）。 */
 
 import * as THREE from "three";
 
@@ -231,12 +232,275 @@ function buildChartObject(spec) {
   return root;
 }
 
+/* ---------- a2ui 原生 3D 小部件（需求 3.3/3.4/3.5） ----------
+   解析 / JSON Pointer 绑定 / surface 状态机经桥复用 2D 端同一实现（index.html
+   a2uiParseMessages / a2uiValue / a2uiApplyMessages），这里只做「组件 → THREE」换形。
+   目录 v1 原生支持：Column/Row/Card/Text/MetricCard/Progress/Callout/Timeline/
+   PieChart/BarChart/LineChart；Table/Divider 目录内但 3D 不做 → 整条回退面板模式；
+   未知组件渲染 3D 占位（2D `[a2ui: 类型名]` 的 3D 版），绝不因新组件崩溃（需求 3.5）。
+   构建产物约定：{ obj, w, h }，obj 局部原点在底部中心（y=0 落地），尺寸以米计。 */
+
+const A2UI_GAP = 0.09;    // Row/Column 布局间距
+const A2UI_PAD = 0.14;    // Card/Metric/Callout 内边距
+const A2UI_V1_NATIVE = new Set(["Column", "Row", "Card", "Text", "MetricCard", "Progress", "Callout", "Timeline", "PieChart", "BarChart", "LineChart"]);
+const A2UI_V1_FALLBACK = new Set(["Table", "Divider"]);
+
+export function extractA2uiBlocks(content) {
+  const text = String(content || "");
+  if (!text.includes("```a2ui")) return null;
+  const re = /```a2ui[^\n]*\n([\s\S]*?)```/g;
+  const blocks = [];
+  let m;
+  while ((m = re.exec(text))) blocks.push(m[1]);
+  return blocks.length ? blocks : null;
+}
+
+/* sprite 锚点在中心 → 包一层组把原点挪到底部中心 */
+function leaf(text, opts) {
+  const sp = makeTextSprite(text, opts);
+  const g = new THREE.Group();
+  sp.position.y = sp.scale.y / 2;
+  g.add(sp);
+  return { obj: g, w: sp.scale.x, h: sp.scale.y };
+}
+
+function plateFor(w, h, color, z) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.035), new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.08 }));
+  mesh.position.set(0, h / 2, z != null ? z : -0.028);
+  return mesh;
+}
+
+function layoutCol(kids) {
+  const g = new THREE.Group();
+  const h = kids.reduce((s, k) => s + k.h, 0) + A2UI_GAP * Math.max(0, kids.length - 1);
+  const w = Math.max(0.12, ...kids.map((k) => k.w));
+  let y = h;
+  for (const k of kids) {
+    y -= k.h;
+    k.obj.position.set(0, y, 0);
+    g.add(k.obj);
+    y -= A2UI_GAP;
+  }
+  return { obj: g, w, h };
+}
+
+function layoutRow(kids) {
+  const g = new THREE.Group();
+  const w = kids.reduce((s, k) => s + k.w, 0) + A2UI_GAP * Math.max(0, kids.length - 1);
+  const h = Math.max(0.12, ...kids.map((k) => k.h));
+  let x = -w / 2;
+  for (const k of kids) {
+    k.obj.position.set(x + k.w / 2, (h - k.h) / 2, 0);
+    g.add(k.obj);
+    x += k.w + A2UI_GAP;
+  }
+  return { obj: g, w, h };
+}
+
+function buildText(comp, ctx) {
+  const px = { h1: 64, h2: 52, h3: 44, caption: 30 }[comp.variant] || 42;
+  return leaf(String(ctx.value(comp.text, ctx.model) ?? ""), { px, weight: comp.variant === "h1" ? 700 : 600, color: comp.variant === "caption" ? "#8b9bb0" : "#eef3f9" });
+}
+
+function buildMetricCard(comp, ctx) {
+  const rows = [];
+  const label = String(ctx.value(comp.label, ctx.model) ?? "");
+  if (label) rows.push(leaf(label, { px: 30, color: "#8b9bb0" }));
+  const head = [leaf(String(ctx.value(comp.value, ctx.model) ?? ""), { px: 58, weight: 700 })];
+  if (comp.change != null) {
+    const trend = ["up", "down", "flat"].includes(comp.trend) ? comp.trend : "flat";
+    const pre = trend === "up" ? "▲ " : trend === "down" ? "▼ " : "";
+    const color = trend === "up" ? "#3ecf8e" : trend === "down" ? "#ff6b7a" : "#8b9bb0";
+    head.push(leaf(pre + String(ctx.value(comp.change, ctx.model) ?? ""), { px: 30, color }));
+  }
+  rows.push(layoutRow(head));
+  if (comp.caption != null) {
+    const cap = String(ctx.value(comp.caption, ctx.model) ?? "");
+    if (cap) rows.push(leaf(cap, { px: 26, color: "#8b9bb0" }));
+  }
+  const body = layoutCol(rows);
+  const w = body.w + 0.2, h = body.h + 0.18;
+  const g = new THREE.Group();
+  body.obj.position.set(0, 0.09, 0);
+  g.add(plateFor(w, h, 0x1b2433), body.obj);
+  return { obj: g, w, h };
+}
+
+const A2UI_TONE = { success: 0x3ecf8e, warning: 0xffb86b, danger: 0xff6b7a, default: 0x5b8cff };
+
+function buildProgress(comp, ctx) {
+  const value = Number(ctx.value(comp.value, ctx.model));
+  if (!Number.isFinite(value)) return null;
+  const maxRaw = Number(ctx.value(comp.max, ctx.model));
+  const max = Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : 100;
+  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  const tone = ["success", "warning", "danger"].includes(comp.tone) ? comp.tone : "default";
+  const label = comp.label != null ? String(ctx.value(comp.label, ctx.model) ?? "") : "";
+  const head = layoutRow([leaf(label || " ", { px: 30 }), leaf(Math.round(pct) + "%", { px: 30, color: "#8b9bb0" })]);
+  const trackW = Math.max(0.9, head.w);
+  const track = new THREE.Mesh(new THREE.BoxGeometry(trackW, 0.05, 0.03), new THREE.MeshStandardMaterial({ color: 0x202b3a, roughness: 0.8 }));
+  track.position.set(0, 0.025, 0);
+  const fill = new THREE.Mesh(new THREE.BoxGeometry(Math.max(trackW * pct / 100, 0.02), 0.058, 0.038), new THREE.MeshStandardMaterial({ color: A2UI_TONE[tone], roughness: 0.5 }));
+  fill.position.set(-trackW / 2 + (trackW * pct) / 100, 0.025, 0.004);
+  const g = new THREE.Group();
+  head.obj.position.set(0, 0.09, 0);
+  g.add(head.obj, track);
+  return { obj: g, w: Math.max(trackW, head.w), h: head.h + 0.09 };
+}
+
+const A2UI_SEV = { info: 0x5b8cff, success: 0x3ecf8e, warning: 0xffb86b, danger: 0xff6b7a };
+
+function buildCallout(comp, ctx) {
+  const sev = ["info", "success", "warning", "danger"].includes(comp.severity) ? comp.severity : "info";
+  const rows = [];
+  if (comp.title != null) {
+    const ti = String(ctx.value(comp.title, ctx.model) ?? "");
+    if (ti) rows.push(leaf(ti, { px: 36, weight: 700, color: "#" + new THREE.Color(A2UI_SEV[sev]).getHexString() }));
+  }
+  const txt = String(ctx.value(comp.text, ctx.model) ?? "");
+  if (txt) rows.push(leaf(txt, { px: 32, weight: 500, color: "#dbe4f0" }));
+  if (!rows.length) return null;
+  const body = layoutCol(rows);
+  const w = body.w + A2UI_PAD * 2 + 0.05, h = body.h + A2UI_PAD * 2;
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(0.05, h, 0.042), new THREE.MeshStandardMaterial({ color: A2UI_SEV[sev], roughness: 0.5 }));
+  edge.position.set(-w / 2 + 0.025, h / 2, 0.0);
+  const g = new THREE.Group();
+  body.obj.position.set(0.05, A2UI_PAD, 0);
+  g.add(plateFor(w, h, 0x161e2c), edge, body.obj);
+  return { obj: g, w, h };
+}
+
+function buildTimeline(comp, ctx) {
+  const items = ctx.value(comp.items, ctx.model);
+  if (!Array.isArray(items) || !items.length) return null;
+  const rows = [];
+  for (const it of items) {
+    if (!it || typeof it !== "object") continue;
+    const parts = [];
+    if (it.time != null) parts.push(leaf(String(it.time), { px: 26, color: "#8b9bb0" }));
+    parts.push(leaf(String(it.title ?? ""), { px: 34, weight: 600 }));
+    if (it.description != null && String(it.description)) parts.push(leaf(String(it.description), { px: 28, color: "#9fb0c5" }));
+    const node = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 8), new THREE.MeshStandardMaterial({ color: it.tone === "success" ? 0x3ecf8e : it.tone === "pending" ? 0x5a6478 : 0x5b8cff, roughness: 0.4 }));
+    rows.push(layoutRow([{ obj: node, w: 0.08, h: 0.08 }, layoutCol(parts)]));
+  }
+  if (!rows.length) return null;
+  const body = layoutCol(rows);
+  const line = new THREE.Mesh(new THREE.BoxGeometry(0.014, Math.max(0.1, body.h - 0.12), 0.012), new THREE.MeshBasicMaterial({ color: 0x2a3648 }));
+  line.position.set(-body.w / 2 + 0.04, body.h / 2, 0);
+  const g = new THREE.Group();
+  g.add(line, body.obj);
+  return { obj: g, w: body.w, h: body.h };
+}
+
+/* a2ui 内嵌图表：数据语义与 2D a2uiBuildNode 一致（nameKey/valueKey/categories），
+   几何直接复用上方的 chart 构建器（需求 3.1/3.2 同一套） */
+function buildA2uiChart(comp, ctx) {
+  const data = ctx.value(comp.data, ctx.model);
+  if (!Array.isArray(data) || !data.length) return null;
+  const title = comp.title != null ? String(ctx.value(comp.title, ctx.model) ?? "") : "";
+  let spec;
+  if (comp.component === "PieChart") {
+    const nk = comp.nameKey || "name";
+    const vk = comp.valueKey || "value";
+    spec = { type: "pie", title, data: data.map((d) => (d && typeof d === "object" ? { name: String(d[nk]), value: Number(d[vk]) } : { name: String(d), value: 0 })) };
+  } else {
+    const cats = ctx.value(comp.categories, ctx.model);
+    spec = { type: comp.component === "BarChart" ? "bar" : "line", title, categories: Array.isArray(cats) ? cats.map(String) : [], data: data.map((v) => Number(v)) };
+  }
+  const obj = buildChartObject(spec);
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  return { obj, w: Math.max(size.x, 0.2), h: Math.max(size.y, 0.1) };
+}
+
+function buildPlaceholder(comp) {
+  return leaf("[a2ui: " + String(comp.component || "?") + "]", { px: 34, color: "#8b9bb0", bg: "rgba(27,36,51,0.85)" });
+}
+
+function buildA2uiNode(comp, ctx) {
+  if (!comp || typeof comp !== "object") return null;
+  if (!A2UI_V1_NATIVE.has(comp.component)) return buildPlaceholder(comp);
+  switch (comp.component) {
+    case "Column": return layoutCol(kidsOf(comp, ctx));
+    case "Row": return layoutRow(kidsOf(comp, ctx));
+    case "Card": {
+      const kids = kidsOf(comp, ctx);
+      if (comp.title != null) {
+        const ti = String(ctx.value(comp.title, ctx.model) ?? "");
+        if (ti) kids.unshift(leaf(ti, { px: 40, weight: 700 }));
+      }
+      if (!kids.length) return null;
+      const body = layoutCol(kids);
+      const w = body.w + A2UI_PAD * 2, h = body.h + A2UI_PAD * 2;
+      const g = new THREE.Group();
+      body.obj.position.set(0, A2UI_PAD, 0);
+      g.add(plateFor(w, h, 0x18202e), body.obj);
+      return { obj: g, w, h };
+    }
+    case "Text": return buildText(comp, ctx);
+    case "MetricCard": return buildMetricCard(comp, ctx);
+    case "Progress": return buildProgress(comp, ctx);
+    case "Callout": return buildCallout(comp, ctx);
+    case "Timeline": return buildTimeline(comp, ctx);
+    case "PieChart":
+    case "BarChart":
+    case "LineChart": return buildA2uiChart(comp, ctx);
+    default: return buildPlaceholder(comp);
+  }
+}
+
+function kidsOf(comp, ctx) {
+  const ids = Array.isArray(comp.children) ? comp.children : (comp.child ? [comp.child] : []);
+  const out = [];
+  for (const cid of ids) {
+    const c = ctx.components.get(String(cid));
+    if (!c) continue;
+    const k = buildA2uiNode(c, ctx);
+    if (k) out.push(k);
+  }
+  return out;
+}
+
+/* 可达树里出现 Table/Divider → 整条消息回退面板模式（需求 3.3） */
+function hasFallbackComp(comp, comps, seen) {
+  if (!comp || typeof comp !== "object" || seen.has(comp)) return false;
+  seen.add(comp);
+  if (A2UI_V1_FALLBACK.has(comp.component)) return true;
+  const ids = Array.isArray(comp.children) ? comp.children : (comp.child ? [comp.child] : []);
+  for (const cid of ids) {
+    if (hasFallbackComp(comps.get(String(cid)), comps, seen)) return true;
+  }
+  return false;
+}
+
+function buildA2uiObject(blocks, bridge) {
+  if (!bridge || !bridge.parse || !bridge.apply || !bridge.value) return null;
+  const roots = [];
+  try {
+    for (const block of blocks) {
+      for (const s of bridge.apply(bridge.parse(block)).values()) {
+        const rootComp = s.components.get("root");
+        if (!rootComp || hasFallbackComp(rootComp, s.components, new Set())) continue;
+        const node = buildA2uiNode(rootComp, { components: s.components, model: s.model, value: bridge.value });
+        if (node) roots.push(node);
+      }
+    }
+  } catch (e) {
+    return null; /* 解析失败 → 面板模式显示 2D 错误框（与 2D 一致） */
+  }
+  if (!roots.length) return null;
+  if (roots.length === 1) return roots[0].obj;
+  return layoutCol(roots).obj;
+}
+
 /* ---------- 系统：生命周期 + 每帧跟随面板 ---------- */
 
 export function createNativeSystem(opts) {
+  const a2ui = (opts && opts.a2ui) || null;   // { parse, value, apply } —— 2D 端 a2ui 数据语义桥
   const group = new THREE.Group();
   const charts = new Map();   // msgId → { obj, specKey }
   const order = [];
+  const failedA2ui = new Map();   // msgId → specKey（a2ui 回退面板后不再重建）
   let enabled = true;
   let tipSprite = null;
   let tipTimer = 0;
@@ -268,15 +532,23 @@ export function createNativeSystem(opts) {
     if (!enabled) { for (const [, rec] of charts) rec.obj.visible = false; hideTip(); return; }
     const seen = new Set();
     for (const e of entries) {
-      const spec = extractChartSpec(e.msg && e.msg.content);
-      if (!spec) continue;
+      const content = e.msg && e.msg.content;
+      const spec = extractChartSpec(content);
+      const blocks = spec ? null : extractA2uiBlocks(content);
+      if (!spec && !blocks) continue;
       seen.add(e.id);
       let rec = charts.get(e.id);
-      const specKey = JSON.stringify(spec);
+      const specKey = (spec ? "c" : "a") + JSON.stringify(spec || blocks);
       if (rec && rec.specKey !== specKey) { remove(e.id); rec = null; } /* 流式/更新后重建 */
+      if (!rec && failedA2ui.get(e.id) === specKey) continue; /* a2ui 回退面板：不重复构建 */
       if (!rec) {
         let obj;
-        try { obj = buildChartObject(spec); } catch (err) { continue; }
+        try { obj = spec ? buildChartObject(spec) : buildA2uiObject(blocks, a2ui); } catch (err) { obj = null; }
+        if (!obj) {
+          if (blocks) failedA2ui.set(e.id, specKey);
+          continue;
+        }
+        failedA2ui.delete(e.id);
         group.add(obj);
         rec = { obj, specKey };
         charts.set(e.id, rec);
@@ -303,6 +575,9 @@ export function createNativeSystem(opts) {
     }
     for (const [id, rec] of charts) {
       if (!seen.has(id)) rec.obj.visible = false;
+    }
+    for (const id of failedA2ui.keys()) {
+      if (!seen.has(id)) failedA2ui.delete(id);
     }
   }
 

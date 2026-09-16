@@ -103,7 +103,7 @@ export async function createXR(ctx) {
   scene.add(panels.group);
 
   /* 原生 3D 图表（```chart 数据驱动，需求 3.1/3.2；面板模式保留为兜底开关） */
-  const native = createNativeSystem({});
+  const native = createNativeSystem({ a2ui: ctx.a2ui });
   scene.add(native.group);
 
   /* ---------- HUD（xrRoot 内 HTML 覆盖层） ---------- */

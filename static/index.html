@@ -1333,6 +1333,8 @@
           isBlankRow,
           msgEvents,
           roomEvents,
+          /* a2ui 数据语义桥：3D 原生小部件复用 2D 同一份解析/绑定/状态机（不抽文件） */
+          a2ui: { parse: a2uiParseMessages, value: a2uiValue, apply: a2uiApplyMessages },
           buildStaged: (m) => buildBubble(m, { container: $("xrStage"), pin: false }),
           clearStaged: () => {
             /* staging 区气泡可能带 echarts 实例（a2ui/chart），退出 3D 时随实例一并释放 */
@@ -2457,8 +2459,9 @@
       }
     }
 
-    /* 顺序应用消息，返回按出现顺序排列的 surface 根节点 */
-    function a2uiBuildSurfaces(msgs, pendingCharts) {
+    /* 顺序应用消息 → surface 状态（components Map + dataModel）。
+       纯数据不产 DOM：2D DOM 构建与 WebXR 3D 原生渲染（xr-native.js）共用这一份语义。 */
+    function a2uiApplyMessages(msgs) {
       const surfaces = new Map(); // surfaceId -> { components: Map, model: {} }
       for (const msg of msgs) {
         if (!msg || typeof msg !== "object") continue;
@@ -2481,6 +2484,12 @@
         }
         if (msg.deleteSurface) surfaces.delete(String(msg.deleteSurface.surfaceId || "main"));
       }
+      return surfaces;
+    }
+
+    /* 顺序应用消息，返回按出现顺序排列的 surface 根节点 */
+    function a2uiBuildSurfaces(msgs, pendingCharts) {
+      const surfaces = a2uiApplyMessages(msgs);
       const out = [];
       for (const s of surfaces.values()) {
         const root = s.components.get("root");

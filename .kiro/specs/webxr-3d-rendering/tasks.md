@@ -29,7 +29,7 @@
   - 图表数据与 2D 同源（同一 chart JSON），面板模式保留为兜底开关（调试/对比用）
   - _需求：3.1、3.2_
 
-- [ ] 5. a2ui 原生 3D 小部件
+- [x] 5. a2ui 原生 3D 小部件
   - 目录 v1 组件映射：MetricCard/Progress/Callout/Timeline/Text 原生实现；Row/Column/Card → Group 布局容器；Table/未知组件回退面板；catalogId 严格解析 + 未知占位（3D 版 `[a2ui: 类型名]`）
   - JSON Pointer 绑定解析复用 2D 端同一算法：经桥调用 index.html 顶层 `a2uiParseMessages`/`a2uiValue`/`a2uiBuildNode`，不抽文件、不动 2D 加载顺序
   - _需求：3.3、3.4、3.5_
