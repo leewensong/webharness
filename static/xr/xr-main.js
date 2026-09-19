@@ -236,7 +236,9 @@ export async function createXR(ctx) {
     #xrRoot .xr-send-input { width: min(430px, 56vw); padding: 9px 14px; font-size: 13px;
       border: 1px solid #2c3d58; border-radius: 999px; background: rgba(16, 22, 34, 0.82);
       color: #dfe8f4; outline: none; }
-    #xrRoot .xr-send-input:focus { border-color: #5b8cff; }`;
+    #xrRoot .xr-send-input:focus { border-color: #5b8cff; }
+    /* dom-overlay 沉浸式：桌面键鼠操作提示不适用，隐藏（其余 HUD 复用） */
+    #xrRoot .xr-hud.xr-immersive .xr-hint { display: none; }`;
   ctx.root.appendChild(hudStyle);
 
   const hud = document.createElement("div");
@@ -254,6 +256,7 @@ export async function createXR(ctx) {
     <div class="xr-vscroll" title=""><div class="xr-vthumb"></div></div>
     <div class="xr-send">
       <input class="xr-send-input" type="text" maxlength="4000" />
+      <button type="button" class="xr-btn" data-act="mic"></button>
       <button type="button" class="xr-btn" data-act="send"></button>
     </div>`;
   ctx.root.appendChild(hud);
@@ -304,6 +307,80 @@ export async function createXR(ctx) {
     else if (e.key === "Escape") sendInput.blur();
   });
   sendInput.addEventListener("keyup", (e) => e.stopPropagation());
+
+  /* ---------- 语音识别输入（桌面与沉浸式 dom-overlay 通用）：SpeechRecognition 实时转写
+     进输入框，再点一次停止，文本留在框内由用户确认发送。错误在状态栏提示。
+     getUserMedia 仅做权限门，成功即停轨（识别器自行采集音频，无需 MediaRecorder）。 */
+  const micBtn = hud.querySelector('[data-act="mic"]');
+  const hasASR = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  let asrSR = null;
+  let asrFinal = "";
+  let asrBase = "";
+  let asrOn = false;
+  let asrRestarts = 0;
+  function micLabel() { micBtn.textContent = asrOn ? t("xrMicStop") : t("xrMic"); }
+  micLabel();
+  function stopAsr() {
+    asrOn = false;
+    micLabel();
+    const sr = asrSR;
+    asrSR = null;
+    if (sr) { try { sr.onend = null; sr.onresult = null; sr.onerror = null; sr.abort(); } catch (e) {} }
+  }
+  async function startAsr() {
+    if (!hasASR) { statusEl.textContent = t("xrAsrUnsupported"); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((tk) => tk.stop());
+    } catch (e) {
+      statusEl.textContent = t("asrNotAllowed");
+      return;
+    }
+    const SRClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const sr = new SRClass();
+    asrSR = sr;
+    asrFinal = "";
+    asrBase = sendInput.value;
+    asrRestarts = 0;
+    sr.lang = (navigator.language || "zh-CN").replace("_", "-");
+    sr.interimResults = true;
+    sr.continuous = true;
+    sr.onresult = (e) => {
+      let final = "", interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
+      }
+      if (final) asrFinal += final;
+      if (!asrOn) return;
+      sendInput.value = [asrBase, (asrFinal + interim).trim()].filter(Boolean).join(" ");
+    };
+    sr.onerror = (e) => {
+      if (e.error === "aborted" || e.error === "no-speech") return;
+      const map = {
+        "audio-capture": t("asrAudio"),
+        "not-allowed": t("asrNotAllowed"),
+        "service-not-allowed": t("asrService"),
+        network: t("asrNetwork"),
+      };
+      statusEl.textContent = map[e.error] || t("asrError") + e.error;
+    };
+    sr.onend = () => {
+      if (!asrOn || asrSR !== sr) return;
+      if (asrRestarts < 5) { asrRestarts += 1; try { sr.start(); } catch (e) { stopAsr(); } }
+      else stopAsr();
+    };
+    try {
+      sr.start();
+      asrOn = true;
+      statusEl.textContent = "";
+      micLabel();
+    } catch (e) {
+      asrSR = null;
+      statusEl.textContent = t("asrStartFail") + (e && e.message ? e.message : "");
+    }
+  }
+  micBtn.addEventListener("click", () => { if (asrOn) stopAsr(); else startAsr(); });
   function refreshNativeBtn() {
     nativeBtn.textContent = native.isEnabled() ? t("xrNativeOn") : t("xrNativeOff");
   }
@@ -685,7 +762,6 @@ export async function createXR(ctx) {
 
   function refreshFollowBtn() {
     followBtn.textContent = follow ? t("xrFollowOn") : t("xrFollowOff");
-    refreshHud3D(); /* 3D HUD 同步（非沉浸式时 no-op） */
   }
   function toggleFollow() {
     follow = !follow;
@@ -732,60 +808,19 @@ export async function createXR(ctx) {
   window.addEventListener("pointerup", releaseScroll);
   window.addEventListener("pointercancel", releaseScroll);
 
-  /* ---------- WebXR 沉浸式会话（任务 10）：renderer.xr + 手柄射线拾取 + 摇杆平移/转向。
+  /* ---------- WebXR 沉浸式会话：renderer.xr + 手柄射线拾取 + 摇杆平移/转向。
      输入抽象层三动作：确认（trigger→射线拾取，桌面=鼠标点击）、移动（左摇杆平移，
      桌面=滚轮/WASD）、旋转（右摇杆转向，桌面=拖拽环视）。无手柄时头向环视天然可用。
-     3D HUD 两按钮（返回 2D / 跟随开关）挂在用户前方，手柄射线可点；桌面 DOM HUD
-     在头显内不可见。真机行为留任务 12 用户抽查。 */
+     无 3D HUD：设置/返回/发送走 dom-overlay——会话以 optional feature 请求 dom-overlay
+     并把 DOM HUD（.xr-hud）作为 overlay 根，支持的头显（如 Quest Browser）内直接
+     可见可点，聚焦输入框弹系统虚拟键盘；不支持的浏览器照常进入，仅看不到 overlay。
+     真机行为留用户抽查。 */
 
   let xrInImmersive = false;
   const _xrV1 = new THREE.Vector3();
   const _xrV2 = new THREE.Vector3();
   const _xrQ1 = new THREE.Quaternion();
   const xrRay = new THREE.Raycaster();
-
-  const hud3D = new THREE.Group();
-  hud3D.visible = false;
-  scene.add(hud3D);
-  function drawHudButton(mesh, label) {
-    const c = mesh.userData.hudCanvas;
-    const g = c.g;
-    g.clearRect(0, 0, 512, 128);
-    g.beginPath();
-    g.roundRect(8, 16, 496, 96, 48);
-    g.fillStyle = "rgba(16,22,34,0.88)";
-    g.fill();
-    g.lineWidth = 4;
-    g.strokeStyle = "rgba(91,140,255,0.9)";
-    g.stroke();
-    g.fillStyle = "#dfe8f4";
-    g.font = "bold 50px system-ui, sans-serif";
-    g.textAlign = "center";
-    g.textBaseline = "middle";
-    g.fillText(label, 256, 68);
-    mesh.material.map.needsUpdate = true;
-  }
-  function buildHudButton(label) {
-    const c = document.createElement("canvas");
-    c.width = 512;
-    c.height = 128;
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.46, 0.115),
-      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false })
-    );
-    mesh.material.map.colorSpace = THREE.SRGBColorSpace;
-    mesh.userData.hudCanvas = { c, g: c.getContext("2d") };
-    drawHudButton(mesh, label);
-    return mesh;
-  }
-  const hudBackBtn = buildHudButton(t("xrHudBack"));
-  const hudFollowBtn = buildHudButton(t("xrFollowOn"));
-  hudBackBtn.position.y = 0.1;
-  hudFollowBtn.position.y = -0.1;
-  hud3D.add(hudBackBtn, hudFollowBtn);
-  function refreshHud3D() {
-    drawHudButton(hudFollowBtn, follow ? t("xrFollowOn") : t("xrFollowOff"));
-  }
 
   /* 手柄：targetRaySpace（射线）挂 rig——rig 即用户载体，传送/转向随体 */
   const xrControllers = [];
@@ -806,12 +841,14 @@ export async function createXR(ctx) {
   renderer.xr.addEventListener("sessionstart", () => {
     xrInImmersive = true;
     for (const c of xrControllers) c.userData.xrLine.visible = true;
+    const s = renderer.xr.getSession();
+    if (s && s.domOverlayState) hud.classList.add("xr-immersive");
     refreshVRBtn();
-    refreshHud3D();
   });
   renderer.xr.addEventListener("sessionend", () => {
     xrInImmersive = false;
     for (const c of xrControllers) c.userData.xrLine.visible = false;
+    hud.classList.remove("xr-immersive");
     refreshVRBtn();
   });
 
@@ -819,7 +856,11 @@ export async function createXR(ctx) {
     if (disposed || xrInImmersive) return;
     if (!navigator.xr || !navigator.xr.requestSession) { statusEl.textContent = t("xrVRFail"); return; }
     try {
-      const session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor", "bounded-floor"] });
+      /* dom-overlay 为 optional：不支持时请求仍成功，只是没有 domOverlayState */
+      const session = await navigator.xr.requestSession("immersive-vr", {
+        optionalFeatures: ["local-floor", "bounded-floor", "dom-overlay"],
+        domOverlay: { root: hud },
+      });
       await renderer.xr.setSession(session);
       refreshVRBtn();
     } catch (err) {
@@ -831,18 +872,12 @@ export async function createXR(ctx) {
     if (s) { try { s.end().catch(() => {}); } catch (err) {} }
   }
 
-  /* 确认动作（手柄）：射线先试 3D HUD 按钮，再走与桌面一致的拾取链 */
+  /* 确认动作（手柄）：与桌面一致的拾取链（面板/聚焦/图表等） */
   function onXRSelect(c) {
     if (disposed || !renderer.xr.isPresenting) return;
     c.getWorldQuaternion(_xrQ1);
     xrRay.ray.origin.setFromMatrixPosition(c.matrixWorld);
     xrRay.ray.direction.set(0, 0, -1).applyQuaternion(_xrQ1).normalize();
-    const hudHits = xrRay.intersectObjects(hud3D.children, false);
-    if (hudHits.length) {
-      if (hudHits[0].object === hudBackBtn) { doExit(); return; }
-      if (hudHits[0].object === hudFollowBtn) { toggleFollow(); return; }
-      return;
-    }
     handlePick(xrRay);
   }
 
@@ -875,21 +910,7 @@ export async function createXR(ctx) {
     }
   }
 
-  /* 3D HUD 跟随视点（仅沉浸式可见）：置于头前 1.15m 水平方向，直立面向用户 */
-  function updateXRHud() {
-    const presenting = renderer.xr.isPresenting;
-    hud3D.visible = presenting;
-    if (!presenting || disposed) return;
-    camera.getWorldPosition(_xrV1);
-    camera.getWorldDirection(_xrV2);
-    _xrV2.y = 0;
-    if (_xrV2.lengthSq() < 1e-6) _xrV2.set(0, 0, -1); else _xrV2.normalize();
-    hud3D.position.copy(_xrV1).addScaledVector(_xrV2, 1.15);
-    hud3D.position.y = _xrV1.y - 0.12;
-    hud3D.lookAt(_xrV1);
-  }
-
-  /* 按钮初始文字：3D HUD（canvas）与 DOM HUD 都就绪后再刷（避免声明顺序依赖） */
+  /* DOM HUD 按钮初始文字（避免与 refreshNativeBtn 等声明顺序依赖） */
   refreshFollowBtn();
   refreshVRBtn();
 
@@ -946,7 +967,6 @@ export async function createXR(ctx) {
     const dt = Math.min(0.05, (tNow - lastT) / 1000 || 0.016);
     lastT = tNow;
     updateXRInput(dt);  /* 手柄摇杆平移/转向（无会话 no-op） */
-    updateXRHud();      /* 3D HUD 跟随视点（无会话隐藏） */
     updateControls(dt);
     if (follow && hArc > 0.001) {
       hArc *= Math.exp(-dt * 4);
@@ -1036,6 +1056,7 @@ export async function createXR(ctx) {
     disposed = true;
     renderer.setAnimationLoop(null);
     exitImmersive(); /* 头显会话随 3D 退出一并结束（需求 7.4） */
+    stopAsr(); /* 语音识别随退出终止，避免麦克风指示灯残留 */
     if (resizeTimer) clearTimeout(resizeTimer);
     focus = null;
     for (const id of Array.from(spatialVoices.keys())) dropSpatialVoice(id); /* 空间音频摘除（需求 7.4） */
