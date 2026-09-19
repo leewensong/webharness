@@ -1,4 +1,5 @@
-/* WebXR 3D 渲染端主模块：场景生命周期、螺旋卷绕消息墙（面板模式管线）、桌面第一人称预览。
+/* WebXR 3D 渲染端主模块：场景生命周期、竖列消息墙（2D 直列式布局 + 右侧滚行条）、
+   桌面第一人称预览。
    架构不变量：3D 只订阅 2D 端的 msgEvents/roomEvents（单一数据流），不建第二套轮询；
    历史回填是沿墙向前的一次性 beforeId 分页拉取（需求 2.7）。退出时资源全量 dispose，
    任何 3D 故障不得影响 2D 正常聊天（需求 1.5、7.4）。 */
@@ -11,16 +12,12 @@ import { createPanelSystem } from "./xr-panels.js";
 import { createNativeSystem } from "./xr-native.js";
 import { createAvatarSystem } from "./xr-avatars.js";
 
-const R = 6;             // 消息墙半径（米）
-const PITCH = 1.26;      // 面板弧距（米）
+const R = 6;             // 消息列半径（米）
 const PANEL_W = 1.12;    // 面板世界宽（米）
-const ANCHOR = Math.PI;  // 最新消息方位角（相机默认在 +Z 侧面向 −Z 看墙正面）
-const WIN_NEW = 1.05;    // 新侧可视角（弧度）——窗口保持在前向弧段，越过 2π 的面板会被投影翻转
-const WIN_OLD = 1.7;     // 旧侧可视角（弧度）
-const FLOOR_Y = 0.42;    // 卷绕基准高度：最新面板底边（历史沿墙向上卷，越旧越高）
-const RING_H = 2.5;      // 螺旋每圈升高（≥ 面板 maxH，上下圈同方位不重叠）
-const KY = RING_H / (2 * Math.PI * R); // 单位弧长升高量（每条消息约 0.083m）
-const GHOST_ARC = WIN_OLD * R + 4 * Math.PI * R; // 实窗旧侧之外再卷 2 圈的幽灵卡范围
+const ANCHOR = Math.PI;  // 消息列方位角（相机默认在 +Z 侧面向 −Z 看墙正面）
+const FLOOR_Y = 0.42;    // 列底基准：最新面板底边（历史向上堆叠，越旧越高）
+const GAP = 0.16;        // 面板纵向间距
+const BAND_HI = 6.0;     // 可视带顶（带底 = FLOOR_Y）：面板滑过该带即进入窗口
 const EYE_Y = 1.55;
 const MAX_RADIUS = 5.1;  // 相机水平活动半径（离墙 0.9m）
 
@@ -43,7 +40,10 @@ export async function createXR(ctx) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.domElement.style.cssText = "position:absolute;inset:0;display:block;";
+  /* cssText 会整块覆盖 setSize 刚写入的宽高：必须自带 100%×100%，否则 dpr>1 时
+     画布按缓冲区像素显示、溢出窗口，整个画面偏移（canvas 是 replaced element，
+     inset:0 不会拉伸它） */
+  renderer.domElement.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;";
   renderer.xr.enabled = true; /* 沉浸式会话接入（任务 10）；无会话时为普通桌面渲染 */
   ctx.root.classList.remove("hidden");
   ctx.root.appendChild(renderer.domElement);
@@ -226,8 +226,11 @@ export async function createXR(ctx) {
     #xrRoot .xr-title { color: #8fa3bd; font-size: 13px; }
     #xrRoot .xr-hint { position: absolute; top: 18px; right: 18px; color: #7c90aa; font-size: 12px; max-width: 46vw; text-align: right; }
     #xrRoot .xr-status { position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%); color: #8fa3bd; font-size: 13px; }
-    #xrRoot .xr-slider { position: absolute; bottom: 48px; left: 50%; transform: translateX(-50%);
-      width: min(560px, 70vw); pointer-events: auto; accent-color: #5b8cff; cursor: pointer; }
+    #xrRoot .xr-vscroll { position: absolute; top: 84px; bottom: 100px; right: 12px; width: 10px;
+      background: rgba(16, 22, 34, 0.55); border-radius: 6px; pointer-events: auto; }
+    #xrRoot .xr-vthumb { position: absolute; left: 0; width: 100%; border-radius: 6px;
+      background: #46608c; cursor: pointer; }
+    #xrRoot .xr-vthumb:hover { background: #5b8cff; }
     #xrRoot .xr-send { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
       display: flex; gap: 8px; pointer-events: auto; }
     #xrRoot .xr-send-input { width: min(430px, 56vw); padding: 9px 14px; font-size: 13px;
@@ -248,7 +251,7 @@ export async function createXR(ctx) {
     </div>
     <div class="xr-hint">${t("xrHintDesktop")}</div>
     <div class="xr-status"></div>
-    <input class="xr-slider" type="range" min="0" max="1000" value="1000" />
+    <div class="xr-vscroll" title=""><div class="xr-vthumb"></div></div>
     <div class="xr-send">
       <input class="xr-send-input" type="text" maxlength="4000" />
       <button type="button" class="xr-btn" data-act="send"></button>
@@ -260,7 +263,8 @@ export async function createXR(ctx) {
   const nativeBtn = hud.querySelector('[data-act="native"]');
   const titleEl = hud.querySelector(".xr-title");
   const statusEl = hud.querySelector(".xr-status");
-  const slider = hud.querySelector(".xr-slider");
+  const vscroll = hud.querySelector(".xr-vscroll");
+  const vthumb = hud.querySelector(".xr-vthumb");
   exitBtn.addEventListener("click", () => doExit());
   /* 沉浸式入口（需求 1.2）：仅当浏览器报告支持 immersive-vr 时显示 */
   function refreshVRBtn() {
@@ -317,7 +321,7 @@ export async function createXR(ctx) {
   let hArc = 0;
   let backfilling = false;
   let historyEnd = false;
-  let sliderActive = false;
+  let scrollDrag = false;
 
   function collectFromLog() {
     const out = [];
@@ -387,73 +391,60 @@ export async function createXR(ctx) {
     statusEl.textContent = strip.length ? statusEl.textContent : t("xrRoomEmpty");
   }
 
-  /* ---------- 布局（螺旋卷绕：a_i = 龄弧长 − 滚动偏移，φ_i = ANCHOR + a_i / R，
-     面板底边 y = FLOOR_Y + a_i·KY——最新在正前下方，历史沿墙一圈圈向上卷。
-     hArc > 0 表示已向历史方向滚动：整条记录沿螺旋向下滑过正前「读头」位 ---------- */
+  /* ---------- 布局（2D 直列式）：面板按各自高度自下而上堆叠成单列，最新在列底
+     （底边 FLOOR_Y），历史越旧越高。a_i = 面板 i 与最新端之间的堆叠高度（米）；
+     hArc 为滚动量——整列向下滑过固定可视带 [FLOOR_Y, BAND_HI]，与 2D 滚动同构：
+     往回翻 = 记录向下移出带底，更早的内容从带顶进入。面板世界高优先取栅格化后的
+     实际值（与网格完全一致），未栅格化时用 2D 量测估算兜底 ---------- */
 
-  /* 幽灵卡（卷绕可见性）：实窗之外、GHOST_ARC 之内的消息画成半透明暗色 quad
-     （无纹理，共享 geometry/material，按 id 对象池）。跟随模式下实窗只有 ~13 块
-     面板，幽灵卡让向上卷绕的记录肉眼可见；滚动时幽灵卡流入实窗变真面板。 */
-  const ghostGeo = new THREE.PlaneGeometry(1, 1);
-  const ghostMat = new THREE.MeshBasicMaterial({ color: 0x0e1522, transparent: true, opacity: 0.3, depthWrite: false });
-  const ghostGroup = new THREE.Group();
-  scene.add(ghostGroup);
-  const ghosts = new Map(); // id → mesh
-
-  function ghostWorldH(e) {
-    return THREE.MathUtils.clamp(PANEL_W * ((e.heightCss || 200) / (e.widthCss || 1)), 0.42, 2.35);
+  function slotH(e) {
+    return panels.heightOf(e.id)
+      || THREE.MathUtils.clamp(PANEL_W * ((e.heightCss || 200) / (e.widthCss || 1)), 0.42, 2.35);
   }
 
-  function syncGhosts(list) {
-    const want = new Map();
-    for (const e of list) {
-      e._ghostY = FLOOR_Y + e._a * KY + ghostWorldH(e) / 2;
-      want.set(e.id, e);
-    }
-    for (const [id, mesh] of ghosts) {
-      if (!want.has(id)) { ghostGroup.remove(mesh); ghosts.delete(id); continue; }
-      const e = want.get(id);
-      mesh.position.set(R * Math.sin(e._phi), e._ghostY, R * Math.cos(e._phi));
-      mesh.rotation.y = e._phi + Math.PI;
-    }
-    for (const [id, e] of want) {
-      if (ghosts.has(id)) continue;
-      const mesh = new THREE.Mesh(ghostGeo, ghostMat);
-      mesh.scale.set(PANEL_W, ghostWorldH(e), 1);
-      mesh.position.set(R * Math.sin(e._phi), e._ghostY, R * Math.cos(e._phi));
-      mesh.rotation.y = e._phi + Math.PI;
-      ghostGroup.add(mesh);
-      ghosts.set(id, mesh);
-    }
+  /* 消息 id → 稳定横向偏移（米）：单列布局下所有面板同方位，图表/图片/3D 模型
+     等原生对象若仍取面板方位会全部叠在同一点，按 id 散开在前方地面 */
+  function hashSpread(id) {
+    let h = 0;
+    const s = String(id);
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return ((h % 9) - 4) * 0.82;
   }
 
-  function maxArc() {
-    return strip.length > 1 ? (strip.length - 1) * PITCH + 0.5 : 0;
+  let totalH = 0; /* 整列堆叠总高（最新端→最旧端） */
+
+  function maxScroll() {
+    return Math.max(0, totalH - (BAND_HI - FLOOR_Y));
   }
 
   function scrollBy(d) {
     if (follow) { follow = false; refreshFollowBtn(); }
-    hArc = THREE.MathUtils.clamp(hArc + d, 0, maxArc());
-    syncSlider();
+    hArc = THREE.MathUtils.clamp(hArc + d, 0, maxScroll());
+    syncThumb();
   }
 
   function layout(dt) {
+    /* 撤回等导致 totalH 缩水时收敛滚动量（用上一帧 totalH 即可，下一帧自然校正） */
+    if (hArc > maxScroll()) hArc = maxScroll();
     const n = strip.length;
     const entries = [];
-    const ghostList = [];
-    for (let i = 0; i < n; i++) {
-      const a = (n - 1 - i) * PITCH - hArc;
-      if (a > -WIN_NEW * R && a < WIN_OLD * R) {
-        strip[i]._a = a;
-        strip[i]._phi = ANCHOR + a / R;
-        entries.push(strip[i]);
-      } else if (a >= WIN_OLD * R && a <= GHOST_ARC) {
-        strip[i]._a = a;
-        strip[i]._phi = ANCHOR + a / R;
-        ghostList.push(strip[i]);
+    let acc = 0;
+    for (let i = n - 1; i >= 0; i--) {
+      const e = strip[i];
+      const h = slotH(e);
+      e._a = acc;
+      e._h = h;
+      acc += h + GAP;
+      const yBot = FLOOR_Y + e._a - hArc;
+      /* 窗口 = 槽位与可视带（带底 0.2 贴地）相交的面板 */
+      if (yBot < BAND_HI && yBot + h > 0.2) {
+        e._phi = ANCHOR;
+        e._spread = hashSpread(e.id);
+        entries.push(e);
       }
     }
-    window.__xrDebug && (window.__xrDebug.lastLayout = { n, entries: entries.length, hArc, follow });
+    totalH = acc;
+    window.__xrDebug && (window.__xrDebug.lastLayout = { n, entries: entries.length, hArc, follow, totalH });
     /* 聚焦接管：面板聚焦 → 原生物让位；图片聚焦 → 仅目标平面移到视点前放大 */
     native.setFocused(focus ? focus.id : null);
     native.setOverride(focus && focus.kind === "image" ? focusPose(1.15) : null);
@@ -463,16 +454,16 @@ export async function createXR(ctx) {
       place: (e, hWorld) => {
         if (focus && focus.kind === "panel" && e.id === focus.id) return focusPose(hWorld);
         return {
-          x: R * Math.sin(e._phi),
-          y: FLOOR_Y + e._a * KY + hWorld / 2,
-          z: R * Math.cos(e._phi),
-          rotY: e._phi + Math.PI,
+          x: 0,
+          y: FLOOR_Y + e._a - hArc + hWorld / 2,
+          z: -R,
+          rotY: 0,
         };
       },
       dt,
     });
-    syncGhosts(ghostList);
     native.sync(entries, (id) => panels.positionOf(id), dt);
+    syncThumb();
   }
 
   /* ---------- 控制（桌面第一人称：拖拽环视 / 滚轮走近 / WASD / ←→ 翻历史） ---------- */
@@ -571,7 +562,8 @@ export async function createXR(ctx) {
       const entry = strip.find((e) => e.id === id);
       const phi = entry && entry._phi != null ? entry._phi : ANCHOR;
       const rr = R - 1.7;
-      holder.position.set(rr * Math.sin(phi), 0, rr * Math.cos(phi));
+      const spread = (entry && entry._spread) || 0;
+      holder.position.set(rr * Math.sin(phi) + spread * 0.7, 0, rr * Math.cos(phi));
       holder.rotation.y = phi + Math.PI;
       scene.add(holder);
       while (chatModels.size >= MODEL_CAP) removeChatModel(modelOrder[0]);
@@ -683,12 +675,13 @@ export async function createXR(ctx) {
       camera.position.z += (fz * fwd + rz * side) * speed;
       clampCamera();
     }
-    if (keys.has("arrowleft")) scrollBy(dt * 2.2);    /* ← 把左侧（更旧）面板转向正前 */
+    if (keys.has("arrowleft")) scrollBy(dt * 2.2);    /* ← 翻向更早（列上滑过带顶）；→ 回向最新 */
     if (keys.has("arrowright")) scrollBy(-dt * 2.2);
     camera.rotation.set(look.pitch, look.yaw, 0);
   }
 
-  /* ---------- 跟随与滑杆 ---------- */
+  /* ---------- 跟随与右侧滚行条（2D 滚动条同构：拇指在底部 = 最新/跟随，
+     向上拖 = 看更早历史；拇指高度按可视带占整列比例，整列装得下时隐藏） ---------- */
 
   function refreshFollowBtn() {
     followBtn.textContent = follow ? t("xrFollowOn") : t("xrFollowOff");
@@ -700,25 +693,44 @@ export async function createXR(ctx) {
   }
   followBtn.addEventListener("click", toggleFollow);
 
-  function syncSlider() {
-    if (sliderActive) return;
-    const ma = maxArc();
-    slider.value = String(ma > 0 ? Math.round(1000 * (1 - hArc / ma)) : 1000);
+  function syncThumb() {
+    const ma = maxScroll();
+    const trackH = vscroll.clientHeight;
+    if (ma <= 0 || trackH <= 0) { vthumb.style.display = "none"; return; }
+    vthumb.style.display = "";
+    const frac = THREE.MathUtils.clamp((BAND_HI - FLOOR_Y) / totalH, 0.08, 1);
+    const th = Math.max(24, Math.round(trackH * frac));
+    vthumb.style.height = th + "px";
+    const f = 1 - hArc / ma; /* 1 = 最新（拇指沉底），0 = 最旧（拇指到顶） */
+    vthumb.style.top = Math.round((trackH - th) * f) + "px";
   }
-  slider.addEventListener("pointerdown", () => { sliderActive = true; });
-  const releaseSlider = () => { sliderActive = false; };
-  slider.addEventListener("pointerup", releaseSlider);
-  slider.addEventListener("pointercancel", releaseSlider);
-  slider.addEventListener("input", () => {
-    const ma = maxArc();
-    if (ma > 0) {
-      hArc = (1 - slider.value / 1000) * ma;
-      /* 拖回最右（最新）自然恢复跟随 */
-      if (Number(slider.value) >= 995) { follow = true; }
-      else if (follow) { follow = false; }
-      refreshFollowBtn();
-    }
+  function thumbFromEvent(e) {
+    const ma = maxScroll();
+    if (ma <= 0) return;
+    const rect = vscroll.getBoundingClientRect();
+    const th = vthumb.offsetHeight || 24;
+    const f = THREE.MathUtils.clamp((e.clientY - rect.top - th / 2) / Math.max(1, rect.height - th), 0, 1);
+    hArc = (1 - f) * ma;
+    /* 拖回最底（最新）自然恢复跟随 */
+    if (f >= 0.995) { follow = true; }
+    else if (follow) { follow = false; }
+    refreshFollowBtn();
+  }
+  vthumb.addEventListener("pointerdown", (e) => {
+    scrollDrag = true;
+    try { vthumb.setPointerCapture(e.pointerId); } catch (err) {}
+    thumbFromEvent(e);
+    e.preventDefault();
   });
+  vscroll.addEventListener("pointerdown", (e) => {
+    if (e.target === vthumb) return; /* 点击轨道空白 → 跳转到该位置并继续拖动 */
+    scrollDrag = true;
+    thumbFromEvent(e);
+  });
+  window.addEventListener("pointermove", (e) => { if (scrollDrag) thumbFromEvent(e); });
+  const releaseScroll = () => { scrollDrag = false; };
+  window.addEventListener("pointerup", releaseScroll);
+  window.addEventListener("pointercancel", releaseScroll);
 
   /* ---------- WebXR 沉浸式会话（任务 10）：renderer.xr + 手柄射线拾取 + 摇杆平移/转向。
      输入抽象层三动作：确认（trigger→射线拾取，桌面=鼠标点击）、移动（左摇杆平移，
@@ -939,14 +951,14 @@ export async function createXR(ctx) {
     if (follow && hArc > 0.001) {
       hArc *= Math.exp(-dt * 4);
       if (hArc < 0.005) hArc = 0;
-      syncSlider();
+      syncThumb();
     }
     layout(dt);
     try { avatars.update(dt); } catch (err) {} /* 形象呼吸/浮动/表情推进（需求 4.4） */
     updateSpatialVoices(); /* 语音声源跟随站位/面板位 + 口型推进（任务 9） */
     /* 接近已加载的最旧一端 → 向前分页回填（一次性拉全，需求 2.7） */
-    const endArc = (strip.length - 1) * PITCH;
-    if (strip.length && !historyEnd && hArc + WIN_OLD * R > endArc - 1.2 && (endArc < WIN_OLD * R - 1 || hArc > 0)) {
+    const bandH = BAND_HI - FLOOR_Y;
+    if (strip.length && !historyEnd && hArc + bandH > totalH - 1.2 && (totalH < bandH + 1 || hArc > 0)) {
       backfill();
     }
     renderer.render(scene, camera);
@@ -992,7 +1004,7 @@ export async function createXR(ctx) {
     },
     debugRec: (id) => panels.debugRec(String(id)),
     ids: () => panels.group.children.map((m) => m.userData.panelId),
-    ghosts: () => ghosts.size,
+    scroll: () => ({ hArc: +hArc.toFixed(2), max: +maxScroll().toFixed(2), totalH: +totalH.toFixed(2), follow }),
     nativeGroup: () => native.group,
     avatarGroup: () => avatars.group,
     avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */
@@ -1038,10 +1050,6 @@ export async function createXR(ctx) {
     native.dispose();
     avatars.dispose();
     panels.dispose();
-    for (const [, m] of ghosts) ghostGroup.remove(m);
-    ghosts.clear();
-    ghostGeo.dispose();
-    ghostMat.dispose();
     disposeScene();
     renderer.dispose();
     try { renderer.forceContextLoss(); } catch (e) {}

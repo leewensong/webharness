@@ -4,7 +4,7 @@
 
 export const XR_I18N = {
   zh: {
-    xrHintDesktop: "拖拽环视 · 滚轮走近 · W/S 移动 · ←/→ 翻阅历史（沿墙向上卷绕） · F 跟随最新 · Esc 返回 2D",
+    xrHintDesktop: "拖拽环视 · 滚轮走近 · W/S 移动 · 拖右侧滚行条或 ←/→ 翻阅历史 · F 跟随最新 · Esc 返回 2D",
     xrMsgCount: "共 {{n}} 条",
     xrFollowOn: "跟随最新：开",
     xrFollowOff: "跟随最新：关",
@@ -28,7 +28,7 @@ export const XR_I18N = {
     xrSendFail: "发送失败，请重试",
   },
   en: {
-    xrHintDesktop: "Drag to look around · wheel to move · W/S walk · ←/→ browse history (wound up the wall) · F follow latest · Esc back to 2D",
+    xrHintDesktop: "Drag to look around · wheel to move · W/S walk · drag the scrollbar or ←/→ to browse history · F follow latest · Esc back to 2D",
     xrMsgCount: "{{n}} messages",
     xrFollowOn: "Follow latest: on",
     xrFollowOff: "Follow latest: off",

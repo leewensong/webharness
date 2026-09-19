@@ -653,7 +653,9 @@ export function createNativeSystem(opts) {
         } else {
           const hr = Math.hypot(pp.x, pp.z) || 1;
           const k = CHART_RADIUS / hr;
-          const tx = pp.x * k, tz = pp.z * k;
+          /* 直列布局：面板全部同方位（pp.x≈0），按消息 id 的稳定横向偏移散开，
+             避免多张图表/图片叠在同一点（xr-main 的 hashSpread 计算，随条目传入） */
+          const tx = pp.x * k + (e._spread || 0) * k, tz = pp.z * k;
           rec.obj.position.x += (tx - rec.obj.position.x) * l;
           rec.obj.position.z += (tz - rec.obj.position.z) * l;
           /* 图片跟随面板中心高度；图表/a2ui 立于地面（baseY），随方位即可对应 */

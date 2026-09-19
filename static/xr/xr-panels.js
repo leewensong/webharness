@@ -423,6 +423,12 @@ export function createPanelSystem(opts) {
     return rec && rec.mesh ? rec.mesh.position : null;
   }
 
+  /* 面板当前世界高（网格 scale.y，含未栅格化占位高）——直列布局堆叠用；无记录返回 null */
+  function heightOf(id) {
+    const rec = records.get(id);
+    return rec && rec.mesh ? rec.mesh.scale.y : null;
+  }
+
   function evictLRU() {
     while (texCache.size > maxTextures) {
       let worstKey = null, worstScore = Infinity;
@@ -464,6 +470,11 @@ export function createPanelSystem(opts) {
         kickRaster(rec);
       }
       if (rec.entry !== e) rec.entry = e;
+      /* 被 LRU 挤掉纹理后面板重新可见：重栅格化，否则永远停留在共享占位符 */
+      if (rec.rasterState === "done" && !rec.material) {
+        rec.rasterState = "idle";
+        kickRaster(rec);
+      }
       const hWorld = rec.rasterState === "done" && rec.wCss
         ? THREE.MathUtils.clamp(panelWidth * (rec.segHeightCss() / rec.wCss), minH, maxH)
         : THREE.MathUtils.clamp(panelWidth * 0.8, minH, maxH);
@@ -553,5 +564,5 @@ export function createPanelSystem(opts) {
     };
   }
 
-  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, dispose, stats, debugRec };
+  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, heightOf, dispose, stats, debugRec };
 }
