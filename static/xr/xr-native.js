@@ -502,7 +502,7 @@ function buildA2uiObject(blocks, bridge) {
 }
 
 /* ---------- 图片消息：白框纹理平面（需求 3.6）。本地原点在平面中心 ----------
-   （正常放置 group.position.y = IMG_CENTER_Y；聚焦时由 override 提到视点高度）。
+   （正常悬挂在所属消息面板的中心高度，随卷绕布局爬升；聚焦时由 override 提到视点高度）。
    纹理异步加载：/api/ 附件经 opts.fetchImage 取 blob URL；失败保持深色占位面，
    不重试（面板模式的 2D 图片始终兜底可见）。 */
 
@@ -625,6 +625,7 @@ export function createNativeSystem(opts) {
         if (blocks == null && spec == null) {
           rec.obj.position.y = IMG_CENTER_Y;
           rec.baseY = IMG_CENTER_Y;
+          rec.isImg = true; /* 图片悬挂高度跟随所属面板（卷绕布局下面板随龄爬升） */
           startImageLoad(rec, m, fetchImage);
         }
         /* 驻留上限：移除最旧的不可见图表 */
@@ -655,7 +656,8 @@ export function createNativeSystem(opts) {
           const tx = pp.x * k, tz = pp.z * k;
           rec.obj.position.x += (tx - rec.obj.position.x) * l;
           rec.obj.position.z += (tz - rec.obj.position.z) * l;
-          rec.obj.position.y += ((rec.baseY || 0) - rec.obj.position.y) * l; /* 退聚焦后回到原悬挂高度 */
+          /* 图片跟随面板中心高度；图表/a2ui 立于地面（baseY），随方位即可对应 */
+          rec.obj.position.y += ((rec.isImg ? pp.y : (rec.baseY || 0)) - rec.obj.position.y) * l; /* 退聚焦后回到悬挂高度 */
           rec.obj.rotation.y = Math.atan2(tx, tz) + Math.PI;
         }
         rec.obj.visible = true;

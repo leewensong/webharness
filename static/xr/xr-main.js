@@ -1,4 +1,4 @@
-/* WebXR 3D 渲染端主模块：场景生命周期、弧形消息墙（面板模式管线）、桌面第一人称预览。
+/* WebXR 3D 渲染端主模块：场景生命周期、螺旋卷绕消息墙（面板模式管线）、桌面第一人称预览。
    架构不变量：3D 只订阅 2D 端的 msgEvents/roomEvents（单一数据流），不建第二套轮询；
    历史回填是沿墙向前的一次性 beforeId 分页拉取（需求 2.7）。退出时资源全量 dispose，
    任何 3D 故障不得影响 2D 正常聊天（需求 1.5、7.4）。 */
@@ -17,7 +17,10 @@ const PANEL_W = 1.12;    // 面板世界宽（米）
 const ANCHOR = Math.PI;  // 最新消息方位角（相机默认在 +Z 侧面向 −Z 看墙正面）
 const WIN_NEW = 1.05;    // 新侧可视角（弧度）——窗口保持在前向弧段，越过 2π 的面板会被投影翻转
 const WIN_OLD = 1.7;     // 旧侧可视角（弧度）
-const FLOOR_Y = 0.42;    // 面板底边离地高度
+const FLOOR_Y = 0.42;    // 卷绕基准高度：最新面板底边（历史沿墙向上卷，越旧越高）
+const RING_H = 2.5;      // 螺旋每圈升高（≥ 面板 maxH，上下圈同方位不重叠）
+const KY = RING_H / (2 * Math.PI * R); // 单位弧长升高量（每条消息约 0.083m）
+const GHOST_ARC = WIN_OLD * R + 4 * Math.PI * R; // 实窗旧侧之外再卷 2 圈的幽灵卡范围
 const EYE_Y = 1.55;
 const MAX_RADIUS = 5.1;  // 相机水平活动半径（离墙 0.9m）
 
@@ -384,8 +387,45 @@ export async function createXR(ctx) {
     statusEl.textContent = strip.length ? statusEl.textContent : t("xrRoomEmpty");
   }
 
-  /* ---------- 布局（弧长传送带：a_i = 保守弧长 − 滚动偏移，φ_i = ANCHOR + a_i / R；
-     hArc > 0 表示已向历史方向滚动——面板整体右移，旧消息从左侧进入窗口） ---------- */
+  /* ---------- 布局（螺旋卷绕：a_i = 龄弧长 − 滚动偏移，φ_i = ANCHOR + a_i / R，
+     面板底边 y = FLOOR_Y + a_i·KY——最新在正前下方，历史沿墙一圈圈向上卷。
+     hArc > 0 表示已向历史方向滚动：整条记录沿螺旋向下滑过正前「读头」位 ---------- */
+
+  /* 幽灵卡（卷绕可见性）：实窗之外、GHOST_ARC 之内的消息画成半透明暗色 quad
+     （无纹理，共享 geometry/material，按 id 对象池）。跟随模式下实窗只有 ~13 块
+     面板，幽灵卡让向上卷绕的记录肉眼可见；滚动时幽灵卡流入实窗变真面板。 */
+  const ghostGeo = new THREE.PlaneGeometry(1, 1);
+  const ghostMat = new THREE.MeshBasicMaterial({ color: 0x0e1522, transparent: true, opacity: 0.3, depthWrite: false });
+  const ghostGroup = new THREE.Group();
+  scene.add(ghostGroup);
+  const ghosts = new Map(); // id → mesh
+
+  function ghostWorldH(e) {
+    return THREE.MathUtils.clamp(PANEL_W * ((e.heightCss || 200) / (e.widthCss || 1)), 0.42, 2.35);
+  }
+
+  function syncGhosts(list) {
+    const want = new Map();
+    for (const e of list) {
+      e._ghostY = FLOOR_Y + e._a * KY + ghostWorldH(e) / 2;
+      want.set(e.id, e);
+    }
+    for (const [id, mesh] of ghosts) {
+      if (!want.has(id)) { ghostGroup.remove(mesh); ghosts.delete(id); continue; }
+      const e = want.get(id);
+      mesh.position.set(R * Math.sin(e._phi), e._ghostY, R * Math.cos(e._phi));
+      mesh.rotation.y = e._phi + Math.PI;
+    }
+    for (const [id, e] of want) {
+      if (ghosts.has(id)) continue;
+      const mesh = new THREE.Mesh(ghostGeo, ghostMat);
+      mesh.scale.set(PANEL_W, ghostWorldH(e), 1);
+      mesh.position.set(R * Math.sin(e._phi), e._ghostY, R * Math.cos(e._phi));
+      mesh.rotation.y = e._phi + Math.PI;
+      ghostGroup.add(mesh);
+      ghosts.set(id, mesh);
+    }
+  }
 
   function maxArc() {
     return strip.length > 1 ? (strip.length - 1) * PITCH + 0.5 : 0;
@@ -400,11 +440,17 @@ export async function createXR(ctx) {
   function layout(dt) {
     const n = strip.length;
     const entries = [];
+    const ghostList = [];
     for (let i = 0; i < n; i++) {
-      const phi = ANCHOR + ((n - 1 - i) * PITCH - hArc) / R;
-      if (phi > ANCHOR - WIN_NEW && phi < ANCHOR + WIN_OLD) {
-        strip[i]._phi = phi;
+      const a = (n - 1 - i) * PITCH - hArc;
+      if (a > -WIN_NEW * R && a < WIN_OLD * R) {
+        strip[i]._a = a;
+        strip[i]._phi = ANCHOR + a / R;
         entries.push(strip[i]);
+      } else if (a >= WIN_OLD * R && a <= GHOST_ARC) {
+        strip[i]._a = a;
+        strip[i]._phi = ANCHOR + a / R;
+        ghostList.push(strip[i]);
       }
     }
     window.__xrDebug && (window.__xrDebug.lastLayout = { n, entries: entries.length, hArc, follow });
@@ -418,13 +464,14 @@ export async function createXR(ctx) {
         if (focus && focus.kind === "panel" && e.id === focus.id) return focusPose(hWorld);
         return {
           x: R * Math.sin(e._phi),
-          y: FLOOR_Y + hWorld / 2,
+          y: FLOOR_Y + e._a * KY + hWorld / 2,
           z: R * Math.cos(e._phi),
           rotY: e._phi + Math.PI,
         };
       },
       dt,
     });
+    syncGhosts(ghostList);
     native.sync(entries, (id) => panels.positionOf(id), dt);
   }
 
@@ -945,6 +992,7 @@ export async function createXR(ctx) {
     },
     debugRec: (id) => panels.debugRec(String(id)),
     ids: () => panels.group.children.map((m) => m.userData.panelId),
+    ghosts: () => ghosts.size,
     nativeGroup: () => native.group,
     avatarGroup: () => avatars.group,
     avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */
@@ -990,6 +1038,10 @@ export async function createXR(ctx) {
     native.dispose();
     avatars.dispose();
     panels.dispose();
+    for (const [, m] of ghosts) ghostGroup.remove(m);
+    ghosts.clear();
+    ghostGeo.dispose();
+    ghostMat.dispose();
     disposeScene();
     renderer.dispose();
     try { renderer.forceContextLoss(); } catch (e) {}
