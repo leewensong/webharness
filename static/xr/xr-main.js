@@ -11,9 +11,12 @@ import { mergeXRI18n } from "./xr-i18n.js";
 import { createPanelSystem } from "./xr-panels.js";
 import { createNativeSystem } from "./xr-native.js";
 import { createAvatarSystem } from "./xr-avatars.js";
+import { buildRoomScene, sceneKeyOf } from "./xr-rooms.js";
 
 const R = 6;             // 消息列半径（米）
-const PANEL_W = 1.12;    // 面板世界宽（米）
+const PANEL_W = 1.12;    // 参考面板世界宽（米）——单面板实际宽 = 气泡 CSS 宽 × PX_PER_M
+const REF_CSS = 480;     // 参考 CSS 宽（与 xr-panels 的 refCss 一致）：全局 px→米 比例的分母
+const PX_PER_M = PANEL_W / REF_CSS; /* 短消息窄、长消息宽，字号全局一致（不再等宽压扁）；480 对应 15px 字 ≈ 3.5cm，2~3m 外可读 */
 const ANCHOR = Math.PI;  // 消息列方位角（相机默认在 +Z 侧面向 −Z 看墙正面）
 const FLOOR_Y = 0.42;    // 列底基准：最新面板底边（历史向上堆叠，越旧越高）
 const GAP = 0.16;        // 面板纵向间距
@@ -109,7 +112,7 @@ export async function createXR(ctx) {
   const panels = createPanelSystem({
     t,
     panelWidth: PANEL_W,
-    minH: 0.42,
+    refCss: REF_CSS,
     maxH: 2.35,
     maxTextures: 24,
   });
@@ -476,7 +479,7 @@ export async function createXR(ctx) {
 
   function slotH(e) {
     return panels.heightOf(e.id)
-      || THREE.MathUtils.clamp(PANEL_W * ((e.heightCss || 200) / (e.widthCss || 1)), 0.42, 2.35);
+      || THREE.MathUtils.clamp((e.heightCss || 200) * PX_PER_M, 0.1, 2.3);
   }
 
   /* 消息 id → 稳定横向偏移（米）：单列布局下所有面板同方位，图表/图片/3D 模型
@@ -528,10 +531,11 @@ export async function createXR(ctx) {
     panels.sync({
       entries,
       keepIds: strip.map((e) => e.id),
-      place: (e, hWorld) => {
-        if (focus && focus.kind === "panel" && e.id === focus.id) return focusPose(hWorld);
+      place: (e, hWorld, wWorld) => {
+        if (focus && focus.kind === "panel" && e.id === focus.id) return focusPose(Math.max(wWorld, hWorld));
         return {
-          x: 0,
+          /* 面板宽度随 2D 气泡宽度变化 → 左边缘对齐同一列轴，列右侧参差即 2D 观感本身 */
+          x: -PANEL_W / 2 + wWorld / 2,
           y: FLOOR_Y + e._a - hArc + hWorld / 2,
           z: -R,
           rotY: 0,
@@ -835,6 +839,9 @@ export async function createXR(ctx) {
     c.add(line);
     c.userData.xrLine = line;
     c.addEventListener("selectstart", () => onXRSelect(c));
+    /* 侧握键按住说话（松开发送）——沉浸式下的快捷语音入口 */
+    c.addEventListener("squeezestart", () => startVRRec());
+    c.addEventListener("squeezeend", () => stopVRRec());
     rig.add(c);
     xrControllers.push(c);
   }
@@ -844,12 +851,18 @@ export async function createXR(ctx) {
     const s = renderer.xr.getSession();
     if (s && s.domOverlayState) hud.classList.add("xr-immersive");
     refreshVRBtn();
+    vrBar.visible = true;
+    refreshVrBar();
+    vrHintText(t("xrVRHint"), 9000); /* 入场提示几秒后自动淡出 */
   });
   renderer.xr.addEventListener("sessionend", () => {
     xrInImmersive = false;
     for (const c of xrControllers) c.userData.xrLine.visible = false;
     hud.classList.remove("xr-immersive");
     refreshVRBtn();
+    killVRRec(); /* 会话结束即停录音（防麦克风指示灯残留） */
+    vrBar.visible = false;
+    vrHint.visible = false;
   });
 
   async function enterImmersive() {
@@ -872,12 +885,191 @@ export async function createXR(ctx) {
     if (s) { try { s.end().catch(() => {}); } catch (err) {} }
   }
 
-  /* 确认动作（手柄）：与桌面一致的拾取链（面板/聚焦/图表等） */
+  /* ---------- 世界内 VR 控制条 + 语音消息（沉浸式专用，不跟头） ----------
+     Quest 等浏览器不给 dom-overlay，头显里就没有任何 DOM 入口；这里把「必要设置」
+     做成一排钉在消息列底部前方的小面板（世界内固定，不是浮在眼前），手柄射线可点：
+     语音（点一下开始/再点结束，等价于按住侧握键）· 跟随最新 · 返回 2D。
+     语音消息只发音频、不依赖 ASR——人类能听，Agent 侧自己调 ASR（用户确认可行）。 */
+
+  const vrBar = new THREE.Group();
+  vrBar.visible = false;
+  scene.add(vrBar);
+
+  function drawBarButton(mesh, label) {
+    const { c, g } = mesh.userData.label;
+    g.clearRect(0, 0, c.width, c.height);
+    g.beginPath();
+    g.roundRect(4, 8, c.width - 8, c.height - 16, 30);
+    g.fillStyle = "rgba(14,20,32,0.9)";
+    g.fill();
+    g.lineWidth = 3;
+    g.strokeStyle = "rgba(91,140,255,0.9)";
+    g.stroke();
+    g.fillStyle = "#dfe8f4";
+    g.font = "bold 40px system-ui, sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(label, c.width / 2, c.height / 2 + 2);
+    mesh.material.map.needsUpdate = true;
+  }
+  function buildBarButton(label) {
+    const c = document.createElement("canvas");
+    c.width = 384;
+    c.height = 96;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.5, 0.125),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false })
+    );
+    mesh.material.map.colorSpace = THREE.SRGBColorSpace;
+    mesh.userData.label = { c, g: c.getContext("2d") };
+    drawBarButton(mesh, label);
+    return mesh;
+  }
+  const vrVoiceBtn = buildBarButton(t("xrVrVoice"));
+  const vrFollowBtn = buildBarButton(t("xrFollowOn"));
+  const vrExitBtn = buildBarButton(t("xrExit"));
+  vrVoiceBtn.position.x = -0.56;
+  vrExitBtn.position.x = 0.56;
+  vrBar.add(vrVoiceBtn, vrFollowBtn, vrExitBtn);
+
+  function buildVrHint() {
+    const c = document.createElement("canvas");
+    c.width = 1024;
+    c.height = 128;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.7, 0.212),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false })
+    );
+    mesh.material.map.colorSpace = THREE.SRGBColorSpace;
+    mesh.userData.label = { c, g: c.getContext("2d") };
+    mesh.position.y = 0.2;
+    return mesh;
+  }
+  const vrHint = buildVrHint();
+  vrHint.visible = false;
+  vrBar.add(vrHint);
+  /* 钉在消息列底部前方（世界内固定，离墙 0.85m 便于手柄射线瞄准；不跟头） */
+  vrBar.position.set(0, FLOOR_Y - 0.26, -R + 0.85);
+  vrBar.rotation.x = -0.3; /* 略上仰，便于低头看 */
+
+  function drawVrHint(text) {
+    const { c, g } = vrHint.userData.label;
+    g.clearRect(0, 0, c.width, c.height);
+    g.beginPath();
+    g.roundRect(4, 12, c.width - 8, c.height - 24, 34);
+    g.fillStyle = "rgba(10,15,24,0.86)";
+    g.fill();
+    g.lineWidth = 3;
+    g.strokeStyle = "rgba(91,140,255,0.7)";
+    g.stroke();
+    g.fillStyle = "#dfe8f4";
+    g.font = "36px system-ui, sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(text, c.width / 2, c.height / 2 + 2);
+    vrHint.material.map.needsUpdate = true;
+  }
+  let vrHintTimer = null;
+  let vrHintMsg = ""; /* 最近一次世界内提示文本（调试/验证用） */
+  function vrHintText(text, holdMs) {
+    vrHintMsg = text;
+    drawVrHint(text);
+    vrHint.visible = true;
+    if (vrHintTimer) clearTimeout(vrHintTimer);
+    if (holdMs) vrHintTimer = setTimeout(() => { if (!vrRec) vrHint.visible = false; }, holdMs);
+  }
+  function refreshVrBar() {
+    drawBarButton(vrFollowBtn, follow ? t("xrFollowOn") : t("xrFollowOff"));
+    drawBarButton(vrVoiceBtn, vrRec ? t("xrMicStop") : t("xrVrVoice"));
+  }
+
+  const VR_REC_MAX_MS = 60000;
+  let vrRec = null; /* { mr, chunks, stream, startMs, timer, autoStop } */
+  function vrPickMime() {
+    const cands = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+    for (const m of cands) {
+      try { if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; } catch (e) {}
+    }
+    return "";
+  }
+  function killVRRec() {
+    if (!vrRec) return;
+    const cur = vrRec;
+    vrRec = null;
+    if (cur.timer) clearInterval(cur.timer);
+    if (cur.autoStop) clearTimeout(cur.autoStop);
+    try { cur.mr.onstop = null; if (cur.mr.state !== "inactive") cur.mr.stop(); } catch (e) {}
+    if (cur.stream) { try { cur.stream.getTracks().forEach((tk) => tk.stop()); } catch (e) {} }
+    refreshVrBar();
+  }
+  async function startVRRec() {
+    if (disposed || vrRec) return;
+    if (!ctx.sendVoiceMsg) { vrHintText(t("xrVoiceUnsupported"), 4000); return; }
+    if (!navigator.mediaDevices || !window.MediaRecorder) { vrHintText(t("noRecApi"), 4000); return; }
+    let stream = null;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { vrHintText(t("asrNotAllowed"), 4000); return; }
+    if (disposed || vrRec) { try { stream.getTracks().forEach((tk) => tk.stop()); } catch (e) {} return; }
+    const mime = vrPickMime();
+    let mr = null;
+    try { mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
+    catch (e) {
+      try { stream.getTracks().forEach((tk) => tk.stop()); } catch (e2) {}
+      vrHintText(t("noRecApi"), 4000);
+      return;
+    }
+    vrRec = { mr, chunks: [], stream, startMs: Date.now(), timer: null, autoStop: null };
+    mr.ondataavailable = (e) => { if (e.data && e.data.size && vrRec) vrRec.chunks.push(e.data); };
+    mr.onstop = () => onVRRecStop();
+    try { mr.start(250); } catch (e) { killVRRec(); vrHintText(t("noRecApi"), 4000); return; }
+    refreshVrBar();
+    const tick = () => {
+      if (!vrRec) return;
+      vrHintText("● " + t("xrRecording") + " " + ((Date.now() - vrRec.startMs) / 1000).toFixed(1) + "s", 0);
+    };
+    tick();
+    vrRec.timer = setInterval(tick, 250);
+    vrRec.autoStop = setTimeout(() => stopVRRec(), VR_REC_MAX_MS);
+  }
+  function stopVRRec() {
+    if (!vrRec) return;
+    try { vrRec.mr.stop(); } catch (e) { killVRRec(); }
+  }
+  function vrToggleRec() { if (vrRec) stopVRRec(); else startVRRec(); }
+  async function onVRRecStop() {
+    if (!vrRec) return;
+    const cur = vrRec;
+    const durMs = Date.now() - cur.startMs;
+    const mime = (cur.mr && cur.mr.mimeType) || "audio/webm";
+    const chunks = cur.chunks;
+    killVRRec(); /* 停轨、复位按钮态（此后 vrRec 为 null，提示面板不再被录音态占住） */
+    if (durMs < 1000 || !chunks.length) { vrHintText(t("recTooShort"), 3500); return; }
+    const blob = new Blob(chunks, { type: mime.split(";")[0].trim() || "audio/webm" });
+    try {
+      await ctx.sendVoiceMsg(blob, durMs);
+      vrHintText(t("xrVoiceSent"), 3000);
+    } catch (e) {
+      vrHintText((e && e.message) || t("xrSendFail"), 4500);
+    }
+  }
+  refreshVrBar(); /* 初始文字（此时 vrRec 为 null） */
+
+  /* 确认动作（手柄）：先试世界内控制条，再走与桌面一致的拾取链 */
   function onXRSelect(c) {
     if (disposed || !renderer.xr.isPresenting) return;
     c.getWorldQuaternion(_xrQ1);
     xrRay.ray.origin.setFromMatrixPosition(c.matrixWorld);
     xrRay.ray.direction.set(0, 0, -1).applyQuaternion(_xrQ1).normalize();
+    if (vrBar.visible) {
+      const barHits = xrRay.intersectObjects(vrBar.children, false);
+      if (barHits.length) {
+        const obj = barHits[0].object;
+        if (obj === vrVoiceBtn) { vrToggleRec(); return; }
+        if (obj === vrFollowBtn) { toggleFollow(); return; }
+        if (obj === vrExitBtn) { doExit(); return; }
+        return;
+      }
+    }
     handlePick(xrRay);
   }
 
@@ -892,6 +1084,8 @@ export async function createXR(ctx) {
       const ay = gp.axes[3] || 0;
       if (src.handedness === "right") {
         if (Math.abs(ax) > 0.15) rig.rotation.y -= ax * dt * 2.4; /* 旋转动作 */
+        /* 右摇杆 Y = 翻历史（无 dom-overlay 时的浏览手段；推上=看更早，与桌面 ←/↑ 同向） */
+        if (Math.abs(ay) > 0.15) scrollBy(-ay * dt * 2.2);
       } else if (Math.abs(ax) > 0.15 || Math.abs(ay) > 0.15) {
         /* 移动动作：以头向水平 yaw 为基准推杆平移 */
         camera.getWorldDirection(_xrV1);
@@ -1025,24 +1219,38 @@ export async function createXR(ctx) {
     debugRec: (id) => panels.debugRec(String(id)),
     ids: () => panels.group.children.map((m) => m.userData.panelId),
     scroll: () => ({ hArc: +hArc.toFixed(2), max: +maxScroll().toFixed(2), totalH: +totalH.toFixed(2), follow }),
+    scrollBy: (d) => scrollBy(d), /* 与摇杆/←→ 同一条滚动路径（无头显时验证用） */
     nativeGroup: () => native.group,
     avatarGroup: () => avatars.group,
     avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */
+    /* VR 控制条与语音（无头显时验证用：显示控制条 + 直接驱动同一批处理器） */
+    showVRBar: (on) => { vrBar.visible = !!on; },
+    vrBarGroup: () => vrBar,
+    vrBarClick: (act) => {
+      if (act === "voice") vrToggleRec();
+      else if (act === "follow") toggleFollow();
+      else if (act === "exit") doExit();
+    },
+    vrRecStart: () => startVRRec(),
+    vrRecStop: () => stopVRRec(),
+    vrRecState: () => (vrRec ? { recording: true, ms: Date.now() - vrRec.startMs } : { recording: false }),
+    vrHint: () => vrHintMsg, /* 世界内提示最近一条文本（画布内容不可读，验证用） */
+    childScale: (i) => {
+      const m = panels.group.children[i || 0];
+      return m ? [+m.scale.x.toFixed(3), +m.scale.y.toFixed(3)] : null;
+    },
+    room: () => (roomSystem ? { id: roomSystem.sceneId, seats: roomSystem.seats.length } : null),
+    roomGroup: () => (roomSystem ? roomSystem.group : null),
+    seatOf: (name) => avatars.positionOf(name),
+    mem: () => ({ geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }),
   };
 
   /* ---------- 退出与释放（需求 7.4） ---------- */
 
+  /* 退出时全量释放。统一走 disposeObjectTree——此处原实现只释放 material.map，
+     漏了 normalMap/emissiveMap 等贴图，反复进出 3D 会慢慢涨内存。 */
   function disposeScene() {
-    scene.traverse((obj) => {
-      if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) {
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const mt of mats) {
-          if (mt.map && mt.map !== null) mt.map.dispose();
-          mt.dispose();
-        }
-      }
-    });
+    disposeObjectTree(scene);
   }
 
   function doExit() {
@@ -1057,11 +1265,13 @@ export async function createXR(ctx) {
     renderer.setAnimationLoop(null);
     exitImmersive(); /* 头显会话随 3D 退出一并结束（需求 7.4） */
     stopAsr(); /* 语音识别随退出终止，避免麦克风指示灯残留 */
+    killVRRec(); /* VR 侧握键录音同理 */
     if (resizeTimer) clearTimeout(resizeTimer);
     focus = null;
     for (const id of Array.from(spatialVoices.keys())) dropSpatialVoice(id); /* 空间音频摘除（需求 7.4） */
     try { ctx.setVoiceSpatial(null); } catch (e) {}
     for (const id of Array.from(chatModels.keys())) removeChatModel(id);
+    if (roomSystem) { try { roomSystem.dispose(); } catch (e) {} roomSystem = null; }
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);
     window.removeEventListener("resize", onResize);

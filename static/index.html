@@ -1358,6 +1358,9 @@
             renderMessages([sent], false, true);
             return sent;
           },
+          /* VR 语音消息（沉浸式侧握键/世界内控制条）：只发音频，不走 2D 草稿、
+             私聊与引用上下文；失败抛给 3D 端在世界内提示 */
+          sendVoiceMsg: (blob, durMs) => sendVoice(blob, durMs, { skipContext: true }),
           /* a2ui 数据语义桥：3D 原生小部件复用 2D 同一份解析/绑定/状态机（不抽文件） */
           a2ui: { parse: a2uiParseMessages, value: a2uiValue, apply: a2uiApplyMessages },
           buildStaged: (m) => buildBubble(m, { container: $("xrStage"), pin: false }),
@@ -3902,7 +3905,7 @@
       }
       if (durMs < 1000 || !chunks.length) { restoreRecBase(); voiceToast(t("recTooShort")); return; }
       const mime = mimeFull.split(";")[0].trim() || "audio/webm";
-      await sendVoice(new Blob(chunks, { type: mime }), durMs);
+      try { await sendVoice(new Blob(chunks, { type: mime }), durMs); } catch (e) { /* 失败提示已由 sendVoice 内的 toast/hint 给出 */ }
     }
 
     function restoreRecBase() {
@@ -3911,31 +3914,42 @@
       resizeComposer();
     }
 
-    async function sendVoice(blob, durMs) {
-      if (!recBaseRoom || recBaseRoom !== store.roomName || store.viewingArchive) { restoreRecBase(); return; }
-      const asrText = recAsrFinal.trim();
-      let text = [recBase, asrText].filter(Boolean).join(" ");
-      if (whisperTo.length) text = (whisperPrefix() + " " + text).trim();
+    /* opts.skipContext：3D/VR 侧发来的语音（不读 2D 草稿、不带私聊/引用上下文、
+       也不回写 2D 输入框），发送与回流路径与 2D 录音完全一致 */
+    async function sendVoice(blob, durMs, opts) {
+      const skip = !!(opts && opts.skipContext);
+      if (skip) {
+        if (!store.roomName || store.viewingArchive) return;
+      } else if (!recBaseRoom || recBaseRoom !== store.roomName || store.viewingArchive) {
+        restoreRecBase();
+        return;
+      }
+      const asrText = skip ? "" : recAsrFinal.trim();
+      let text = skip ? "" : [recBase, asrText].filter(Boolean).join(" ");
+      if (!skip && whisperTo.length) text = (whisperPrefix() + " " + text).trim();
       const ext = blob.type.includes("mp4") ? "m4a" : (blob.type.includes("ogg") ? "ogg" : "webm");
       const form = new FormData();
       form.append("file", blob, `voice.${ext}`);
       form.append("text", text);
       form.append("durationMs", String(Math.round(durMs)));
-      if (replyTarget) form.append("replyTo", String(replyTarget.id));
+      if (!skip && replyTarget) form.append("replyTo", String(replyTarget.id));
       try {
         const sent = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/voice`, { method: "POST", body: form });
         try {
           if (sent.downloadUrl) blobCache.set(sent.downloadUrl, URL.createObjectURL(blob));   // 本地即时回放
         } catch (e) {}
-        $("content").value = "";
-        resizeComposer();
-        clearDraft(store.roomName);
-        clearReply();
+        if (!skip) {
+          $("content").value = "";
+          resizeComposer();
+          clearDraft(store.roomName);
+          clearReply();
+        }
         renderMessages([sent], false, true);
       } catch (err) {
-        restoreRecBase();
+        if (!skip) restoreRecBase();
         if (err.status === 410) leaveEndedRoom(err.message);
         else if (err.status !== 401) { setHint(err.message); voiceToast(err.message); }
+        throw err;   /* 3D/VR 侧需要知道失败以提示用户（2D 侧由自己的 toast 兜底） */
       }
     }
 

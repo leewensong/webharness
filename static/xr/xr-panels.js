@@ -20,8 +20,10 @@ const STREAM_THROTTLE_MS = 300;
 
 export function createPanelSystem(opts) {
   const panelWidth = opts.panelWidth || 1.12;
-  const minH = opts.minH || 0.42;
   const maxH = opts.maxH || 2.3;
+  const maxW = opts.maxW || 2.4;
+  const refCss = opts.refCss || 480;       /* 参考 CSS 宽：panelWidth/refCss = 全局 px→米 比例 */
+  const pxPerM = panelWidth / refCss;      /* 所有面板共用：字号随内容一致，宽度随气泡真实宽度 */
   const maxTextures = opts.maxTextures || 24;
   const t = opts.t || ((k) => k);
 
@@ -429,6 +431,12 @@ export function createPanelSystem(opts) {
     return rec && rec.mesh ? rec.mesh.scale.y : null;
   }
 
+  /* 面板当前世界宽（网格 scale.x）——面板宽度随 2D 气泡宽度变化，布局对齐用；无记录返回 null */
+  function widthOf(id) {
+    const rec = records.get(id);
+    return rec && rec.mesh ? rec.mesh.scale.x : null;
+  }
+
   function evictLRU() {
     while (texCache.size > maxTextures) {
       let worstKey = null, worstScore = Infinity;
@@ -452,7 +460,7 @@ export function createPanelSystem(opts) {
   }
 
   /* 每帧同步：entries=窗口内条目，keepIds=全部条目 id（窗口外保留面板隐藏），
-     place(entry, hWorld) → {x,y,z,rotY}；dt 用于平滑（新消息滑入/滚动跟手）。 */
+     place(entry, hWorld, wWorld) → {x,y,z,rotY}；dt 用于平滑（新消息滑入/滚动跟手）。 */
   function sync({ entries, keepIds, place, dt }) {
     if (disposed) return;
     const keep = keepIds || entries.map((e) => e.id);
@@ -475,11 +483,19 @@ export function createPanelSystem(opts) {
         rec.rasterState = "idle";
         kickRaster(rec);
       }
-      const hWorld = rec.rasterState === "done" && rec.wCss
-        ? THREE.MathUtils.clamp(panelWidth * (rec.segHeightCss() / rec.wCss), minH, maxH)
-        : THREE.MathUtils.clamp(panelWidth * 0.8, minH, maxH);
-      rec.mesh.scale.set(panelWidth, hWorld, 1);
-      const p = place(e, hWorld);
+      let wWorld, hWorld;
+      if (rec.rasterState === "done" && rec.wCss) {
+        wWorld = rec.wCss * pxPerM;
+        hWorld = rec.segHeightCss() * pxPerM;
+        /* 超上限时整块等比收缩（w、h 乘同一个 k），绝不单维压扁内容 */
+        const k = Math.min(1, maxW / wWorld, maxH / hWorld);
+        wWorld *= k; hWorld *= k;
+      } else {
+        wWorld = panelWidth;
+        hWorld = Math.min(maxH, panelWidth * 0.8);
+      }
+      rec.mesh.scale.set(wWorld, hWorld, 1);
+      const p = place(e, hWorld, wWorld);
       if (!rec.cur) {
         rec.cur = { x: p.x, y: p.y, z: p.z, rotY: p.rotY };
       } else {
@@ -564,5 +580,5 @@ export function createPanelSystem(opts) {
     };
   }
 
-  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, heightOf, dispose, stats, debugRec };
+  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, heightOf, widthOf, dispose, stats, debugRec };
 }
