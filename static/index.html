@@ -125,6 +125,15 @@
     #people.frames-on .person[data-speak="0"] .avatar { box-shadow: 0 0 0 2px var(--danger); }
     .avatar-pick { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
     .avatar-pick-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+    /* 内置缺省 3D 形象的缩略图卡片（我的资料 / Agent / 注册三处共用） */
+    .av-model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; margin: 4px 0 10px; }
+    .av-model-card { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px;
+      background: var(--panel, #1b2230); border: 1px solid var(--border, #2b3446); border-radius: 10px;
+      cursor: pointer; color: var(--text, #e6ecf5); font-size: 11px; line-height: 1.2; }
+    .av-model-card:hover { border-color: var(--accent, #6f8cff); }
+    .av-model-card.on { border-color: var(--accent, #6f8cff); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #6f8cff) 40%, transparent); }
+    .av-model-card img { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; background: #0e1420; }
+    .av-model-card span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #who { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     #who:hover .who-name { color: var(--accent); }
     .agent-row .who-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -583,10 +592,51 @@
     <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
       <input type="checkbox" id="regHumanoid" style="width:auto;margin:0" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
     </label>
+    <label data-i18n="model3dBuiltinLabel">或选一个内置形象（可选）</label>
+    <div class="av-model-grid" id="regModelGrid"></div>
     <p class="msg-status" id="regStatus"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="closeRegister()" data-i18n="cancel">取消</button>
       <button type="button" class="btn" id="regSubmit" onclick="registerUser()" data-i18n="register">创建账号</button>
+    </div>
+  </dialog>
+
+  <dialog id="myProfile">
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="myProfileTitle">我的资料</h2>
+    <label data-i18n="avatarLabel">头像</label>
+    <div class="avatar-pick">
+      <img id="myAvatarImg" class="avatar lg hidden" alt="" />
+      <div id="myAvatarPh" class="avatar lg ph">未选择</div>
+      <div class="avatar-pick-actions">
+        <button type="button" class="btn ghost small" onclick="document.getElementById('profileAvatarFile').click()" data-i18n="avatarPick">选择图片</button>
+        <span class="hint" data-i18n="avatarHint">JPG/PNG，≤1MB；不选则自动生成</span>
+      </div>
+    </div>
+    <label data-i18n="myModelLabel">3D 形象</label>
+    <p class="hint" id="myModelState" style="white-space:normal;margin:0 0 6px"></p>
+    <div class="av-model-grid" id="myModelGrid"></div>
+    <p class="hint" style="white-space:normal;margin:0 0 6px" data-i18n="myModelOwnHint">也可以用自己的模型：选文件或填外链地址；上传后即替换上面的内置选择。</p>
+    <div class="avatar-pick">
+      <div id="myModelPh" class="file-ph">未选择</div>
+      <div class="avatar-pick-actions">
+        <button type="button" class="btn ghost small" onclick="document.getElementById('myModelFile').click()" data-i18n="filePick">选择文件</button>
+        <button type="button" class="btn ghost small" onclick="clearMyModel()" data-i18n="avatarReset">清除</button>
+        <span class="hint" data-i18n="model3dFileHint">GLB / GLTF，≤20MB；不选则不设 3D 形象</span>
+      </div>
+    </div>
+    <input type="file" id="myModelFile" class="hidden" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onchange="onMyModelPick(event)" />
+    <label for="myModelUrl" data-i18n="model3dUrlLabelShort">或外链地址</label>
+    <input id="myModelUrl" placeholder="https://…/avatar.vrm" />
+    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
+      <input type="checkbox" id="myArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+      <input type="checkbox" id="myHumanoid" style="width:auto;margin:0" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
+    </label>
+    <p class="msg-status" id="myProfileStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('myProfile').close()" data-i18n="close">关闭</button>
+      <button type="button" class="btn" id="myModelSave" onclick="saveMyModelUrl()" data-i18n="save">保存</button>
     </div>
   </dialog>
 
@@ -607,6 +657,17 @@
     </label>
     <label for="editRules" data-i18n="rulesLabel">房间规则（可空）</label>
     <textarea id="editRules" rows="3" maxlength="32000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
+    <h3 style="margin:8px 0 4px;font-size:14px" data-i18n="sceneTitle">3D 场景</h3>
+    <p class="hint" id="editSceneState" style="white-space:normal;margin:0 0 6px"></p>
+    <select id="editScene" onchange="onEditSceneChange()">
+      <option value="" data-i18n="sceneNone">不使用场景（展厅）</option>
+    </select>
+    <input id="editSceneUrl" data-i18n-placeholder="sceneUrlPlaceholder" placeholder="https://…/room.glb" />
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0 0">
+      <input type="file" id="editSceneFile" accept=".glb,.vrm,model/gltf-binary" onchange="onSceneFilePick(event)" style="flex:1;min-width:180px" />
+      <button type="button" class="btn ghost small" onclick="clearSceneNow()" data-i18n="sceneClear">清除场景</button>
+    </div>
+    <p class="hint" style="white-space:normal;margin:4px 0 0" data-i18n="sceneHintFile">上传的文件与「清除场景」立即生效；选内置或填外链后点「保存」生效。</p>
     <label for="editRoomAgent" data-i18n="roomAgentLabel">Room Agent（可空）</label>
     <select id="editRoomAgent"></select>
     <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="roomAgentHint">选中的 Agent 未来可按上面的规则执行房间治理。</p>
@@ -678,6 +739,7 @@
     <input type="file" id="aeAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onAeAvatarPick(event)" />
     <label data-i18n="agentModelLabel">3D 形象（可选）</label>
     <p class="hint" id="aeModelState" style="white-space:normal;margin:0 0 6px"></p>
+    <div class="av-model-grid" id="aeModelGrid"></div>
     <div class="avatar-pick">
       <div id="aeModelPh" class="file-ph">未选择</div>
       <div class="avatar-pick-actions">
@@ -751,6 +813,16 @@
       <option value="" data-i18n="templateNone">不使用模板</option>
     </select>
     <div class="hint hidden" id="nrTplHint" style="white-space:normal;margin:4px 0 0"></div>
+    <label for="nrScene" data-i18n="sceneLabel">3D 场景（可选）</label>
+    <select id="nrScene" onchange="onSceneChange()">
+      <option value="" data-i18n="sceneNone">不使用场景（展厅）</option>
+    </select>
+    <div class="hint hidden" id="nrSceneHint" style="white-space:normal;margin:4px 0 0"></div>
+    <label for="nrSceneUrl" data-i18n="sceneUrlLabel">或外链场景地址（可选）</label>
+    <input id="nrSceneUrl" data-i18n-placeholder="sceneUrlPlaceholder" placeholder="https://…/room.glb" />
+    <label for="nrSceneFile" data-i18n="sceneFileLabel">或上传场景文件（可选）</label>
+    <input type="file" id="nrSceneFile" accept=".glb,.vrm,model/gltf-binary" onchange="onNewSceneFilePick(event)" />
+    <p class="hint" style="white-space:normal;margin:4px 0 0" data-i18n="sceneFileHint">GLB，≤50MB。选了外链或文件时以下拉框为准的选项会被忽略。</p>
     <label for="nrRules" data-i18n="rulesLabel">房间规则（可空）</label>
     <textarea id="nrRules" rows="3" maxlength="32000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
     <label for="nrAgent" data-i18n="roomAgentLabel">Room Agent（可空）</label>
@@ -846,6 +918,12 @@
         model3dStateFile: "已上传模型文件",
         model3dStateUrl: "外链 {{url}}",
         model3dStateNone: "还没有 3D 形象",
+        model3dBuiltinLabel: "或选一个内置形象（可选）",
+        model3dStateBuiltin: "内置形象：{{name}}",
+        avatarModelPicked: "已选用「{{name}}」",
+        myProfileTitle: "我的资料",
+        myModelLabel: "3D 形象",
+        myModelOwnHint: "也可以用自己的模型：选文件或填外链地址；上传后会替换掉上面的内置选择。",
         createAgent: "创建 Agent", agentNameLabel: "Agent 用户名（不能和已有人类账号重名）",
         agentNamePlaceholder: "例如 wilson-bot", agentKeyLabel: "公钥（PEM 或 ssh-ed25519）",
         cancelEdit: "取消编辑", create: "创建",
@@ -912,6 +990,24 @@
         roomAgentLabel: "Room Agent（可空）",
         roomAgentNone: "不设置",
         roomAgentHint: "选中的 Agent 未来可按上面的规则执行房间治理。",
+        sceneLabel: "3D 场景（可选）",
+        sceneNone: "不使用场景（展厅）",
+        sceneUrlLabel: "或外链场景地址（可选）",
+        sceneUrlPlaceholder: "https://…/room.glb",
+        sceneFileLabel: "或上传场景文件（可选）",
+        sceneFileHint: "GLB，≤50MB。选了外链或文件时，下拉框里选的选项会被忽略。",
+        sceneTitle: "3D 场景",
+        sceneClear: "清除场景",
+        sceneHintFile: "上传文件与「清除场景」立即生效；选内置或填外链后点「保存」生效。",
+        sceneOptionFmt: "{{name}}（{{n}} 座）",
+        sceneCurrentFile: "已上传的场景文件",
+        sceneStateNone: "当前：不使用场景（展厅环境）",
+        sceneStateFile: "当前：已上传的场景文件",
+        sceneStateUrl: "当前：外链 {{url}}",
+        sceneUploadOk: "场景已更新",
+        sceneUploadFail: "场景上传失败：",
+        sceneTooLarge: "场景文件不能超过 50MB",
+        sceneCleared: "场景已清除，回到展厅环境",
         model3dLabel: "3D 形象 URL（可选）",
         model3dPlaceholder: "https://…/model.glb",
         model3dArkitLabel: "支持 Apple ARKit 52 表情",
@@ -1015,6 +1111,12 @@
         model3dStateFile: "uploaded model file",
         model3dStateUrl: "external {{url}}",
         model3dStateNone: "no 3D model yet",
+        model3dBuiltinLabel: "Or pick a built-in avatar (optional)",
+        model3dStateBuiltin: "Built-in avatar: {{name}}",
+        avatarModelPicked: "Now using “{{name}}”",
+        myProfileTitle: "My profile",
+        myModelLabel: "3D avatar",
+        myModelOwnHint: "You can also use your own model: pick a file or paste a URL; uploading replaces the built-in choice above.",
         createAgent: "Create Agent", agentNameLabel: "Agent username (must not match an existing human account)",
         agentNamePlaceholder: "e.g. wilson-bot", agentKeyLabel: "Public key (PEM or ssh-ed25519)",
         cancelEdit: "Cancel edit", create: "Create",
@@ -1081,6 +1183,24 @@
         roomAgentLabel: "Room Agent (optional)",
         roomAgentNone: "None",
         roomAgentHint: "The chosen Agent can later enforce the rules above in this room.",
+        sceneLabel: "3D scene (optional)",
+        sceneNone: "No scene (gallery)",
+        sceneUrlLabel: "Or external scene URL (optional)",
+        sceneUrlPlaceholder: "https://…/room.glb",
+        sceneFileLabel: "Or upload a scene file (optional)",
+        sceneFileHint: "GLB, ≤50MB. A URL or file overrides the dropdown selection.",
+        sceneTitle: "3D scene",
+        sceneClear: "Clear scene",
+        sceneHintFile: "Uploads and \"Clear scene\" take effect immediately; built-in/URL apply on Save.",
+        sceneOptionFmt: "{{name}} ({{n}} seats)",
+        sceneCurrentFile: "Uploaded scene file",
+        sceneStateNone: "Current: no scene (gallery)",
+        sceneStateFile: "Current: uploaded scene file",
+        sceneStateUrl: "Current: external {{url}}",
+        sceneUploadOk: "Scene updated",
+        sceneUploadFail: "Scene upload failed: ",
+        sceneTooLarge: "Scene file must be 50MB or smaller",
+        sceneCleared: "Scene cleared; back to the gallery",
         model3dLabel: "3D avatar URL (optional)",
         model3dPlaceholder: "https://…/model.glb",
         model3dArkitLabel: "Supports Apple ARKit 52 blendshapes",
@@ -1272,6 +1392,7 @@
       tab: "mine",
       avatarUrl: "",
       roomAgent: "",
+      scene: null,
     };
     let pollAbort = null;
     let roomsPollTimer = null;
@@ -1280,6 +1401,7 @@
     let lastRoomInfo = null;     // 最近一次房间在线成员快照（3D 进入时取初始成员）
     let regAvatarData = null;
     let regModel3dFile = null;   // 注册弹窗里选的 3D 模型文件（注册成功后上传）
+    let regBuiltinId = null;     // 注册弹窗里选的内置形象（注册成功后落地）
 
     /* ---- v2.5 状态：私聊模式 / 引用 / 撤回 ---- */
     let whisperTo = [];             // 私聊模式选中的成员 [{username, avatarUrl}]
@@ -1525,7 +1647,164 @@
       } catch { /* 头像拿不到不影响聊天 */ }
     }
 
-    function openProfile() { $("profileAvatarFile").click(); }
+    // ---------- 内置缺省 3D 形象（CC0 VRM，来源与许可证见 static/avatars/CREDITS.md）----------
+    /* 账号的 model3dUrl 存 `builtin:<id>` 即表示选用内置形象。三处共用同一排卡片：
+       我的资料（人类自己）、Agent 编辑（as= 代设）、创建账号（注册成功后落地）。 */
+    const BUILTIN_AVATAR_PREFIX = "builtin:";
+    let avatarModelCache = [];
+
+    async function loadAvatarModels() {
+      if (avatarModelCache.length) return avatarModelCache;
+      try { avatarModelCache = (await api("/api/avatar-models")).avatars || []; }
+      catch { avatarModelCache = []; }
+      return avatarModelCache;
+    }
+
+    function builtinAvatarName(id) {
+      const a = avatarModelCache.find((x) => x.id === id);
+      if (!a) return id;
+      return LANG === "en" ? (a.nameEn || a.name) : (a.name || a.nameEn);
+    }
+
+    function builtinAvatarIdOf(url) {
+      return url && String(url).startsWith(BUILTIN_AVATAR_PREFIX)
+        ? String(url).slice(BUILTIN_AVATAR_PREFIX.length) : "";
+    }
+
+    /* 把 model3dUrl 说成人话——绝不能把 `builtin:robert` 这种裸串显示给用户 */
+    function describeModel3d(url) {
+      if (!url) return t("model3dStateNone");
+      if (builtinAvatarIdOf(url)) return tf("model3dStateBuiltin", { name: builtinAvatarName(builtinAvatarIdOf(url)) });
+      if (/^https?:/i.test(url)) return tf("model3dStateUrl", { url });
+      return t("model3dStateFile");
+    }
+
+    /* 渲染卡片；onPick(id) 由调用方决定怎么落地（人类直接 PUT / Agent 待创建 / 注册暂存） */
+    async function renderAvatarModelPicker(boxId, currentUrl, onPick) {
+      const box = $(boxId);
+      if (!box) return;
+      const list = await loadAvatarModels();
+      const picked = builtinAvatarIdOf(currentUrl);
+      box.innerHTML = "";
+      for (const a of list) {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "av-model-card" + (a.id === picked ? " on" : "");
+        card.dataset.id = a.id;
+        card.title = (LANG === "en" ? a.descriptionEn : a.description) || "";
+        const img = document.createElement("img");
+        img.src = a.thumbnail;
+        img.alt = "";
+        img.loading = "lazy";
+        const label = document.createElement("span");
+        label.textContent = LANG === "en" ? (a.nameEn || a.name) : (a.name || a.nameEn);
+        card.append(img, label);
+        card.addEventListener("click", () => onPick(a.id));
+        box.appendChild(card);
+      }
+    }
+
+    function markAvatarModelPicked(boxId, currentUrl) {
+      const box = $(boxId);
+      if (!box) return;
+      const picked = builtinAvatarIdOf(currentUrl);
+      box.querySelectorAll(".av-model-card").forEach((c) => c.classList.toggle("on", c.dataset.id === picked));
+    }
+
+    async function putBuiltinAvatar(id, asName) {
+      const q = asName ? `?as=${encodeURIComponent(asName)}` : "";
+      return api(`/api/me/model3d${q}`, { method: "PUT", body: JSON.stringify({ url: BUILTIN_AVATAR_PREFIX + id }) });
+    }
+
+    function validateModelFile(file) {
+      if (file.size > 20 * 1024 * 1024) return t("model3dTooBig");
+      if (!/\.(glb|gltf)$/i.test(file.name || "")) return t("model3dBadType");
+      return "";
+    }
+
+    // ---------- 我的资料（人类自己的 2D 头像 + 3D 形象）----------
+
+    async function openProfile() {
+      $("myProfileStatus").textContent = "";
+      $("myModelPh").textContent = t("avatarEmpty");
+      $("myModelFile").value = "";
+      $("myModelUrl").value = "";
+      $("myProfile").showModal();
+      await refreshMyProfile();
+    }
+
+    async function refreshMyProfile() {
+      let data = null;
+      try { data = await api("/api/me"); } catch { /* 拿不到就只显示已有状态 */ }
+      const url = data ? (data.model3dUrl || "") : "";
+      if (data) {
+        store.avatarUrl = data.avatarUrl || "";
+        $("myArkit").checked = !!data.model3dArkit;
+        $("myHumanoid").checked = !!data.model3dHumanoid;
+        $("myModelUrl").value = /^https?:/i.test(url) ? url : "";
+      }
+      await renderAvatarModelPicker("myModelGrid", url, pickMyBuiltin);
+      $("myModelState").textContent = tf("model3dCurrentFmt", { v: describeModel3d(url) });
+      const img = $("myAvatarImg");
+      const ph = $("myAvatarPh");
+      if (store.avatarUrl) {
+        try {
+          img.src = await authBlobUrl(store.avatarUrl);
+          img.classList.remove("hidden");
+          ph.classList.add("hidden");
+        } catch { img.classList.add("hidden"); ph.classList.remove("hidden"); }
+      } else { img.classList.add("hidden"); ph.classList.remove("hidden"); }
+    }
+
+    async function pickMyBuiltin(id) {
+      try {
+        await putBuiltinAvatar(id);
+        await refreshMyProfile();
+        voiceToast(tf("avatarModelPicked", { name: builtinAvatarName(id) }));
+      } catch (err) { $("myProfileStatus").textContent = err.message; }
+    }
+
+    async function onMyModelPick(event) {
+      const input = event.target;
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return;
+      const err = validateModelFile(file);
+      if (err) return $("myProfileStatus").textContent = err;
+      const q = new URLSearchParams();
+      if ($("myArkit").checked) q.set("arkit", "true");
+      if ($("myHumanoid").checked) q.set("humanoid", "true");
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        await api(`/api/me/model3d${q.toString() ? "?" + q.toString() : ""}`, { method: "POST", body: form });
+        $("myModelPh").textContent = file.name;
+        $("myProfileStatus").textContent = t("model3dUploaded");
+        await refreshMyProfile();
+      } catch (e) { $("myProfileStatus").textContent = e.message; }
+    }
+
+    async function saveMyModelUrl() {
+      const url = $("myModelUrl").value.trim();
+      try {
+        await api("/api/me/model3d", {
+          method: "PUT",
+          body: JSON.stringify({ url, arkit: $("myArkit").checked, humanoid: $("myHumanoid").checked }),
+        });
+        await refreshMyProfile();
+        $("myProfileStatus").textContent = t("model3dUploaded");
+      } catch (err) { $("myProfileStatus").textContent = err.message; }
+    }
+
+    async function clearMyModel() {
+      try {
+        await api("/api/me/model3d", { method: "DELETE" });
+        $("myModelUrl").value = "";
+        $("myModelPh").textContent = t("avatarEmpty");
+        await refreshMyProfile();
+        $("myProfileStatus").textContent = t("model3dStateNone");
+      } catch (err) { $("myProfileStatus").textContent = err.message; }
+    }
 
     async function onProfileAvatarPick(event) {
       const input = event.target;
@@ -1552,9 +1831,15 @@
       $("regPassword2").value = "";
       regAvatarData = null;
       regModel3dFile = null;
+      regBuiltinId = null;
       $("regArkit").checked = false;
       $("regHumanoid").checked = false;
       refreshAvatarPreviews();
+      renderAvatarModelPicker("regModelGrid", "", (id) => {
+        regBuiltinId = id;
+        markAvatarModelPicked("regModelGrid", BUILTIN_AVATAR_PREFIX + id);
+        setRegStatus("");
+      });
       setRegStatus("");
       $("register").showModal();
       setTimeout(() => ($("regUsername").value ? $("regPassword").focus() : $("regUsername").focus()), 0);
@@ -1572,6 +1857,7 @@
       if (password.length < 4) return setRegStatus(t("regPasswordShort"));
       if (password !== password2) return setRegStatus(t("regPwdMismatch"));
       const modelFile = regModel3dFile;
+      const builtinId = regModel3dFile ? null : regBuiltinId;   // 选了文件就以文件为准
       const arkit = $("regArkit").checked;
       const humanoid = $("regHumanoid").checked;
       $("regSubmit").disabled = true;
@@ -1581,12 +1867,14 @@
         await api("/api/users", { method: "POST", body: JSON.stringify(body) });
         regAvatarData = null;
         regModel3dFile = null;
+        regBuiltinId = null;
         /* 注册成功 → 自动登录（登录表单填上刚注册的凭据） */
         $("username").value = username;
         $("password").value = password;
         closeRegister();
         await login();
         if (modelFile && store.token) await uploadRegModel3d(modelFile, arkit, humanoid);
+        else if (builtinId && store.token) await putBuiltinAvatar(builtinId);
       } catch (err) {
         setRegStatus(err.message);
       } finally {
@@ -1760,6 +2048,7 @@
       store.canArchive = !!info.canArchive;
       store.perms = info.myPermissions || { canSpeak: true, canUpload: true };
       store.roomAgent = info.roomAgent || "";
+      store.scene = info.scene || null;
       if (!store.viewingArchive) {
         store.roomName = info.roomName;
         saveSession();
@@ -1799,9 +2088,15 @@
         isOwner: !!info.isOwner,
         viewingArchive: store.viewingArchive,
         onlineUsers: info.onlineUsers || [],
+        scene: info.scene || null,
       });
-      /* 3D 进入时 roomEvents 已错过最后一次 emit：缓存最近一份供 xr-main 取初始成员 */
-      lastRoomInfo = { roomName: info.roomName, isOwner: !!info.isOwner, onlineUsers: info.onlineUsers || [] };
+      /* 3D 进入时 roomEvents 已错过最后一次 emit：缓存最近一份供 xr-main 取初始成员与场景 */
+      lastRoomInfo = {
+        roomName: info.roomName,
+        isOwner: !!info.isOwner,
+        onlineUsers: info.onlineUsers || [],
+        scene: info.scene || null,
+      };
     }
 
     function renderOnline(users) {
@@ -1853,11 +2148,14 @@
       $("nrVisibility").value = "private";
       $("nrPassword").value = "";
       $("nrRules").value = "";
+      $("nrSceneUrl").value = "";
+      $("nrSceneFile").value = "";
       $("newRoomStatus").textContent = "";
       $("newRoom").showModal();
       setTimeout(() => $("nrName").focus(), 0);
       await fillRoomAgentSelect("nrAgent", "");
       loadTemplateOptions();
+      loadSceneOptions("nrScene", null);
     }
 
     let templateCache = [];
@@ -1887,6 +2185,111 @@
       hint.textContent = tf("templateHintTpl", { title: tpl.title }) + (tpl.description ? " " + tpl.description : "");
     }
 
+    // ---------- 3D 场景 ----------
+
+    /* 「已上传的场景文件」在管理房间下拉框里的哨兵值：选中它表示保持现有上传件不动，
+       避免只改房间名就把已上传的场景清掉。 */
+    const SCENE_FILE_OPT = "__file__";
+    let sceneCache = [];
+
+    function sceneLabel(sc) {
+      const name = LANG === "en" ? (sc.nameEn || sc.name) : (sc.name || sc.nameEn);
+      return tf("sceneOptionFmt", { name, n: sc.seatCount });
+    }
+
+    async function loadSceneOptions(selectId, current) {
+      const sel = $(selectId);
+      if (!sel) return;
+      /* 整表重建：占位项也由这里生成，不依赖 HTML 里的静态首项
+         （否则「保留首项」的清空逻辑会在第二次打开对话框时留下陈旧项） */
+      sel.innerHTML = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = t("sceneNone");
+      sel.appendChild(placeholder);
+      if (current && current.kind === "file") {
+        const opt = document.createElement("option");
+        opt.value = SCENE_FILE_OPT;
+        opt.textContent = t("sceneCurrentFile");
+        sel.appendChild(opt);
+      }
+      try {
+        sceneCache = (await api("/api/room-scenes")).scenes || [];
+        for (const sc of sceneCache) {
+          const opt = document.createElement("option");
+          opt.value = sc.id;
+          opt.textContent = sceneLabel(sc);
+          sel.appendChild(opt);
+        }
+        sel.value = current && current.kind === "builtin" ? current.id
+          : (current && current.kind === "file" ? SCENE_FILE_OPT : "");
+      } catch { sel.value = ""; }
+    }
+
+    function sceneHintText(selectId) {
+      const sc = sceneCache.find((x) => x.id === $(selectId).value);
+      if (!sc) return "";
+      const desc = LANG === "en" ? (sc.descriptionEn || sc.description) : (sc.description || sc.descriptionEn);
+      return tf("sceneOptionFmt", { name: sc.name, n: sc.seatCount }) + (desc ? " " + desc : "");
+    }
+
+    function onSceneChange() {
+      const hint = $("nrSceneHint");
+      const text = sceneHintText("nrScene");
+      hint.classList.toggle("hidden", !text);
+      hint.textContent = text;
+    }
+
+    function onEditSceneChange() {
+      $("editSceneState").textContent = sceneHintText("editScene");
+    }
+
+    function sceneStatusText(scene) {
+      if (!scene) return t("sceneStateNone");
+      if (scene.kind === "file") return t("sceneStateFile");
+      if (scene.kind === "url") return tf("sceneStateUrl", { url: scene.url });
+      const sc = sceneCache.find((x) => x.id === scene.id);
+      return sc ? sceneLabel(sc) : scene.id;
+    }
+
+    async function uploadRoomScene(roomName, file) {
+      if (file.size > 50 * 1024 * 1024) throw new Error(t("sceneTooLarge"));
+      const form = new FormData();
+      form.append("file", file);
+      return api(`/api/rooms/${encodeURIComponent(roomName)}/scene`, { method: "POST", body: form });
+    }
+
+    async function refreshSceneControls() {
+      await loadSceneOptions("editScene", store.scene);
+      $("editSceneState").textContent = sceneStatusText(store.scene);
+    }
+
+    function onNewSceneFilePick() { /* 建房时只暂存，创建后再随房间一起上传 */ }
+
+    /* 上传与清除都在对话框内立即生效：保留对话框并把结果写进它自己的状态行——
+       setHint 的提示会被轮询循环立刻覆盖，用户根本看不到。 */
+    async function onSceneFilePick(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      event.target.value = "";
+      try {
+        const info = await uploadRoomScene(store.roomName, file);
+        await enterRoom(info);
+        await refreshSceneControls();
+        $("settingsStatus").textContent = t("sceneUploadOk");
+      } catch (err) { $("settingsStatus").textContent = err.message; }
+    }
+
+    async function clearSceneNow() {
+      try {
+        const info = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/scene`, { method: "DELETE" });
+        $("editSceneUrl").value = "";
+        await enterRoom(info);
+        await refreshSceneControls();
+        $("settingsStatus").textContent = t("sceneCleared");
+      } catch (err) { $("settingsStatus").textContent = err.message; }
+    }
+
     async function createRoom() {
       const roomName = $("nrName").value.trim();
       if (!roomName) { $("newRoomStatus").textContent = t("fillRoomName"); return; }
@@ -1899,8 +2302,26 @@
       if (template) body.template = template;
       const agent = $("nrAgent").value;
       if (agent) body.roomAgent = agent;
+      /* 场景三者互斥择一：文件 > 外链 > 内置。选了文件时不带 scene——
+         房间建好后由上传接口写入（建房是 JSON body，混不了 multipart）。 */
+      const sceneFile = ($("nrSceneFile").files || [])[0] || null;
+      const sceneUrl = $("nrSceneUrl").value.trim();
+      const sceneId = $("nrScene").value;
+      if (!sceneFile) {
+        if (sceneUrl) body.scene = { kind: "url", url: sceneUrl };
+        else if (sceneId) body.scene = { kind: "builtin", id: sceneId };
+      }
       try {
-        const info = await api("/api/rooms", { method: "POST", body: JSON.stringify(body) });
+        let info = await api("/api/rooms", { method: "POST", body: JSON.stringify(body) });
+        if (sceneFile) {
+          try { info = await uploadRoomScene(roomName, sceneFile); }
+          catch (err) {
+            /* 房间已经建好了，只是场景没上传成功：留在对话框里显示原因——
+               再点一次「创建」会加入已存在的房间并重试上传。 */
+            $("newRoomStatus").textContent = t("sceneUploadFail") + " " + err.message;
+            return;
+          }
+        }
         $("newRoom").close();
         await enterRoom(info);
       } catch (err) { $("newRoomStatus").textContent = err.message; }
@@ -2905,6 +3326,10 @@
         renderWhisperRules(rules.rules);
       } catch (err) { $("whisperRulesBox").textContent = err.message; }
       await fillRoomAgentSelect("editRoomAgent", store.roomAgent);
+      $("editSceneUrl").value = "";
+      $("editSceneFile").value = "";
+      await loadSceneOptions("editScene", store.scene);
+      $("editSceneState").textContent = sceneStatusText(store.scene);
     }
 
     function renderWhisperRules(rules) {
@@ -3012,6 +3437,13 @@
         };
         const password = $("editPassword").value;
         if (password) body.password = password;
+        /* 场景：外链优先于下拉框；下拉框停在「已上传的场景文件」时不传 scene（保持不动） */
+        const sceneUrl = $("editSceneUrl").value.trim();
+        const sceneSel = $("editScene").value;
+        if (sceneUrl) body.scene = { kind: "url", url: sceneUrl };
+        else if (sceneSel === SCENE_FILE_OPT) { /* 保持已上传的场景文件 */ }
+        else if (sceneSel) body.scene = { kind: "builtin", id: sceneSel };
+        else body.scene = { kind: "none" };
         const info = await api(`/api/rooms/${encodeURIComponent(store.roomName)}`, {
           method: "PATCH", body: JSON.stringify(body),
         });
@@ -3075,7 +3507,7 @@
 
     /* ---- v2.6：Agent 参数设置弹窗（创建 / 编辑共用：用户名、公钥、头像、3D 形象） ---- */
     let agentsCache = [];
-    const ae = { mode: "create", username: "", avatarAction: "keep", avatarData: null, modelAction: "keep", modelFile: null, loaded: null };
+    const ae = { mode: "create", username: "", avatarAction: "keep", avatarData: null, modelAction: "keep", modelFile: null, pendingBuiltinId: null, loaded: null };
 
     function setAeStatus(text) { $("agentEditStatus").textContent = text || ""; }
 
@@ -3088,6 +3520,7 @@
       ae.avatarData = null;
       ae.modelAction = "keep";
       ae.modelFile = null;
+      ae.pendingBuiltinId = null;
       ae.loaded = {
         arkit: target ? !!target.model3dArkit : false,
         humanoid: target ? !!target.model3dHumanoid : false,
@@ -3104,12 +3537,9 @@
       $("aeModelClear").classList.add("hidden");
       $("aeArkit").checked = ae.loaded.arkit;
       $("aeHumanoid").checked = ae.loaded.humanoid;
-      $("aeModelState").textContent = target
-        ? tf("model3dCurrentFmt", {
-            v: ae.loaded.modelUrl ? tf("model3dStateUrl", { url: ae.loaded.modelUrl })
-              : (ae.loaded.hasModel ? t("model3dStateFile") : t("model3dStateNone")),
-          })
-        : "";
+      const curModelUrl = target ? (target.model3dUrl || "") : "";
+      $("aeModelState").textContent = target ? tf("model3dCurrentFmt", { v: describeModel3d(curModelUrl) }) : "";
+      await renderAvatarModelPicker("aeModelGrid", curModelUrl, onAeBuiltinPick);
       $("aeToggleBtn").classList.toggle("hidden", !target);
       $("aeToggleBtn").textContent = target && target.status === "active" ? t("disable") : t("enable");
       $("aeDeleteBtn").classList.toggle("hidden", !target);
@@ -3191,6 +3621,28 @@
       await api(`/api/me/model3d?${q.toString()}`, { method: "POST", body: form });
     }
 
+    /* 内置形象：编辑态立即生效（PUT ?as=），创建态先暂存、提交时随 POST 一起写。
+       注意必须同步清掉 ae.loaded.modelUrl——否则保存时「URL 变了」会被判成 clear，
+       反而把刚设好的内置形象删掉。 */
+    async function onAeBuiltinPick(id) {
+      const url = BUILTIN_AVATAR_PREFIX + id;
+      if (ae.mode === "edit" && ae.username) {
+        try {
+          await putBuiltinAvatar(id, ae.username);
+          ae.loaded.modelUrl = "";
+          $("aeModelUrl").value = "";
+          markAvatarModelPicked("aeModelGrid", url);
+          $("aeModelState").textContent = tf("model3dCurrentFmt", { v: describeModel3d(url) });
+          setAeStatus(tf("avatarModelPicked", { name: builtinAvatarName(id) }));
+          refreshAgents();
+        } catch (err) { setAeStatus(err.message); }
+        return;
+      }
+      ae.pendingBuiltinId = id;
+      markAvatarModelPicked("aeModelGrid", url);
+      setAeStatus(tf("avatarModelPicked", { name: builtinAvatarName(id) }));
+    }
+
     async function saveAgentEditor() {
       const name = $("aeName").value.trim();
       const key = $("aeKey").value.trim();
@@ -3205,6 +3657,7 @@
           if (ae.avatarAction === "set" && ae.avatarData) payload.avatar = ae.avatarData;
           const urlVal = $("aeModelUrl").value.trim();
           if (ae.modelAction === "url" || (ae.modelAction === "keep" && urlVal)) payload.model3dUrl = urlVal;
+          else if (ae.pendingBuiltinId) payload.model3dUrl = BUILTIN_AVATAR_PREFIX + ae.pendingBuiltinId;
           await api("/api/agents", { method: "POST", body: JSON.stringify(payload) });
           if (ae.modelAction === "file" && ae.modelFile) await aeUploadModel(name, ae.modelFile, arkit, humanoid);
           $("agentEdit").close();

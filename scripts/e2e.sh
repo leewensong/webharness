@@ -313,6 +313,68 @@ check "删模板" "$(curl -sS -X DELETE "$URL/api/room-templates/e2e-tpl-$SUF" -
 check "删后再取 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/room-templates/e2e-tpl-$SUF" -H "Authorization: Bearer $HTOK")" "404"
 check "删后房间详情 templateScript 置空" "$(curl -sS "$URL/api/rooms/$TPLROOM" -H "Authorization: Bearer $HTOK" | grep -c '"templateScript":null')" "1"
 
+echo "== 房间 3D 场景 =="
+# 最小 GLB（校验只看 glTF 魔数）：JSON chunk 里放一行合法 asset 声明
+mk_glb() { # mk_glb <路径> [填充字节数]
+  python3 -c 'import struct,sys
+p=b"{\"asset\":{\"version\":\"2.0\"}}"+b"\x00"*int(sys.argv[2])
+p+=b" "*((4-len(p)%4)%4)
+b=b"JSON"+struct.pack("<I",len(p))+p
+open(sys.argv[1],"wb").write(b"glTF"+struct.pack("<II",2,12+len(b))+b)' "$1" "${2:-0}"
+}
+SCROOM="e2e-scene-$SUF"
+check "内置场景列表" "$(curl -sS "$URL/api/room-scenes" -H "Authorization: Bearer $HTOK")" '"id":"meeting"'
+check "内置场景含狼人杀 12 座" "$(curl -sS "$URL/api/room-scenes" -H "Authorization: Bearer $HTOK")" '"seatCount":12'
+check "未登录拿场景列表 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/room-scenes")" "401"
+check "建房带内置场景" "$(curl -sS "$URL/api/rooms" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"scene":{"kind":"builtin","id":"meeting"}}))' "$SCROOM")")" '"scene":{"kind":"builtin","id":"meeting"}'
+check "房间详情回显场景" "$(curl -sS "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK")" '"scene":{"kind":"builtin","id":"meeting"}'
+NSCROOM="e2e-noscene-$SUF"
+curl -sS "$URL/api/rooms" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1]}))' "$NSCROOM")" >/dev/null
+check "未设场景的房间 scene 为 null" "$(curl -sS "$URL/api/rooms/$NSCROOM" -H "Authorization: Bearer $HTOK")" '"scene":null'
+check "非法内置 id 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"scene":{"kind":"builtin","id":"ghost"}}')" "400"
+check "PATCH 换外链场景" "$(curl -sS -X PATCH "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"scene":{"kind":"url","url":"https://example.com/room.glb"}}')" '"scene":{"kind":"url","url":"https://example.com/room.glb"}'
+check "非 http 外链 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"scene":{"kind":"url","url":"javascript:alert(1)"}}')" "400"
+check "非房主 PATCH 场景 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d '{"scene":{"kind":"none"}}')" "403"
+check "PATCH 清空场景" "$(curl -sS -X PATCH "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"scene":{"kind":"none"}}')" '"scene":null'
+mk_glb "$TMP/room.glb" 0
+check "上传场景 GLB" "$(curl -sS -X POST "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/room.glb")" '"scene":{"kind":"file"'
+curl -sS "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" -o "$TMP/room_dl.glb"
+check "下载场景字节一致" "$(base64 < "$TMP/room_dl.glb")" "$(base64 < "$TMP/room.glb")"
+check "场景 file URL 带版本号" "$(curl -sS "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK")" 'scene?v='
+check "非成员读场景 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $ATOK")" "403"
+printf '{"asset":{"version":"2.0"}}' > "$TMP/room.gltf"
+check ".gltf（JSON）上传 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" \
+  -F "file=@$TMP/room.gltf")" "400"
+mk_glb "$TMP/big.glb" 52430000
+check "超 50MB 场景 413" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/big.glb")" "413"
+check "DELETE 清场景" "$(curl -sS -X DELETE "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK")" '"scene":null'
+check "清空后下载 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK")" "404"
+
+echo "== 内置缺省 3D 形象 =="
+check "内置形象目录含 robert" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK")" '"id":"robert"'
+check "内置形象 6 个" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["avatars"]))')" "6"
+check "未登录拿形象目录 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/avatar-models")" "401"
+check "内置静态 VRM 可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/astronaut.vrm")" "200"
+check "内置缩略图可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/astronaut.webp")" "200"
+check "形象来源凭证可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/CREDITS.md")" "200"
+check "选用内置形象" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"builtin:robert"}')" '"model3dUrl":"builtin:robert"'
+check "内置形象带表情与骨骼能力位" "$(curl -sS "$URL/api/me" -H "Authorization: Bearer $HTOK")" '"model3dHumanoid":true'
+check "未知内置 id 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"builtin:ghost-x"}')" "400"
+check "外链形象仍可用（回归）" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"https://example.com/a.vrm"}')" '"model3dUrl":"https://example.com/a.vrm"'
+check "上传自己的模型覆盖内置" "$(curl -sS -X POST "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/room.glb")" '"model3dUrl":"/api/users/'
+check "清除形象" "$(curl -sS -X DELETE "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK")" '"model3dUrl":null'
+AVAGENT="e2e-avagent-$SUF"
+check "Agent 创建时选内置形象" "$(curl -sS -X POST "$URL/api/agents" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"publicKey":open(sys.argv[2]).read(),"model3dUrl":"builtin:astronaut"}))' "$AVAGENT" "$TMP/pub.pem")")" '"model3dUrl":"builtin:astronaut"'
+check "Agent 用未知内置 id 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/agents" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"publicKey":open(sys.argv[2]).read(),"model3dUrl":"builtin:nope"}))' "e2e-avbad-$SUF" "$TMP/pub.pem")")" "400"
+
 echo "== Agent 停用 =="
 curl -sS -X PATCH "$URL/api/agents/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"status":"disabled"}' >/dev/null
 check "停用后取挑战 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/agent-auth/challenge" -H 'Content-Type: application/json' \

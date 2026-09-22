@@ -3,6 +3,7 @@ import base64
 import binascii
 import colorsys
 import hashlib
+import json
 import mimetypes
 import re
 import sqlite3
@@ -33,6 +34,9 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
 MAX_AVATAR_BYTES = 1 * 1024 * 1024
 MAX_MODEL3D_BYTES = 20 * 1024 * 1024
+# 房间 3D 场景单独放宽到 50MB（带贴图的真实导出场景常超 20MB）；
+# 只影响房间场景上传，附件与 3D 形象的 20MB 上限不变。
+MAX_ROOM_SCENE_BYTES = 50 * 1024 * 1024
 MAX_RULES_CHARS = 32000
 MAX_LONG_POLL_SECONDS = 30
 MAX_VOICE_BYTES = 10 * 1024 * 1024
@@ -54,6 +58,63 @@ AUDIO_MIME_BY_EXT = {
     ".wav": "audio/wav",
     ".aac": "audio/aac",
 }
+
+# 内置 3D 场景目录：房间可选的标准场景（需求 9 的 map3d，kind=builtin）。
+# 几何本身由渲染端 static/xr/xr-rooms.js 的 BUILTIN_SCENES 按同一 id 程序化搭建，
+# 服务器只提供可选清单与元数据，不解析场景内容。**这里的 id 集合是权威**：
+# 渲染端遇到不认识的 id 会静默回退展厅环境并 console.warn，不会影响 2D。
+BUILTIN_ROOM_SCENES: tuple[dict[str, Any], ...] = (
+    {
+        "id": "meeting",
+        "name": "会议室",
+        "nameEn": "Meeting room",
+        "description": "长条会议桌居中，两端投影幕与白板，10 个座位",
+        "descriptionEn": "Long conference table, screens at both ends, 10 seats",
+        "seatCount": 10,
+        # 家具活动区尺寸（米），长 × 宽
+        "size": [6, 3],
+    },
+    {
+        "id": "werewolf",
+        "name": "狼人杀",
+        "nameEn": "Werewolf",
+        "description": "长桌两侧对坐，12 个座位",
+        "descriptionEn": "Long table with seats on both sides, 12 seats",
+        "seatCount": 12,
+        "size": [6, 3],
+    },
+)
+BUILTIN_SCENE_IDS = {scene["id"] for scene in BUILTIN_ROOM_SCENES}
+
+# 内置缺省 3D 形象：账号可选的默认形象，替代「纯色胶囊」。素材是 Open Source Avatars
+# 注册表 100Avatars R1 合集的 **CC0** 模型（可自由分发、无需署名），来源与许可证见
+# static/avatars/CREDITS.md。**这里的 id 集合是权威**：账号用 `builtin:<id>` 引用
+# （存进既有的 model3d_url 列），渲染端按约定把它映射成 `/static/avatars/<id>.vrm`，
+# 遇到不认识的 id 回退胶囊、绝不影响 2D。file/thumbnail 给 2D 选择器用。
+BUILTIN_AVATARS: tuple[dict[str, Any], ...] = (
+    {"id": "robert", "name": "罗伯特", "nameEn": "Robert",
+     "description": "便装男子", "descriptionEn": "Casual guy"},
+    {"id": "erika", "name": "艾莉卡", "nameEn": "Erika",
+     "description": "浅蓝女子", "descriptionEn": "Woman in light blue"},
+    {"id": "david", "name": "大卫", "nameEn": "David",
+     "description": "牛仔裤青年", "descriptionEn": "Young man in jeans"},
+    {"id": "astronaut", "name": "宇航员", "nameEn": "Astronaut",
+     "description": "全套宇航服", "descriptionEn": "Full spacesuit"},
+    {"id": "polybot", "name": "小机器人", "nameEn": "Polybot",
+     "description": "低多边形机器人", "descriptionEn": "Low-poly robot"},
+    {"id": "ghost", "name": "幽灵", "nameEn": "Ghost",
+     "description": "白色小幽灵", "descriptionEn": "Little white ghost"},
+)
+for _avatar in BUILTIN_AVATARS:
+    # 6 个模型实测均为 VRM0，含 6 个表情预设与人形骨骼（polybot 为 31 根，其余 52 根）
+    _avatar["file"] = f"/static/avatars/{_avatar['id']}.vrm"
+    _avatar["thumbnail"] = f"/static/avatars/{_avatar['id']}.webp"
+    _avatar["arkit"] = True
+    _avatar["humanoid"] = True
+    _avatar["source"] = "100Avatars R1 (CC0)"
+BUILTIN_AVATAR_BY_ID = {avatar["id"]: avatar for avatar in BUILTIN_AVATARS}
+# 账号 model3d_url 里内置形象引用的前缀：`builtin:<id>`
+BUILTIN_AVATAR_PREFIX = "builtin:"
 
 _main_loop: asyncio.AbstractEventLoop | None = None
 _room_events: dict[int, asyncio.Event] = {}
@@ -94,8 +155,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.11.1",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单，并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
+    version="2.13.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单，并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13）：`GET /api/avatar-models` 列出内置形象（6 个 CC0 VRM，含缩略图与表情/骨骼能力位）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源与许可证见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
     lifespan=lifespan,
 )
 
@@ -154,6 +215,15 @@ class AgentLoginRequest(BaseModel):
     signature: str
 
 
+class RoomSceneInput(BaseModel):
+    """建房/改房时传入的 3D 场景引用（rooms.map3d）。只接受「选内置」「填外链」
+    与「清空」三种；上传的 GLB 由 multipart 接口 POST /api/rooms/{room}/scene 写入。
+    kind=none 是显式清空——不用 null 区分，避免「未传」与「传 null」混淆。"""
+    kind: Literal["builtin", "url", "none"]
+    id: str | None = Field(default=None, max_length=64)
+    url: str | None = Field(default=None, max_length=2048)
+
+
 class RoomRequest(BaseModel):
     roomName: str = Field(min_length=1, max_length=64, pattern=NAME_PATTERN)
     password: str | None = Field(default=None, max_length=128)
@@ -162,6 +232,8 @@ class RoomRequest(BaseModel):
     roomAgent: str | None = Field(default=None, max_length=32)
     # 房间模板名：新房间复制模板 rules（显式传 rules 时以 rules 为准），并记录来源模板
     template: str | None = Field(default=None, max_length=32, pattern=r"^[\w.\-]+$")
+    # 3D 场景：不传表示无场景（渲染端沿用展厅环境）
+    scene: RoomSceneInput | None = None
 
 
 class RoomUpdate(BaseModel):
@@ -172,6 +244,8 @@ class RoomUpdate(BaseModel):
     rules: str | None = Field(default=None, max_length=MAX_RULES_CHARS)
     # 传空字符串表示清空 room agent；不传（None）表示不改
     roomAgent: str | None = Field(default=None, max_length=32)
+    # 3D 场景：不传（字段缺席）表示不改；显式传 null 表示清除场景，回到展厅环境
+    scene: RoomSceneInput | None = None
 
 
 class PermissionUpdate(BaseModel):
@@ -281,6 +355,18 @@ def _model3d_file_url(username: str, version: str | None) -> str:
     return f"/api/users/{username}/model3d?v={quote(str(version or 0), safe='')}"
 
 
+def _builtin_avatar_id(value: str | None) -> str | None:
+    """解析 model3d_url 里的内置形象引用 `builtin:<id>`。
+    不是这个前缀返回 None（照旧当外链处理）；是前缀但 id 不在册则 400——
+    否则会写下一个渲染端永远认不出、只能回退胶囊的引用。"""
+    if not value or not value.startswith(BUILTIN_AVATAR_PREFIX):
+        return None
+    avatar_id = value[len(BUILTIN_AVATAR_PREFIX):].strip()
+    if avatar_id not in BUILTIN_AVATAR_BY_ID:
+        raise HTTPException(status_code=400, detail="未知的内置 3D 形象")
+    return avatar_id
+
+
 def _default_avatar_svg(username: str) -> bytes:
     """按用户名确定性生成缺省头像：随机感配色的圆角方块 + 用户名首字符。"""
     digest = hashlib.sha256(username.lower().encode("utf-8")).digest()
@@ -339,16 +425,86 @@ def _glb_looks_vrm(data: bytes) -> bool:
     return b'"VRM"' in head or b'"VRMC_vrm"' in head
 
 
+def _gltf_mime(data: bytes) -> str | None:
+    """按魔数识别 glTF 家族，返回 mime；不是 glTF 家族返回 None。"""
+    if data.startswith(b"glTF"):
+        return "model/vrm" if _glb_looks_vrm(data) else "model/gltf-binary"
+    if data.lstrip()[:1] == b"{":
+        return "model/gltf+json"
+    return None
+
+
 def _validate_model3d_bytes(data: bytes) -> str:
     """校验 3D 模型字节，返回 mime（GLB / GLTF / VRM）。VRM 返回 model/vrm 仅为
     细化提示与记录，兼容现状：已有数据不迁移，加载端按同一 glTF 路径处理。"""
     if len(data) > MAX_MODEL3D_BYTES:
         raise HTTPException(status_code=413, detail="3D 模型超过 20MB 上限")
-    if data.startswith(b"glTF"):
-        return "model/vrm" if _glb_looks_vrm(data) else "model/gltf-binary"
-    if data.lstrip()[:1] == b"{":
-        return "model/gltf+json"
-    raise HTTPException(status_code=400, detail="3D 模型必须是 GLB（glTF 二进制）、GLTF（JSON）或 VRM 文件")
+    mime = _gltf_mime(data)
+    if mime is None:
+        raise HTTPException(status_code=400, detail="3D 模型必须是 GLB（glTF 二进制）、GLTF（JSON）或 VRM 文件")
+    return mime
+
+
+def _validate_room_scene_bytes(data: bytes) -> str:
+    """房间场景与 3D 形象走同一套 glTF 魔数校验，仅上限放宽到 50MB。
+    额外拒绝 .gltf（JSON）：它引用外部 .bin/贴图，单文件上传后 GLTFLoader 取不到
+    依赖，用户只会得到无从下手的「加载失败」，不如在这里明确挡掉。"""
+    if len(data) > MAX_ROOM_SCENE_BYTES:
+        raise HTTPException(status_code=413, detail="3D 场景超过 50MB 上限")
+    mime = _gltf_mime(data)
+    if mime is None:
+        raise HTTPException(status_code=400, detail="3D 场景必须是 GLB（glTF 二进制）或 VRM 文件")
+    if mime == "model/gltf+json":
+        raise HTTPException(
+            status_code=400,
+            detail="场景必须是自包含的 GLB；.gltf 会引用外部资源，无法单文件上传",
+        )
+    return mime
+
+
+def _room_scene_file_url(room_name: str, version: str | None) -> str:
+    return f"/api/rooms/{quote(room_name, safe='')}/scene?v={quote(str(version or 0), safe='')}"
+
+
+def _room_scene_descriptor(room) -> dict[str, str] | None:
+    """房间场景描述符（rooms.map3d），返回给客户端的形状：kind=builtin/file/url。
+    kind=file 的 url 一律由服务器按当前版本号现算，不采信库里存的 URL。
+    描述符残缺或内置 id 已下线时返回 None——渲染端据此回退展厅环境。"""
+    raw = _row_get(room, "map3d")
+    if not raw:
+        return None
+    try:
+        desc = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(desc, dict):
+        return None
+    kind = desc.get("kind")
+    if kind == "builtin" and desc.get("id") in BUILTIN_SCENE_IDS:
+        return {"kind": "builtin", "id": desc["id"]}
+    if kind == "file":
+        return {"kind": "file", "url": _room_scene_file_url(room["name"], _row_get(room, "scene_updated_at"))}
+    if kind == "url":
+        url = str(desc.get("url") or "").strip()
+        return {"kind": "url", "url": url} if url else None
+    return None
+
+
+def _scene_descriptor_json(scene: "RoomSceneInput") -> str | None:
+    """把客户端的场景引用规整成待存进 rooms.map3d 的 JSON 文本；kind=none 返回 None
+    （清空）。上传件（kind=file）不走这里——它由 multipart 上传接口写入并顺带置描述符。"""
+    if scene.kind == "none":
+        return None
+    if scene.kind == "builtin":
+        if scene.id not in BUILTIN_SCENE_IDS:
+            raise HTTPException(status_code=400, detail="未知的内置 3D 场景")
+        return json.dumps({"kind": "builtin", "id": scene.id}, ensure_ascii=False)
+    url = (scene.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="外部 3D 场景需要 url")
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="外部 3D 场景 url 必须是 http/https")
+    return json.dumps({"kind": "url", "url": url}, ensure_ascii=False)
 
 
 def _get_user_by_id(conn, user_id: int):
@@ -420,6 +576,7 @@ def _get_user(conn, username: str):
 ROOM_SELECT = """
         SELECT r.id, r.name, r.created_by, r.password_hash, r.visibility, r.muted,
                r.ended_at, r.archived_at, r.created_at, r.rules, r.room_agent_id, r.template,
+               r.map3d, r.scene_updated_at,
                u.username AS ownerName, u.kind AS creatorKind, u.owner_id AS creatorOwnerId,
                ra.username AS roomAgentName
         FROM rooms r
@@ -827,6 +984,7 @@ def _room_dict(room, user_id: int, online: list[dict] | None = None) -> dict:
         "rules": _fill_base_url(_row_get(room, "rules")),
         "roomAgent": _row_get(room, "roomAgentName"),
         "template": _row_get(room, "template"),
+        "scene": _room_scene_descriptor(room),
         "createdAt": room["created_at"],
         "archivedAt": room["archived_at"],
     }
@@ -944,6 +1102,7 @@ def _room_list_dict(row, user_id: int) -> dict:
         "memberCount": row["memberCount"],
         "onlineCount": int(row["onlineCount"] or 0),
         "roomAgent": _row_get(row, "roomAgentName"),
+        "scene": _room_scene_descriptor(row),
         "createdAt": row["created_at"],
         "archivedAt": row["archived_at"],
         "createdByMyAgent": (
@@ -955,7 +1114,7 @@ def _room_list_dict(row, user_id: int) -> dict:
 
 ROOM_LIST_SQL = """
     SELECT r.id, r.name, r.created_by, r.password_hash, r.visibility, r.muted,
-           r.created_at, r.archived_at, u.username AS ownerName, u.owner_id AS creatorOwnerId,
+           r.created_at, r.archived_at, r.map3d, r.scene_updated_at, u.username AS ownerName, u.owner_id AS creatorOwnerId,
            ra.username AS roomAgentName,
            (SELECT COUNT(*) FROM room_members m2 WHERE m2.room_id = r.id) AS memberCount,
            (SELECT COUNT(*) FROM room_members m3
@@ -1145,6 +1304,13 @@ def create_agent(body: AgentCreate, user: HumanUser):
         avatar_mime = _validate_avatar_bytes(data, declared)
         avatar_bytes = data
     model_url = _blank_to_none(body.model3dUrl)
+    # 内置形象引用同样要在写入前校验（未知 id 直接 400），能力位以目录为准
+    builtin_id = _builtin_avatar_id(model_url)
+    if builtin_id:
+        meta = BUILTIN_AVATAR_BY_ID[builtin_id]
+        model_arkit, model_humanoid = int(meta["arkit"]), int(meta["humanoid"])
+    else:
+        model_arkit, model_humanoid = int(body.model3dArkit), int(body.model3dHumanoid)
     with get_db() as conn:
         exists = _get_user(conn, body.username)
         if exists:
@@ -1172,8 +1338,8 @@ def create_agent(body: AgentCreate, user: HumanUser):
                 avatar_mime,
                 now if avatar_bytes else None,
                 model_url,
-                int(body.model3dArkit),
-                int(body.model3dHumanoid),
+                model_arkit,
+                model_humanoid,
                 now if model_url else None,
             ),
         )
@@ -1367,10 +1533,21 @@ def set_my_model3d_url(
     url = _blank_to_none(body.url)
     if url is None and body.arkit is None and body.humanoid is None:
         raise HTTPException(status_code=400, detail="没有需要修改的字段")
+    # 内置形象引用（builtin:<id>）在这里就校验，未知 id 直接 400
+    builtin_id = _builtin_avatar_id(url)
     with get_db() as conn:
         target = _resolve_profile_target(conn, user, as_username)
-        arkit = int(body.arkit) if body.arkit is not None else int(target["model3d_arkit"] or 0)
-        humanoid = int(body.humanoid) if body.humanoid is not None else int(target["model3d_humanoid"] or 0)
+        # 内置形象的能力位由目录决定（这些 VRM 确实有表情与骨骼），免得调用方漏填；
+        # 显式传了 body.arkit/humanoid 时仍以调用方为准，外链与原有行为一字不变。
+        if builtin_id:
+            meta = BUILTIN_AVATAR_BY_ID[builtin_id]
+            default_arkit = int(meta["arkit"])
+            default_humanoid = int(meta["humanoid"])
+        else:
+            default_arkit = int(target["model3d_arkit"] or 0)
+            default_humanoid = int(target["model3d_humanoid"] or 0)
+        arkit = int(body.arkit) if body.arkit is not None else default_arkit
+        humanoid = int(body.humanoid) if body.humanoid is not None else default_humanoid
         if url is None:
             conn.execute(
                 "UPDATE users SET model3d_arkit = ?, model3d_humanoid = ? WHERE id = ?",
@@ -1425,11 +1602,13 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
             rules = _blank_to_none(body.rules)
             if rules is None and template:
                 rules = template["rules"] or None
+            # 场景只在建房时生效；加入已有房间不改动其场景
+            map3d = _scene_descriptor_json(body.scene) if body.scene else None
             try:
                 conn.execute(
                     """
-                    INSERT INTO rooms (name, created_by, password_hash, visibility, rules, room_agent_id, template)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO rooms (name, created_by, password_hash, visibility, rules, room_agent_id, template, map3d)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         body.roomName,
@@ -1439,6 +1618,7 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
                         rules,
                         room_agent_id,
                         template["name"] if template else None,
+                        map3d,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -1524,6 +1704,8 @@ def room_detail(room_name: str, user: CurrentUser):
 
 @app.patch("/api/rooms/{room_name}")
 def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
+    # scene 用 model_fields_set 判定「是否显式传了」：缺席=不改，传了才动（含 kind=none 清空）
+    scene_provided = "scene" in body.model_fields_set
     if (
         body.roomName is None
         and body.password is None
@@ -1531,6 +1713,7 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
         and body.muted is None
         and body.rules is None
         and body.roomAgent is None
+        and not scene_provided
     ):
         raise HTTPException(status_code=400, detail="没有需要修改的字段")
     with get_db() as conn:
@@ -1564,9 +1747,120 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
             """,
             (new_name, password_hash, visibility, muted, rules, room_agent_id, room["id"]),
         )
+        if scene_provided:
+            # 换成内置/外链/清空时一并丢弃已上传的场景本体（换回 file 需重新上传）
+            conn.execute(
+                """
+                UPDATE rooms
+                SET map3d = ?, scene_data = NULL, scene_mime = NULL, scene_updated_at = NULL
+                WHERE id = ?
+                """,
+                (_scene_descriptor_json(body.scene) if body.scene else None, room["id"]),
+            )
         _touch(conn, room["id"], user["id"])
         room = _get_room(conn, new_name)
         online = _online_users(conn, room)
+    if scene_provided:
+        notify_room(room["id"])  # 唤醒长轮询，让房内其他人立刻看到场景变化
+    return _room_dict(room, user["id"], online)
+
+
+@app.get("/api/room-scenes")
+def list_room_scenes(user: CurrentUser):
+    """内置 3D 场景目录（房间可选的标准场景）。几何由渲染端按 id 搭建，这里只给清单。"""
+    return {"scenes": [dict(scene) for scene in BUILTIN_ROOM_SCENES]}
+
+
+@app.get("/api/avatar-models")
+def list_avatar_models(user: CurrentUser):
+    """内置缺省 3D 形象目录。账号用 `builtin:<id>` 引用（PUT /api/me/model3d），
+    模型本体是静态资源（static/avatars/），这里给清单、缩略图与能力位。"""
+    return {
+        "avatars": [
+            {
+                "id": avatar["id"],
+                "name": avatar["name"],
+                "nameEn": avatar["nameEn"],
+                "description": avatar["description"],
+                "descriptionEn": avatar["descriptionEn"],
+                "file": avatar["file"],
+                "thumbnail": avatar["thumbnail"],
+                "arkit": avatar["arkit"],
+                "humanoid": avatar["humanoid"],
+                "source": avatar["source"],
+            }
+            for avatar in BUILTIN_AVATARS
+        ]
+    }
+
+
+@app.post("/api/rooms/{room_name}/scene")
+async def upload_room_scene(room_name: str, user: CurrentUser, file: UploadFile = File(...)):
+    """上传房间 3D 场景（GLB，≤50MB）。上传即生效，无需再 PATCH。"""
+    data = await file.read()
+    mime = _validate_room_scene_bytes(data)
+    safe_name = _sanitize_filename(file.filename)
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        _require_owner(room, user["id"])
+        now = _db_now(conn)
+        # 描述符只记 kind；下载地址由 _room_scene_descriptor 按房间名与版本号现算，
+        # 这样房间改名不会让已存的场景地址失效。
+        conn.execute(
+            """
+            UPDATE rooms
+            SET scene_data = ?, scene_mime = ?, scene_updated_at = ?, map3d = ?
+            WHERE id = ?
+            """,
+            (data, mime, now, json.dumps({"kind": "file"}, ensure_ascii=False), room["id"]),
+        )
+        room_id = room["id"]
+        room = _get_room(conn, room_name)
+        online = _online_users(conn, room)
+    notify_room(room_id)
+    return {**_room_dict(room, user["id"], online), "sceneFilename": safe_name}
+
+
+@app.get("/api/rooms/{room_name}/scene")
+def get_room_scene(room_name: str, user: CurrentUser):
+    """下载房间已上传的场景文件（成员可读）。非上传类场景一律 404。"""
+    with get_db() as conn:
+        room, _ = _require_membership(conn, room_name, user["id"])
+        desc = _room_scene_descriptor(room)
+        if not desc or desc["kind"] != "file":
+            raise HTTPException(status_code=404, detail="该房间没有上传的场景文件")
+        row = conn.execute(
+            "SELECT scene_data, scene_mime FROM rooms WHERE id = ?", (room["id"],)
+        ).fetchone()
+        if not row or not row["scene_data"]:
+            raise HTTPException(status_code=404, detail="该房间没有上传的场景文件")
+        data = row["scene_data"]
+        mime = row["scene_mime"] or "model/gltf-binary"
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
+
+
+@app.delete("/api/rooms/{room_name}/scene")
+def clear_room_scene(room_name: str, user: CurrentUser):
+    """清除房间场景（回到展厅环境）。"""
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        _require_owner(room, user["id"])
+        conn.execute(
+            """
+            UPDATE rooms
+            SET map3d = NULL, scene_data = NULL, scene_mime = NULL, scene_updated_at = NULL
+            WHERE id = ?
+            """,
+            (room["id"],),
+        )
+        room_id = room["id"]
+        room = _get_room(conn, room_name)
+        online = _online_users(conn, room)
+    notify_room(room_id)
     return _room_dict(room, user["id"], online)
 
 

@@ -12,6 +12,11 @@ const SLOTS = 16;          // 站位槽位数（hash 取模，稳定不跳）
 const AVATAR_H = 1.55;     // 模型归一化目标高度（米）
 const CAP_H = 1.46;        // 缺省胶囊总高
 const PLATE_W = 1.1;       // 名牌精灵宽（米）
+/* 内置缺省形象：账号的 model3dUrl 存 `builtin:<id>`，这里映射到静态 VRM。
+   约定与服务器 app/main.py 的 BUILTIN_AVATARS[].file 一致（那边是权威目录）；
+   认不出的 id 会走加载失败路径，静默回退胶囊，不影响 2D。 */
+const BUILTIN_AVATAR_PREFIX = "builtin:";
+const BUILTIN_AVATAR_DIR = "/static/avatars/";
 
 /* ---------- ARKit 52 表情接口（需求 4.3） ----------
    驱动优先级：模型自带 ARKit 命名 morph target（部分 GLB 直接支持）→ 逐 mesh 驱动；
@@ -164,6 +169,13 @@ export function createAvatarSystem(opts) {
     let objUrl = null;
     try {
       let src = job.url;
+      /* 内置缺省形象 → 静态 VRM；映射后不以 /api/ 开头，直接进 GLTFLoader。
+         VRM0 的朝向纠正、归一化、表情与骨骼动画都在下面同一条路径里照常生效。 */
+      if (src.startsWith(BUILTIN_AVATAR_PREFIX)) {
+        const id = src.slice(BUILTIN_AVATAR_PREFIX.length).trim();
+        if (!/^[a-z0-9-]+$/.test(id)) throw new Error("bad builtin avatar id");
+        src = BUILTIN_AVATAR_DIR + id + ".vrm";
+      }
       if (src.startsWith("/api/")) {
         const resp = await fetch(src, { headers: opts.token ? { Authorization: "Bearer " + opts.token() } : {} });
         if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -225,7 +237,43 @@ export function createAvatarSystem(opts) {
     }
   }
 
+  /* ---------- 座位（房间 3D 场景提供的推荐位置） ----------
+     seats 为空 = 无场景，沿用原来的 hash 环站位，行为与改动前完全一致。
+     分配用「成员名字典序排序后各自 hash 起位、线性探测取空座」：纯 hash 取模会撞座
+     （10 座 4 人时约 50% 概率重叠），排序 + 探测既不重叠，又在成员集合不变时稳定。 */
+  let seats = [];
+  let seatAssignment = new Map();   // username → 座位下标
+
+  function assignSeats(names) {
+    seatAssignment = new Map();
+    if (!seats.length) return;
+    const taken = new Set();
+    for (const name of Array.from(names).sort()) {
+      let idx = hashStr(name) % seats.length;
+      for (let step = 0; step < seats.length && taken.has(idx); step++) idx = (idx + 1) % seats.length;
+      taken.add(idx);
+      seatAssignment.set(name, idx);
+    }
+  }
+
+  /* 场景座位表（推荐位置语义；用户/Agent 将来可自行改位，见需求 9 的 xr_state）。
+     已在场的成员立即重新就座——所以调用时机不影响结果，但先于 applyRoom 更省一次重排。 */
+  function setSeats(list) {
+    seats = Array.isArray(list)
+      ? list.filter((s) => s && Number.isFinite(s.x) && Number.isFinite(s.z))
+      : [];
+    assignSeats(avatars.keys());
+    for (const [name, rec] of avatars) if (!rec.disposed) placeAvatar(rec, name);
+  }
+
   function placeAvatar(rec, username) {
+    const idx = seatAssignment.get(username);
+    const seat = idx === undefined ? null : seats[idx];
+    if (seat) {
+      rec.root.position.set(seat.x, 0, seat.z);
+      rec.root.rotation.y = seat.ry != null ? seat.ry : Math.atan2(-seat.x, -seat.z);
+      return;
+    }
     const ang = ((hashStr(username) % SLOTS) / SLOTS) * Math.PI * 2;
     rec.root.position.set(RING_R * Math.sin(ang), 0, RING_R * Math.cos(ang));
     rec.root.rotation.y = Math.atan2(-rec.root.position.x, -rec.root.position.z); /* 面向中央 */
@@ -236,6 +284,7 @@ export function createAvatarSystem(opts) {
     if (!info || info.closed) return;
     const users = (info.onlineUsers || []).filter((u) => u && u.username && u.username !== (opts.username && opts.username()));
     const seen = new Set();
+    assignSeats(users.map((u) => u.username));   /* 先排座，再按座建 rec */
     for (const u of users) {
       seen.add(u.username);
       let rec = avatars.get(u.username);
@@ -345,5 +394,5 @@ export function createAvatarSystem(opts) {
     inFlight = 0;
   }
 
-  return { group, applyRoom, positionOf, setExpression, wave, update, dispose };
+  return { group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats };
 }

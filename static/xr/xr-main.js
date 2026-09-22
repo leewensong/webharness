@@ -127,6 +127,37 @@ export async function createXR(ctx) {
      roomEvents 增量同步。加载失败静默回退胶囊（需求 4.5）。 */
   const avatars = createAvatarSystem({ t, tf, username: ctx.username, token: ctx.token });
   scene.add(avatars.group);
+
+  /* ---------- 房间 3D 场景（需求 9 的 map3d） ----------
+     有场景时用场景替换展厅的网格与中央环（渐变天空与灯光保留作基调），并把场景提供的
+     推荐座位交给形象系统；无场景、未知 id、加载失败一律保持展厅原样，绝不影响 2D（需求 1.5）。
+     只在描述符真的变了才重建——否则每次房间轮询都会重搭一遍几何。 */
+  let roomSystem = null;
+  let roomAppliedKey;   /* undefined = 还没应用过 */
+
+  function applyRoomScene(desc) {
+    const key = sceneKeyOf(desc);
+    if (key === roomAppliedKey) return;
+    roomAppliedKey = key;
+    let next = null;
+    try {
+      next = buildRoomScene(desc, { token: ctx.token && ctx.token() });
+    } catch (err) {
+      console.warn("[xr] 房间场景构建失败，保持展厅", err);
+      next = null;
+    }
+    if (roomSystem) { scene.remove(roomSystem.group); roomSystem.dispose(); }
+    roomSystem = next && next.sceneId ? next : null;
+    if (next && !roomSystem) next.dispose();   /* 空/未知场景：别留下垃圾组 */
+    const on = !!roomSystem;
+    grid.visible = !on;
+    centerRing.visible = !on;
+    ground.position.y = on ? -0.01 : 0;        /* 让位给场景地板，避免 z-fighting */
+    if (on) scene.add(roomSystem.group);
+    try { avatars.setSeats(on ? roomSystem.seats : []); } catch (err) {}
+  }
+
+  try { applyRoomScene((ctx.roomInfo && ctx.roomInfo() && ctx.roomInfo().scene) || null); } catch (err) {}
   try { avatars.applyRoom(ctx.roomInfo && ctx.roomInfo()); } catch (err) {}
 
   /* ---------- 语音空间音频（需求 5.1/5.2）：2D 播放链创建的 audio 元素经
@@ -1145,6 +1176,7 @@ export async function createXR(ctx) {
     if (disposed) return;
     try {
       if (info && info.closed) { doExit(); return; }
+      applyRoomScene((info && info.scene) || null); /* 房主改场景后房内热切换 */
       avatars.applyRoom(info); /* 形象随在线成员增量同步（需求 4.1） */
     } catch (err) {}
   });

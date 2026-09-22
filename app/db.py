@@ -245,6 +245,14 @@ def init_db() -> None:
         _add_column_if_missing(conn, "rooms", "rules", "TEXT")
         _add_column_if_missing(conn, "rooms", "room_agent_id", "INTEGER REFERENCES users(id)")
         _add_column_if_missing(conn, "rooms", "template", "TEXT")
+        # 房间 3D 场景：map3d 是场景描述符 JSON（kind=builtin/file/url），用户上传的
+        # GLB 本体存 scene_data（同 users.model3d 的做法）。xr_state 是需求 9 的预留
+        # 透传列，本期只建列、不写入也不消费。
+        _add_column_if_missing(conn, "rooms", "map3d", "TEXT")
+        _add_column_if_missing(conn, "rooms", "scene_data", "BLOB")
+        _add_column_if_missing(conn, "rooms", "scene_mime", "TEXT")
+        _add_column_if_missing(conn, "rooms", "scene_updated_at", "TEXT")
+        _add_column_if_missing(conn, "rooms", "xr_state", "TEXT")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_live_name

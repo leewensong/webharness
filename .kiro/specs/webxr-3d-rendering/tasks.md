@@ -74,12 +74,14 @@
   - _需求：8.1–8.5、7.1–7.5_
   - 2026-09-17 已完成并发布 2.10.0（备份 /opt/webharness-backup-20260917-042916）；VRM/头显真机抽查待用户进行
 
-- [ ] 13. 房间 3D 预留字段（需求 9；可选，与用户确认格式后实施）
-  - 2026-09-17 用户决定本期跳过；3D 端本期不消费该字段，将来需要时再实施
-  - `rooms` 表新增透传列 `xr_state`（成员 3D 位姿 + 模型运行时状态，JSON）、`map3d`（房间 3D 地图，JSON/URL 引用，参考 Mozilla Hubs 场景组织）；ALTER TABLE 沿用 db.py 既有迁移模式
-  - 纯透传：服务器存取 + API 透出，不解析不赋义；Agent API 语义零变；字段为空时 3D 端行为与不存在字段完全一致（本期 3D 端不消费）
-  - 写入/同步协议（谁可写、频率、冲突）与地图格式：实施前与用户另行确认；本期只做 schema 预留与透出
-  - _需求：9.1–9.6、8.3_
+- [x] 13. 房间 3D 场景（需求 9；2026-09-20 实施并发布 2.12.0）
+  - `rooms` 新增 `map3d`（场景描述符 JSON）、`scene_data`/`scene_mime`/`scene_updated_at`（上传的 GLB，镜像 `users.model3d` 的做法）、`xr_state`（**仅建列**，透传预留，本期不写入不消费）；ALTER TABLE 沿用 db.py 既有迁移模式，且必须放在 `_rebuild_rooms_if_name_globally_unique` 之后
+  - **map3d 最终格式**：`{"kind":"builtin","id":"meeting"|"werewolf"}` / `{"kind":"file"}`（上传件的 URL 由服务器按房间名 + `scene_updated_at` 现算，不落库，房间改名不会失效）/ `{"kind":"url","url":"http(s)://…"}`；无场景 = NULL。服务器只做最小 schema 校验（内置 id 必须在册、外链必须 http(s)），不解析场景内容
+  - 服务器：`GET /api/room-scenes`（内置目录，常量 `BUILTIN_ROOM_SCENES` 是权威 id 清单）；建房 `scene` 与 `PATCH /api/rooms/{room}` 的 `scene`（`kind:"none"` 显式清空）；`POST/DELETE /api/rooms/{room}/scene`（上传/清除，房主或 roomAgent）、`GET /api/rooms/{room}/scene`（成员下载）；上传上限单独 50MB（`MAX_ROOM_SCENE_BYTES`，附件与形象仍 20MB），且**拒绝 .gltf（JSON）**——它引用外部 .bin/贴图，单文件上传必然加载失败
+  - 渲染端：新文件 `static/xr/xr-rooms.js`（内置场景用图元程序化搭建，座位表显式定义；外壳 14×12.6m 裹住消息墙且**不建天花板/不建消息墙那面墙**）；`xr-avatars.js` 的 `setSeats` 按「成员名字典序 + hash + 线性探测」就座（不重叠、成员集合不变则稳定），无场景回退原 hash 环；`xr-main.js` 只在描述符变化时重建场景，并把 `disposeScene` 统一到既有的 `disposeObjectTree`
+  - 座位是**推荐位置**：本期只做自动就座；用户/Agent 自行改位的写入接口与同步协议**仍按原计划留待下期**（与 2026-09-17 的决定一致，`xr_state` 仍为纯预留）
+  - _需求：9.1–9.5、8.3_
+  - 真机（Quest）内场景渲染留用户抽查（本地无设备，桌面路径已回归）
 
 ## 验证方式
 
