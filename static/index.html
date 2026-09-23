@@ -251,6 +251,20 @@
     }
     @keyframes caret { 50% { opacity: 0; } }
     .bubble .file { color: var(--accent); text-decoration: none; }
+    /* 超长消息折叠：超过阈值高度的气泡缺省截断，点箭头展开/收起（状态按消息 id 记忆） */
+    .bubble.collapsed .body {
+      max-height: 280px; overflow: hidden;
+      -webkit-mask-image: linear-gradient(#000 78%, transparent 100%);
+      mask-image: linear-gradient(#000 78%, transparent 100%);
+    }
+    .bubble .fold-btn {
+      display: flex; align-items: center; gap: 5px; margin-top: 6px; width: 100%;
+      border: 0; background: transparent; color: var(--accent);
+      font-size: 12.5px; cursor: pointer; padding: 2px 0;
+    }
+    .bubble .fold-btn:hover { text-decoration: underline; }
+    .bubble .fold-btn .arr { display: inline-block; transition: transform 0.15s; font-size: 11px; }
+    .bubble:not(.collapsed) .fold-btn .arr { transform: rotate(180deg); }
     /* 3D 模型附件卡片（glb/gltf/vrm）：缩略图 + 文件名 + 格式徽标；缩略图懒生成，占位先出 */
     .bubble .model-card {
       display: flex; gap: 10px; align-items: center; margin-top: 4px;
@@ -947,6 +961,7 @@
         roomArchived: "房间已归档", noMessages: "还没有消息。来说第一句吧。",
         imageAlt: "图片", imageLoadFail: "图片加载失败", imageLoadFailText: "[图片加载失败]", sending: "发送中",
         speakBtnTitle: "朗读这条消息（再点一次停止）",
+        foldExpand: "展开全部（{{n}} 字）", foldCollapse: "收起",
         whisperTag: "私聊",
         whisperTagN: "{{n}}人私聊",
         membersReadOnly: "仅房主可改成员权限；你可以归档该房间。", noMembers: "暂无成员",
@@ -1140,6 +1155,7 @@
         roomArchived: "Room archived", noMessages: "No messages yet. Say the first word.",
         imageAlt: "Image", imageLoadFail: "Failed to load image", imageLoadFailText: "[image failed to load]", sending: "sending…",
         speakBtnTitle: "Read this message (click again to stop)",
+        foldExpand: "Expand all ({{n}} chars)", foldCollapse: "Collapse",
         whisperTag: "Whisper",
         whisperTagN: "{{n}}-person whisper",
         membersReadOnly: "Only the owner can change permissions; you can archive this room.", noMembers: "No members",
@@ -3007,6 +3023,39 @@
       if (!streaming) renderDiagrams(body);
     }
 
+    /* 超长消息折叠：渲染后量高，超过阈值就截断（CSS max-height + 渐隐），
+       底部出「▾ 展开全部」按钮；展开状态按消息 id 记忆，轮询重渲染不丢。
+       流式中的消息不折叠（结束时走更新路径再套用），避免边写边跳。 */
+    const FOLD_THRESHOLD_PX = 360;
+    const expandedMsgs = new Set();
+    function applyFold(el, m) {
+      const body = el.querySelector(".body");
+      if (!body) return;
+      let btn = el.querySelector(".fold-btn");
+      const tall = !m.streaming && (body.scrollHeight || 0) > FOLD_THRESHOLD_PX;
+      if (!tall) {
+        el.classList.remove("collapsed");
+        if (btn) btn.remove();
+        return;
+      }
+      const id = String(m.id);
+      const open = expandedMsgs.has(id);
+      el.classList.toggle("collapsed", !open);
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "fold-btn";
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const mid = String(m.id);
+          if (expandedMsgs.has(mid)) expandedMsgs.delete(mid); else expandedMsgs.add(mid);
+          applyFold(el, msgIndex.get(mid) || m);
+        });
+        el.appendChild(btn);
+      }
+      btn.innerHTML = `<span class="arr">▾</span><span>${escapeHtml(open ? t("foldCollapse") : tf("foldExpand", { n: (displayContent(m) || "").length.toLocaleString() }))}</span>`;
+    }
+
     function renderMessages(messages, replace, forceScroll) {
       const log = $("log");
       const pin = forceScroll || replace || logPinnedToBottom();
@@ -3048,6 +3097,7 @@
               const raw = displayContent(m);
               if (body.dataset.raw !== raw || (wasStreaming && !m.streaming)) {
                 renderBody(body, raw, !!m.streaming);
+                applyFold(existing, m);
               }
             }
           }
@@ -3149,6 +3199,7 @@
         body.appendChild(wrap);
       } else {
         renderBody(body, displayContent(m), !!m.streaming);
+        applyFold(el, m);
         const spk = document.createElement("button");
         spk.type = "button";
         spk.className = "speak-btn";
