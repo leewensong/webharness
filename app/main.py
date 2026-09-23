@@ -40,7 +40,6 @@ MAX_ROOM_SCENE_BYTES = 50 * 1024 * 1024
 MAX_RULES_CHARS = 32000
 MAX_LONG_POLL_SECONDS = 30
 MAX_VOICE_BYTES = 10 * 1024 * 1024
-RECALL_WINDOW_SECONDS = 30
 MAX_STREAM_IDS = 60
 # 私聊语法：消息以 @@用户名 开头（后面跟空白或整条结束）即只对该用户、
 # 发送者和房主可见；连续多个 @@用户名 前缀表示多个接收者（v2.5）。
@@ -155,8 +154,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.13.0",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单，并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、30 秒内撤回（`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13）：`GET /api/avatar-models` 列出内置形象（6 个 CC0 VRM，含缩略图与表情/骨骼能力位）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源与许可证见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
+    version="2.14.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单，并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13）：`GET /api/avatar-models` 列出内置形象（6 个 CC0 VRM，含缩略图与表情/骨骼能力位）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源与许可证见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。",
     lifespan=lifespan,
 )
 
@@ -2675,17 +2674,18 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
 
 @app.delete("/api/rooms/{room_name}/messages/{message_id}")
 def recall_message(room_name: str, message_id: int, user: CurrentUser):
-    """撤回自己 30 秒内的消息：墓碑化（清空内容 / 附件 / 私聊 / 引用）。
+    """撤回自己发出的、本房间最后一条消息（之后没有任何新消息即可，不限时长）：
+    墓碑化（清空内容 / 附件 / 私聊 / 引用）。
 
     保留 id 与 created_at，增量轮询（afterId）游标不乱；其他客户端通过
-    streamIds + sinceUpdatedAt 拿到 recalled 行后删除对应气泡。
+    streamIds + sinceUpdatedAt 拿到 recalled 行后删除对应气泡（前端会把
+    最后一条消息的 id 常驻 streamIds，所以任意时刻的撤回都能同步到）。
     """
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
         row = conn.execute(
             """
-            SELECT id, user_id, attachment_path, recalled,
-                   (julianday('now') - julianday(created_at)) * 86400.0 AS ageSeconds
+            SELECT id, user_id, attachment_path, recalled
             FROM messages WHERE id = ? AND room_id = ?
             """,
             (message_id, room["id"]),
@@ -2695,8 +2695,12 @@ def recall_message(room_name: str, message_id: int, user: CurrentUser):
         if row["user_id"] != user["id"]:
             raise HTTPException(status_code=403, detail="只能撤回自己发送的消息")
         if not row["recalled"]:
-            if row["ageSeconds"] is not None and row["ageSeconds"] > RECALL_WINDOW_SECONDS:
-                raise HTTPException(status_code=403, detail=f"消息发出超过 {RECALL_WINDOW_SECONDS} 秒，无法撤回")
+            newer = conn.execute(
+                "SELECT 1 FROM messages WHERE room_id = ? AND id > ? LIMIT 1",
+                (room["id"], message_id),
+            ).fetchone()
+            if newer:
+                raise HTTPException(status_code=403, detail="后面已有新消息，只能撤回本房间最后一条消息")
             if row["attachment_path"]:
                 try:
                     (UPLOADS_DIR / row["attachment_path"]).unlink(missing_ok=True)

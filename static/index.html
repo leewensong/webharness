@@ -1325,7 +1325,7 @@
         [/^(.+) 不是 Agent 账号$/, "$1 is not an Agent account"],
         [/^(.+) 不是你名下的 Agent$/, "$1 is not one of your Agents"],
         [/只能撤回自己发送的消息/, "You can only recall your own messages"],
-        [/消息发出超过 30 秒，无法撤回/, "More than 30 seconds have passed — cannot recall"],
+        [/后面已有新消息，只能撤回本房间最后一条消息/, "A newer message exists — only the room's last message can be recalled"],
         [/引用的消息不存在/, "The quoted message does not exist"],
         [/引用的消息已撤回，不能引用/, "The quoted message was recalled"],
         [/引用的消息对你不可见/, "The quoted message is not visible to you"],
@@ -1407,7 +1407,7 @@
     let whisperTo = [];             // 私聊模式选中的成员 [{username, avatarUrl}]
     let replyTarget = null;         // 引用目标 {id, username, avatarUrl, excerpt}
     const msgIndex = new Map();     // id -> 消息对象（消息菜单）
-    const msgArrival = new Map();   // id -> 本地到达时间（撤回窗口 / streamIds 新鲜度）
+    const msgArrival = new Map();   // id -> 本地到达时间（streamIds 新鲜度）
     const MAX_CLIENT_STREAM_IDS = 50;
 
     /* ---- v2.10 WebXR：2D→3D 桥（3D 只订阅消息/房间状态，不写共享状态；轮询仍归 2D） ---- */
@@ -2466,10 +2466,12 @@
     }
 
     function messageQuery() {
-      /* streamIds：流式气泡（Agent 逐字回复）+ 近 35 秒内到达的消息（撤回靠它同步删除） */
-      const ids = new Set([...document.querySelectorAll("#log .bubble.streaming")]
-        .map((el) => el.dataset.msgId)
-        .filter(Boolean));
+      /* streamIds：本房间最后一条（v2.14 起撤回不限时长，tail id 常驻才能在任何
+         时刻拉到撤回墓碑）+ 流式气泡（Agent 逐字回复）+ 近 35 秒内到达的消息 */
+      const ids = new Set(lastId ? [String(lastId)] : []);
+      for (const el of document.querySelectorAll("#log .bubble.streaming")) {
+        if (el.dataset.msgId) ids.add(el.dataset.msgId);
+      }
       const freshCutoff = Date.now() - 35000;
       for (const [id, ts] of msgArrival) if (ts >= freshCutoff) ids.add(String(id));
       const parts = lastId ? [`afterId=${lastId}`, "wait=25"] : ["limit=80"];
@@ -3898,16 +3900,12 @@
       setTimeout(() => el.classList.remove("flash"), 1700);
     }
 
-    // ---------- v2.5：消息撤回 ----------
-    function parseServerTime(s) {
-      if (!s) return 0;
-      const d = new Date(String(s).replace(" ", "T") + "Z");   // 服务端时间为 UTC
-      return Number.isNaN(d.getTime()) ? 0 : d.getTime();
-    }
+    // ---------- v2.5：消息撤回（v2.14 起规则：本房间最后一条消息不限时长可撤回） ----------
     function canRecall(m) {
-      if (!m || m.username !== store.username || store.viewingArchive) return false;
-      const base = parseServerTime(m.createdAt) || msgArrival.get(String(m.id)) || 0;
-      return !!base && Date.now() - base <= 29000;
+      /* lastId 是本端轮询游标（已见最大消息 id）：等于它即本端可见的最后一条。
+         若真实 tail 是你看不见的私聊，菜单仍会出现，点撤回后由服务端 403 裁决。 */
+      if (!m || !m.id || m.username !== store.username || store.viewingArchive) return false;
+      return Number(m.id) === Number(lastId);
     }
     async function recallMessage(id) {
       if (!store.roomName || store.viewingArchive) return;

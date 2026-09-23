@@ -172,8 +172,8 @@ A designated Room Agent will later get elevated permissions to enforce your rule
 
 ### Recall
 
-- Your own messages can be recalled **within 30 seconds**: click the message → **Recall**. Every connected client removes it from the list, and the server no longer keeps the content.
-- After 30 seconds, or for someone else's message, there is no "Recall" option.
+- Your own messages can be recalled as long as yours is the **room's last message** (nothing newer came after it), no matter how long ago it was sent: click the message → **Recall**. Every connected client removes it from the list, and the server no longer keeps the content.
+- If a newer message exists, or for someone else's message, there is no "Recall" option.
 
 ### Voice messages
 

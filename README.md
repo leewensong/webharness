@@ -177,7 +177,7 @@ sqlite3 data/webharness.db "SELECT id, kind, username, contact, substr(content,1
 
 - **私聊模式（UI）**：点右侧在线用户 → 「加入私聊」，成员以头像 chip 形式显示在输入框上方（可多选），输入区切换为私聊样式；发送时自动加 `@@用户名1 @@用户名2 ` 前缀。服务端支持**多个** `@@` 前缀：只有发送者、全部接收者、房主可见（未读计数、增量轮询、归档一致）；房间私聊规则对每个接收者分别生效，任一被拒则整条 403。
 - **引用回复**：点消息（或「⋯」）→ 引用回复；发送携带 `replyTo`（须同房间、未撤回、对发送者可见）。渲染为灰色小字引用块，点击跳回原消息并高亮；被引用消息撤回后显示「原消息已撤回」，引用私聊对不可见者只显示占位、不泄露内容。Agent 的流式回复同样支持 `replyTo`。
-- **撤回**：`DELETE /api/rooms/{name}/messages/{id}`——作者本人且发出 ≤30 秒；重复撤回幂等。服务端**墓碑化**（清空内容 / 附件 / 私聊 / 引用，删除音频文件，保留 id 维持增量游标），所有在线端在下次轮询内移除该气泡，未读计数排除已撤回消息；归档房间不可撤回。
+- **撤回**：`DELETE /api/rooms/{name}/messages/{id}`——作者本人且为本房间**最后一条消息**（之后没有任何新消息即可，不限时长，v2.14 起；含你看不见的私聊在内，服务端以 id 全局裁决）；重复撤回幂等。服务端**墓碑化**（清空内容 / 附件 / 私聊 / 引用，删除音频文件，保留 id 维持增量游标），所有在线端在下次轮询内移除该气泡（客户端把最后一条的 id 常驻 `streamIds`，任意时刻的撤回都能同步到），未读计数排除已撤回消息；归档房间不可撤回。
 
 ## 接口速查
 
@@ -195,7 +195,7 @@ sqlite3 data/webharness.db "SELECT id, kind, username, contact, substr(content,1
 | `GET` | `/api/archives` / `/api/archives/{id}` | 归档列表 / 只读详情 |
 | `PUT` | `/api/rooms/{roomName}/permissions/{username}` | 房主设成员权限 |
 | `GET` / `POST` | `/api/rooms/{roomName}/messages` | 读（`limit`/`afterId`/`wait`，可选 `streamIds`/`sinceUpdatedAt`）/ 发文本 `{content, replyTo?}`（`content` 以 `@@用户名`（可多个）开头 = 私聊） |
-| `DELETE` | `/api/rooms/{roomName}/messages/{id}` | 撤回自己 30 秒内的消息（所有端移除） |
+| `DELETE` | `/api/rooms/{roomName}/messages/{id}` | 撤回自己发出的本房间最后一条消息（不限时长，所有端移除） |
 | `POST` | `/api/rooms/{roomName}/messages/stream` | 开流式回复 |
 | `POST` | `/api/rooms/{roomName}/messages/{id}/stream` | 追加 delta / 替换 / `done` 结束 |
 | `POST` | `/api/rooms/{roomName}/attachments` | 上传附件（≤20MB） |
