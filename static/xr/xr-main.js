@@ -19,7 +19,7 @@ const REF_CSS = 480;     // 参考 CSS 宽（与 xr-panels 的 refCss 一致）�
 const PX_PER_M = PANEL_W / REF_CSS; /* 短消息窄、长消息宽，字号全局一致（不再等宽压扁）；480 对应 15px 字 ≈ 3.5cm，2~3m 外可读 */
 const ANCHOR = Math.PI;  // 消息列方位角（相机默认在 +Z 侧面向 −Z 看墙正面）
 const FLOOR_Y = 0.42;    // 列底基准：最新面板底边（历史向上堆叠，越旧越高）
-const GAP = 0.16;        // 面板纵向间距
+const GAP = 0.02;        // 面板纵向间距（贴紧：像 2D 里连续的气泡列）
 const BAND_HI = 6.0;     // 可视带顶（带底 = FLOOR_Y）：面板滑过该带即进入窗口
 const EYE_Y = 1.55;
 const MAX_RADIUS = 5.1;  // 相机水平活动半径（离墙 0.9m）
@@ -260,11 +260,6 @@ export async function createXR(ctx) {
     #xrRoot .xr-title { color: #8fa3bd; font-size: 13px; }
     #xrRoot .xr-hint { position: absolute; top: 18px; right: 18px; color: #7c90aa; font-size: 12px; max-width: 46vw; text-align: right; }
     #xrRoot .xr-status { position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%); color: #8fa3bd; font-size: 13px; }
-    #xrRoot .xr-vscroll { position: absolute; top: 84px; bottom: 100px; right: 12px; width: 10px;
-      background: rgba(16, 22, 34, 0.55); border-radius: 6px; pointer-events: auto; }
-    #xrRoot .xr-vthumb { position: absolute; left: 0; width: 100%; border-radius: 6px;
-      background: #46608c; cursor: pointer; }
-    #xrRoot .xr-vthumb:hover { background: #5b8cff; }
     #xrRoot .xr-send { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
       display: flex; gap: 8px; pointer-events: auto; }
     #xrRoot .xr-send-input { width: min(430px, 56vw); padding: 9px 14px; font-size: 13px;
@@ -287,7 +282,6 @@ export async function createXR(ctx) {
     </div>
     <div class="xr-hint">${t("xrHintDesktop")}</div>
     <div class="xr-status"></div>
-    <div class="xr-vscroll" title=""><div class="xr-vthumb"></div></div>
     <div class="xr-send">
       <input class="xr-send-input" type="text" maxlength="4000" />
       <button type="button" class="xr-btn" data-act="mic"></button>
@@ -300,8 +294,6 @@ export async function createXR(ctx) {
   const nativeBtn = hud.querySelector('[data-act="native"]');
   const titleEl = hud.querySelector(".xr-title");
   const statusEl = hud.querySelector(".xr-status");
-  const vscroll = hud.querySelector(".xr-vscroll");
-  const vthumb = hud.querySelector(".xr-vthumb");
   exitBtn.addEventListener("click", () => doExit());
   /* 沉浸式入口（需求 1.2）：仅当浏览器报告支持 immersive-vr 时显示 */
   function refreshVRBtn() {
@@ -432,7 +424,6 @@ export async function createXR(ctx) {
   let hArc = 0;
   let backfilling = false;
   let historyEnd = false;
-  let scrollDrag = false;
 
   function collectFromLog() {
     const out = [];
@@ -531,7 +522,7 @@ export async function createXR(ctx) {
   function scrollBy(d) {
     if (follow) { follow = false; refreshFollowBtn(); }
     hArc = THREE.MathUtils.clamp(hArc + d, 0, maxScroll());
-    syncThumb();
+    updateScrollBar();
   }
 
   function layout(dt) {
@@ -575,7 +566,7 @@ export async function createXR(ctx) {
       dt,
     });
     native.sync(entries, (id) => panels.positionOf(id), dt);
-    syncThumb();
+    updateScrollBar();
   }
 
   /* ---------- 控制（桌面第一人称：拖拽环视 / 滚轮走近 / WASD / ←→ 翻历史） ---------- */
@@ -585,7 +576,13 @@ export async function createXR(ctx) {
   let dragInfo = null;
 
   renderer.domElement.addEventListener("pointerdown", (e) => {
-    dragInfo = { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0, id: e.pointerId };
+    const ray = pointerRay(e);
+    const drag = dragBegin(ray, false); /* 落在滚行条/记录上 → 拖动滚动；否则环视 */
+    if (drag) { drag.o = ray.ray.origin.clone(); drag.d = ray.ray.direction.clone(); }
+    dragInfo = {
+      x: e.clientX, y: e.clientY, t: performance.now(), moved: 0, id: e.pointerId,
+      mode: drag ? drag.mode : "look", drag,
+    };
     try { renderer.domElement.setPointerCapture(e.pointerId); } catch (err) {}
   });
   renderer.domElement.addEventListener("pointermove", (e) => {
@@ -593,20 +590,34 @@ export async function createXR(ctx) {
     const dx = e.clientX - dragInfo.x, dy = e.clientY - dragInfo.y;
     dragInfo.x = e.clientX; dragInfo.y = e.clientY;
     dragInfo.moved += Math.abs(dx) + Math.abs(dy);
-    look.yaw -= dx * 0.0042;
-    look.pitch = THREE.MathUtils.clamp(look.pitch - dy * 0.003, -1.2, 1.2);
+    if (dragInfo.mode === "look") {
+      look.yaw -= dx * 0.0042;
+      look.pitch = THREE.MathUtils.clamp(look.pitch - dy * 0.003, -1.2, 1.2);
+      return;
+    }
+    dragMove(dragInfo.drag, pointerRay(e)); /* 记录/滚行条：跟手滚动 */
   });
   renderer.domElement.addEventListener("pointerup", (e) => {
     if (dragInfo && dragInfo.id === e.pointerId) {
-      if (dragInfo.moved < 6 && performance.now() - dragInfo.t < 400) handlePanelClick(e);
+      /* 原地按下-抬起（未达 6px / 400ms 门控）仍是点击；按在滚行条上则按下已跳转 */
+      if (dragInfo.moved < 6 && performance.now() - dragInfo.t < 400 && dragInfo.mode !== "bar") handlePanelClick(e);
+      dragEnd(dragInfo.drag);
       dragInfo = null;
     }
   });
-  renderer.domElement.addEventListener("pointercancel", () => { dragInfo = null; });
+  renderer.domElement.addEventListener("pointercancel", () => { dragEnd(dragInfo && dragInfo.drag); dragInfo = null; });
   renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
+
+  /* 鼠标位置的拾取射线（按下判定、拖动跟手都用它） */
+  function pointerRay(e) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    return raycaster;
+  }
 
   /* ---------- 3D 模型附件放置（需求 3.9）：点击 3D 文件卡片所在面板 → 放置/收起模型。
      取回/解析与形象加载同一思路（服务器附件带 token 取 blob）；场景内上限 LRU，
@@ -804,44 +815,117 @@ export async function createXR(ctx) {
   }
   followBtn.addEventListener("click", toggleFollow);
 
-  function syncThumb() {
-    const ma = maxScroll();
-    const trackH = vscroll.clientHeight;
-    if (ma <= 0 || trackH <= 0) { vthumb.style.display = "none"; return; }
-    vthumb.style.display = "";
-    const frac = THREE.MathUtils.clamp((BAND_HI - FLOOR_Y) / totalH, 0.08, 1);
-    const th = Math.max(24, Math.round(trackH * frac));
-    vthumb.style.height = th + "px";
-    const f = 1 - hArc / ma; /* 1 = 最新（拇指沉底），0 = 最旧（拇指到顶） */
-    vthumb.style.top = Math.round((trackH - th) * f) + "px";
+  /* ---------- 世界内 3D 滚行条（替代原 DOM 那条：dom-overlay 在 Quest 上不渲染，
+     沉浸式里 DOM 滚行条等于不存在）。轨道钉在记录列右侧，拇指的高度/位置与旧 DOM
+     逻辑同构：frac = 带高/总高，f = 1 - hArc/maxScroll（1 = 最新、拇指沉底）。
+     命中判定走「射线 ∩ z 平面」，不逐帧求交网格——薄片也能稳稳抓住。 */
+
+  const SB_X = 0.8;             /* 列参考右缘外约 0.2m */
+  const SB_Z = -R + 0.3;        /* 浮在面板前：便于拾取，也不与面板同面闪烁 */
+  const SB_W = 0.09, SB_THUMB_W = 0.13;
+  const SB_BOT = FLOOR_Y + 0.15, SB_TOP = BAND_HI - 0.35;
+  const SB_TRACK_H = SB_TOP - SB_BOT;
+  const SB_COLOR = 0x46608c, SB_COLOR_ACTIVE = 0x5b8cff;
+  const LOG_DRAG_MIN = 0.04;    /* 记录拖动阈值（米）：小于它仍算点击 */
+
+  const scrollBar = new THREE.Group();
+  const sbTrackMat = new THREE.MeshBasicMaterial({ color: 0x101622, transparent: true, opacity: 0.55, depthWrite: false });
+  const sbTrack = new THREE.Mesh(new THREE.PlaneGeometry(SB_W, SB_TRACK_H), sbTrackMat);
+  sbTrack.position.set(SB_X, (SB_BOT + SB_TOP) / 2, SB_Z);
+  const sbThumbMat = new THREE.MeshBasicMaterial({ color: SB_COLOR, depthWrite: false });
+  const sbThumb = new THREE.Mesh(new THREE.PlaneGeometry(SB_THUMB_W, 1), sbThumbMat);
+  sbThumb.position.set(SB_X, SB_BOT, SB_Z + 0.004); /* 略前一层，避免与轨道同面 z-fighting */
+  scrollBar.add(sbTrack, sbThumb);
+  scrollBar.visible = false; /* 首帧 updateScrollBar 之前不显示，避免闪一条空轨 */
+  scene.add(scrollBar);
+  let sbThumbH = 0.12;
+
+  const _sbPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); /* 法线 +Z；constant 按需改为 -z */
+  const _sbHit = new THREE.Vector3();
+  /* 射线（Raycaster）与 z = planeZ 平面的交点（无交点返回 null） */
+  function rayPlanePoint(caster, planeZ, out) {
+    _sbPlane.constant = -planeZ;
+    return caster.ray.intersectPlane(_sbPlane, out);
   }
-  function thumbFromEvent(e) {
+
+  function updateScrollBar() {
+    const ma = maxScroll();
+    if (ma <= 0) { scrollBar.visible = false; return; }
+    scrollBar.visible = true;
+    const frac = THREE.MathUtils.clamp((BAND_HI - FLOOR_Y) / totalH, 0.08, 1);
+    sbThumbH = Math.max(0.12, SB_TRACK_H * frac);
+    sbThumb.scale.y = sbThumbH;
+    /* 世界 y 向上、DOM 的 top 向下：t = hArc/ma（0 = 最新、拇指沉底；1 = 最旧、拇指到顶） */
+    sbThumb.position.y = SB_BOT + (SB_TRACK_H - sbThumbH) * (hArc / ma) + sbThumbH / 2;
+  }
+  /* 世界 y → 轨道自底向上的比例 t（算上拇指半高，与旧 DOM 的 top 映射同构） */
+  function sbYToT(y) {
+    return THREE.MathUtils.clamp((y - SB_BOT - sbThumbH / 2) / Math.max(0.001, SB_TRACK_H - sbThumbH), 0, 1);
+  }
+  function sbApplyY(y) {
     const ma = maxScroll();
     if (ma <= 0) return;
-    const rect = vscroll.getBoundingClientRect();
-    const th = vthumb.offsetHeight || 24;
-    const f = THREE.MathUtils.clamp((e.clientY - rect.top - th / 2) / Math.max(1, rect.height - th), 0, 1);
-    hArc = (1 - f) * ma;
-    /* 拖回最底（最新）自然恢复跟随 */
-    if (f >= 0.995) { follow = true; }
+    const t = sbYToT(y);
+    hArc = t * ma;
+    if (t <= 0.005) { follow = true; } /* 拖回最底（最新）自然恢复跟随 */
     else if (follow) { follow = false; }
     refreshFollowBtn();
+    updateScrollBar();
   }
-  vthumb.addEventListener("pointerdown", (e) => {
-    scrollDrag = true;
-    try { vthumb.setPointerCapture(e.pointerId); } catch (err) {}
-    thumbFromEvent(e);
-    e.preventDefault();
-  });
-  vscroll.addEventListener("pointerdown", (e) => {
-    if (e.target === vthumb) return; /* 点击轨道空白 → 跳转到该位置并继续拖动 */
-    scrollDrag = true;
-    thumbFromEvent(e);
-  });
-  window.addEventListener("pointermove", (e) => { if (scrollDrag) thumbFromEvent(e); });
-  const releaseScroll = () => { scrollDrag = false; };
-  window.addEventListener("pointerup", releaseScroll);
-  window.addEventListener("pointercancel", releaseScroll);
+  function sbHitTest(ray) {
+    if (!scrollBar.visible) return false;
+    if (!rayPlanePoint(ray, SB_Z, _sbHit)) return false;
+    return Math.abs(_sbHit.x - SB_X) <= SB_THUMB_W / 2 + 0.03 &&
+      _sbHit.y >= SB_BOT - 0.06 && _sbHit.y <= SB_TOP + 0.06;
+  }
+
+  /* ---------- 拖动手势（手柄射线与鼠标共用）：三种翻历史里的一种半----------
+     记录/滚行条的按下先挂起，移动超过阈值才进入拖动（跟手滚动），
+     未越阈值抬起 = 原来的点击（翻段/聚焦/播放语音/放模型）。 */
+
+  const _dragRay = new THREE.Raycaster();
+  function dragBegin(ray, immediatePick) {
+    if (sbHitTest(ray)) {
+      const p = rayPlanePoint(ray, SB_Z, _sbHit);
+      if (p) sbApplyY(p.y);
+      sbThumbMat.color.setHex(SB_COLOR_ACTIVE);
+      return { mode: "bar", moved: 0 };
+    }
+    const onLog = panels.raycast(ray) != null || native.pickImage(ray) != null;
+    if (onLog) {
+      const p = rayPlanePoint(ray, -R, _sbHit);
+      return { mode: "log", moved: 0, y0: p ? p.y : 0, hArc0: hArc };
+    }
+    /* 图表扇区/模型/空处：手柄按下即响应（与旧行为一致，不参与拖动） */
+    if (immediatePick) handlePick(ray);
+    return null;
+  }
+  function dragMove(drag, ray) {
+    if (drag.mode === "bar") {
+      const p = rayPlanePoint(ray, SB_Z, _sbHit);
+      if (p) sbApplyY(p.y);
+      return;
+    }
+    if (drag.mode !== "log") return;
+    const p = rayPlanePoint(ray, -R, _sbHit);
+    if (!p) return;
+    const dy = drag.y0 - p.y; /* 手往下拉 → dy > 0 → hArc 增 → 看更早（内容跟手） */
+    drag.moved = Math.max(drag.moved, Math.abs(dy));
+    if (drag.moved < LOG_DRAG_MIN) return;
+    if (follow) { follow = false; refreshFollowBtn(); }
+    hArc = THREE.MathUtils.clamp(drag.hArc0 + dy, 0, maxScroll());
+    updateScrollBar();
+  }
+  function dragEnd(drag) {
+    if (!drag) return;
+    if (drag.mode === "bar") sbThumbMat.color.setHex(SB_COLOR);
+  }
+  /* 记录拖动未越阈值 → 抬起时补一次点击（用按下那一刻的射线） */
+  function rayFromStored(drag) {
+    _dragRay.ray.origin.copy(drag.o);
+    _dragRay.ray.direction.copy(drag.d);
+    return _dragRay;
+  }
 
   /* ---------- WebXR 沉浸式会话：renderer.xr + 手柄射线拾取 + 摇杆平移/转向。
      输入抽象层三动作：确认（trigger→射线拾取，桌面=鼠标点击）、移动（左摇杆平移，
@@ -870,6 +954,7 @@ export async function createXR(ctx) {
     c.add(line);
     c.userData.xrLine = line;
     c.addEventListener("selectstart", () => onXRSelect(c));
+    c.addEventListener("selectend", () => onXRSelectEnd(c));
     /* 侧握键按住说话（松开发送）——沉浸式下的快捷语音入口 */
     c.addEventListener("squeezestart", () => startVRRec());
     c.addEventListener("squeezeend", () => stopVRRec());
@@ -894,6 +979,7 @@ export async function createXR(ctx) {
     killVRRec(); /* 会话结束即停录音（防麦克风指示灯残留） */
     vrBar.visible = false;
     vrHint.visible = false;
+    if (xrDrag) { dragEnd(xrDrag); xrDrag = null; } /* 会话结束丢弃未完成的拖动 */
   });
 
   async function enterImmersive() {
@@ -1085,14 +1171,20 @@ export async function createXR(ctx) {
   }
   refreshVrBar(); /* 初始文字（此时 vrRec 为 null） */
 
-  /* 确认动作（手柄）：先试世界内控制条，再走与桌面一致的拾取链 */
-  function onXRSelect(c) {
-    if (disposed || !renderer.xr.isPresenting) return;
+  /* 确认动作（手柄）：控制条按钮 → 滚行条/记录的拖动 → 与桌面一致的拾取链。
+     按下只挂起记录拖动，点击（未越阈值的抬起）在 onXRSelectEnd 里补。 */
+  let xrDrag = null; /* { c, mode, moved, y0, hArc0, o, d } */
+  function xrRayFrom(c) {
     c.getWorldQuaternion(_xrQ1);
     xrRay.ray.origin.setFromMatrixPosition(c.matrixWorld);
     xrRay.ray.direction.set(0, 0, -1).applyQuaternion(_xrQ1).normalize();
+    return xrRay;
+  }
+  function onXRSelect(c) {
+    if (disposed || !renderer.xr.isPresenting) return;
+    const ray = xrRayFrom(c);
     if (vrBar.visible) {
-      const barHits = xrRay.intersectObjects(vrBar.children, false);
+      const barHits = ray.intersectObjects(vrBar.children, false);
       if (barHits.length) {
         const obj = barHits[0].object;
         if (obj === vrVoiceBtn) { vrToggleRec(); return; }
@@ -1101,7 +1193,20 @@ export async function createXR(ctx) {
         return;
       }
     }
-    handlePick(xrRay);
+    const drag = dragBegin(ray, true); /* 图表/空处在这内部已即时响应 */
+    if (!drag) return;
+    drag.o = ray.ray.origin.clone();
+    drag.d = ray.ray.direction.clone();
+    drag.c = c;
+    xrDrag = drag;
+  }
+  function onXRSelectEnd(c) {
+    if (!xrDrag || xrDrag.c !== c) return;
+    const drag = xrDrag;
+    xrDrag = null;
+    dragEnd(drag);
+    /* 未越阈值的按下-抬起 = 点击（翻段/聚焦/播放语音/放模型） */
+    if (drag.mode === "log" && drag.moved < LOG_DRAG_MIN) handlePick(rayFromStored(drag));
   }
 
   /* 移动/旋转（手柄摇杆，xr-standard：axes[2]=X axes[3]=Y，死区 0.15） */
@@ -1192,12 +1297,13 @@ export async function createXR(ctx) {
        沉浸式下 setAnimationLoop 由 XR 帧驱动（同一路径，任务 10）。 */
     const dt = Math.min(0.05, (tNow - lastT) / 1000 || 0.016);
     lastT = tNow;
-    updateXRInput(dt);  /* 手柄摇杆平移/转向（无会话 no-op） */
+    updateXRInput(dt);  /* 手柄摇杆平移/转向/翻历史（无会话 no-op） */
+    if (xrDrag) dragMove(xrDrag, xrRayFrom(xrDrag.c)); /* 按住拖动记录/滚行条：跟手滚动 */
     updateControls(dt);
     if (follow && hArc > 0.001) {
       hArc *= Math.exp(-dt * 4);
       if (hArc < 0.005) hArc = 0;
-      syncThumb();
+      updateScrollBar();
     }
     layout(dt);
     try { avatars.update(dt); } catch (err) {} /* 形象呼吸/浮动/表情推进（需求 4.4） */
@@ -1252,6 +1358,13 @@ export async function createXR(ctx) {
     ids: () => panels.group.children.map((m) => m.userData.panelId),
     scroll: () => ({ hArc: +hArc.toFixed(2), max: +maxScroll().toFixed(2), totalH: +totalH.toFixed(2), follow }),
     scrollBy: (d) => scrollBy(d), /* 与摇杆/←→ 同一条滚动路径（无头显时验证用） */
+    scrollBar: () => ({
+      visible: scrollBar.visible,
+      thumbY: +sbThumb.position.y.toFixed(3),
+      thumbH: +sbThumbH.toFixed(3),
+      trackBot: SB_BOT, trackTop: SB_TOP,
+    }),
+    dragState: () => (dragInfo ? { mode: dragInfo.mode, moved: +dragInfo.moved.toFixed(1) } : (xrDrag ? { mode: xrDrag.mode } : null)),
     nativeGroup: () => native.group,
     avatarGroup: () => avatars.group,
     avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */
@@ -1298,6 +1411,7 @@ export async function createXR(ctx) {
     exitImmersive(); /* 头显会话随 3D 退出一并结束（需求 7.4） */
     stopAsr(); /* 语音识别随退出终止，避免麦克风指示灯残留 */
     killVRRec(); /* VR 侧握键录音同理 */
+    xrDrag = null; /* 丢弃未完成的拖动 */
     if (resizeTimer) clearTimeout(resizeTimer);
     focus = null;
     for (const id of Array.from(spatialVoices.keys())) dropSpatialVoice(id); /* 空间音频摘除（需求 7.4） */
