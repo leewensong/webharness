@@ -15,12 +15,12 @@ import { buildRoomScene, sceneKeyOf } from "./xr-rooms.js";
 
 const R = 6;             // 消息列半径（米）
 const PANEL_W = 1.12;    // 参考面板世界宽（米）——单面板实际宽 = 气泡 CSS 宽 × PX_PER_M
-const REF_CSS = 480;     // 参考 CSS 宽（与 xr-panels 的 refCss 一致）：全局 px→米 比例的分母
-const PX_PER_M = PANEL_W / REF_CSS; /* 短消息窄、长消息宽，字号全局一致（不再等宽压扁）；480 对应 15px 字 ≈ 3.5cm，2~3m 外可读 */
+const REF_CSS = 356;     // 参考 CSS 宽（与 xr-panels 的 refCss 一致）：全局 px→米 比例的分母
+const PX_PER_M = PANEL_W / REF_CSS; /* 短消息窄、长消息宽，字号全局一致（不再等宽压扁）；356 对应 15px 字 ≈ 4.7cm */
 const ANCHOR = Math.PI;  // 消息列方位角（相机默认在 +Z 侧面向 −Z 看墙正面）
 const FLOOR_Y = 0.42;    // 列底基准：最新面板底边（历史向上堆叠，越旧越高）
 const GAP = 0.02;        // 面板纵向间距（贴紧：像 2D 里连续的气泡列）
-const BAND_HI = 6.0;     // 可视带顶（带底 = FLOOR_Y）：面板滑过该带即进入窗口
+const BAND_HI = 3.02;    // 可视带顶（带底 = FLOOR_Y）：带高 2.6m ≈ 同时 5~8 条（有 3D 滚行条后不必一次显示太多）
 const EYE_Y = 1.55;
 const MAX_RADIUS = 5.1;  // 相机水平活动半径（离墙 0.9m）
 
@@ -606,6 +606,12 @@ export async function createXR(ctx) {
     }
   });
   renderer.domElement.addEventListener("pointercancel", () => { dragEnd(dragInfo && dragInfo.drag); dragInfo = null; });
+  /* 悬停（桌面）：鼠标指着记录/滚行条 → 滚行条拇指高亮，也是「可拖动」的提示 */
+  renderer.domElement.addEventListener("pointermove", (e) => {
+    if (dragInfo) return;
+    hoverLog = rayPointingAtLog(pointerRay(e));
+    refreshSbActive();
+  });
   renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
 
   const raycaster = new THREE.Raycaster();
@@ -817,28 +823,118 @@ export async function createXR(ctx) {
 
   /* ---------- 世界内 3D 滚行条（替代原 DOM 那条：dom-overlay 在 Quest 上不渲染，
      沉浸式里 DOM 滚行条等于不存在）。轨道钉在记录列右侧，拇指的高度/位置与旧 DOM
-     逻辑同构：frac = 带高/总高，f = 1 - hArc/maxScroll（1 = 最新、拇指沉底）。
-     命中判定走「射线 ∩ z 平面」，不逐帧求交网格——薄片也能稳稳抓住。 */
+     逻辑同构：frac = 带高/总高，t = hArc/maxScroll（0 = 最新、拇指沉底）。
+     命中判定走「射线 ∩ z 平面」，不逐帧求交网格——薄片也能稳稳抓住。
+     外观：圆角凹槽轨道 + 胶囊拇指（带握纹），指着记录/滚行条或拖动时拇指变亮。 */
 
   const SB_X = 0.8;             /* 列参考右缘外约 0.2m */
   const SB_Z = -R + 0.3;        /* 浮在面板前：便于拾取，也不与面板同面闪烁 */
-  const SB_W = 0.09, SB_THUMB_W = 0.13;
+  const SB_TRACK_W = 0.18, SB_THUMB_W = 0.30;
   const SB_BOT = FLOOR_Y + 0.15, SB_TOP = BAND_HI - 0.35;
   const SB_TRACK_H = SB_TOP - SB_BOT;
-  const SB_COLOR = 0x46608c, SB_COLOR_ACTIVE = 0x5b8cff;
+  const SB_THUMB_MIN = 0.14;
   const LOG_DRAG_MIN = 0.04;    /* 记录拖动阈值（米）：小于它仍算点击 */
 
+  function sbRoundRect(g, x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
+    g.beginPath();
+    g.moveTo(x + rr, y);
+    g.lineTo(x + w - rr, y);
+    g.quadraticCurveTo(x + w, y, x + w, y + rr);
+    g.lineTo(x + w, y + h - rr);
+    g.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+    g.lineTo(x + rr, y + h);
+    g.quadraticCurveTo(x, y + h, x, y + h - rr);
+    g.lineTo(x, y + rr);
+    g.quadraticCurveTo(x, y, x + rr, y);
+    g.closePath();
+  }
+  function sbTexture(w, h, draw) {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    draw(c.getContext("2d"), w, h);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
+  }
+  /* 轨道：圆角凹槽（描边 + 内槽渐变）。画布高宽比跟随世界尺寸，圆角不被拉伸 */
+  function sbTrackTexture() {
+    const W = 128;
+    const H = Math.min(2048, Math.round(W * (SB_TRACK_H / SB_TRACK_W)));
+    return sbTexture(W, H, (g) => {
+      const r = W / 2 - 2;
+      sbRoundRect(g, 2, 2, W - 4, H - 4, r);
+      g.fillStyle = "rgba(10,15,24,0.72)";
+      g.fill();
+      g.lineWidth = 3;
+      g.strokeStyle = "rgba(91,140,255,0.42)";
+      g.stroke();
+      const grd = g.createLinearGradient(0, 0, W, 0);
+      grd.addColorStop(0, "rgba(0,0,0,0.45)");
+      grd.addColorStop(0.5, "rgba(150,180,230,0.10)");
+      grd.addColorStop(1, "rgba(0,0,0,0.45)");
+      sbRoundRect(g, 2, 2, W - 4, H - 4, r);
+      g.fillStyle = grd;
+      g.fill();
+    });
+  }
+  /* 拇指：胶囊渐变 + 握纹；active = 被指着/正被拖动 */
+  function sbThumbTexture(hWorld, active) {
+    const W = 128;
+    const H = Math.min(1024, Math.max(40, Math.round(W * (hWorld / SB_THUMB_W))));
+    return sbTexture(W, H, (g) => {
+      sbRoundRect(g, 2, 2, W - 4, H - 4, W / 2 - 2);
+      const grd = g.createLinearGradient(0, 0, W, 0);
+      if (active) { grd.addColorStop(0, "#8fbcff"); grd.addColorStop(0.5, "#5b8cff"); grd.addColorStop(1, "#3f6fd8"); }
+      else { grd.addColorStop(0, "#5c7cb4"); grd.addColorStop(0.5, "#46608c"); grd.addColorStop(1, "#2f4364"); }
+      g.fillStyle = grd;
+      g.fill();
+      g.lineWidth = 2;
+      g.strokeStyle = active ? "rgba(240,246,255,0.85)" : "rgba(200,214,235,0.55)";
+      g.stroke();
+      g.strokeStyle = active ? "rgba(240,246,255,0.7)" : "rgba(214,226,244,0.45)";
+      g.lineWidth = 2;
+      g.lineCap = "round";
+      const step = Math.min(11, H / 7);
+      for (let i = 0; i < 3; i++) {
+        const y = H / 2 + (i - 1) * step;
+        g.beginPath();
+        g.moveTo(W * 0.34, y);
+        g.lineTo(W * 0.66, y);
+        g.stroke();
+      }
+    });
+  }
+
   const scrollBar = new THREE.Group();
-  const sbTrackMat = new THREE.MeshBasicMaterial({ color: 0x101622, transparent: true, opacity: 0.55, depthWrite: false });
-  const sbTrack = new THREE.Mesh(new THREE.PlaneGeometry(SB_W, SB_TRACK_H), sbTrackMat);
+  const sbTrackMat = new THREE.MeshBasicMaterial({ map: sbTrackTexture(), transparent: true, depthWrite: false });
+  const sbTrack = new THREE.Mesh(new THREE.PlaneGeometry(SB_TRACK_W, SB_TRACK_H), sbTrackMat);
   sbTrack.position.set(SB_X, (SB_BOT + SB_TOP) / 2, SB_Z);
-  const sbThumbMat = new THREE.MeshBasicMaterial({ color: SB_COLOR, depthWrite: false });
+  const sbThumbMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
   const sbThumb = new THREE.Mesh(new THREE.PlaneGeometry(SB_THUMB_W, 1), sbThumbMat);
-  sbThumb.position.set(SB_X, SB_BOT, SB_Z + 0.004); /* 略前一层，避免与轨道同面 z-fighting */
+  sbThumb.position.set(SB_X, SB_BOT, SB_Z + 0.012); /* 略前一层，避免与轨道同面 z-fighting */
   scrollBar.add(sbTrack, sbThumb);
   scrollBar.visible = false; /* 首帧 updateScrollBar 之前不显示，避免闪一条空轨 */
   scene.add(scrollBar);
-  let sbThumbH = 0.12;
+
+  let sbThumbH = SB_THUMB_MIN;
+  let sbActive = false;      /* 被指着或正被拖动 → 拇指变亮 */
+  let sbDrawnH = 0, sbDrawnActive = null;
+  function sbDrawThumb() {
+    /* 拇指高度只在总高变化时变；变化不到 1.5cm 不重画纹理（省开销） */
+    if (Math.abs(sbThumbH - sbDrawnH) < 0.015 && sbActive === sbDrawnActive) return;
+    sbDrawnH = sbThumbH;
+    sbDrawnActive = sbActive;
+    if (sbThumbMat.map) sbThumbMat.map.dispose();
+    sbThumbMat.map = sbThumbTexture(sbThumbH, sbActive);
+    sbThumbMat.needsUpdate = true;
+  }
+  function sbSetActive(on) {
+    if (on === sbActive) return;
+    sbActive = on;
+    sbDrawThumb();
+  }
 
   const _sbPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); /* 法线 +Z；constant 按需改为 -z */
   const _sbHit = new THREE.Vector3();
@@ -853,10 +949,11 @@ export async function createXR(ctx) {
     if (ma <= 0) { scrollBar.visible = false; return; }
     scrollBar.visible = true;
     const frac = THREE.MathUtils.clamp((BAND_HI - FLOOR_Y) / totalH, 0.08, 1);
-    sbThumbH = Math.max(0.12, SB_TRACK_H * frac);
+    sbThumbH = Math.max(SB_THUMB_MIN, SB_TRACK_H * frac);
     sbThumb.scale.y = sbThumbH;
     /* 世界 y 向上、DOM 的 top 向下：t = hArc/ma（0 = 最新、拇指沉底；1 = 最旧、拇指到顶） */
     sbThumb.position.y = SB_BOT + (SB_TRACK_H - sbThumbH) * (hArc / ma) + sbThumbH / 2;
+    sbDrawThumb();
   }
   /* 世界 y → 轨道自底向上的比例 t（算上拇指半高，与旧 DOM 的 top 映射同构） */
   function sbYToT(y) {
@@ -875,8 +972,26 @@ export async function createXR(ctx) {
   function sbHitTest(ray) {
     if (!scrollBar.visible) return false;
     if (!rayPlanePoint(ray, SB_Z, _sbHit)) return false;
-    return Math.abs(_sbHit.x - SB_X) <= SB_THUMB_W / 2 + 0.03 &&
-      _sbHit.y >= SB_BOT - 0.06 && _sbHit.y <= SB_TOP + 0.06;
+    return Math.abs(_sbHit.x - SB_X) <= SB_TRACK_W / 2 + 0.04 &&
+      _sbHit.y >= SB_BOT - 0.08 && _sbHit.y <= SB_TOP + 0.08;
+  }
+
+  /* 「记录被指着」：右摇杆翻历史只在此时生效（避免与全局摇杆动作冲突），
+     同时给滚行条做高亮反馈。桌面用鼠标位置等价判定，便于本地验证与鼠标用户。 */
+  let hoverLog = false;   /* 鼠标是否指着记录/滚行条（桌面） */
+  function rayPointingAtLog(ray) {
+    return sbHitTest(ray) || panels.raycast(ray) != null || native.pickImage(ray) != null;
+  }
+  function xrPointingAtLog() {
+    if (!renderer.xr.isPresenting) return false;
+    for (const c of xrControllers) {
+      if (rayPointingAtLog(xrRayFrom(c))) return true;
+    }
+    return false;
+  }
+  function refreshSbActive() {
+    const dragging = (dragInfo && dragInfo.mode === "bar") || (xrDrag && xrDrag.mode === "bar");
+    sbSetActive(!!dragging || (renderer.xr.isPresenting ? xrPointingAtLog() : hoverLog));
   }
 
   /* ---------- 拖动手势（手柄射线与鼠标共用）：三种翻历史里的一种半----------
@@ -888,7 +1003,7 @@ export async function createXR(ctx) {
     if (sbHitTest(ray)) {
       const p = rayPlanePoint(ray, SB_Z, _sbHit);
       if (p) sbApplyY(p.y);
-      sbThumbMat.color.setHex(SB_COLOR_ACTIVE);
+      sbSetActive(true);
       return { mode: "bar", moved: 0 };
     }
     const onLog = panels.raycast(ray) != null || native.pickImage(ray) != null;
@@ -918,7 +1033,7 @@ export async function createXR(ctx) {
   }
   function dragEnd(drag) {
     if (!drag) return;
-    if (drag.mode === "bar") sbThumbMat.color.setHex(SB_COLOR);
+    if (drag.mode === "bar") sbSetActive(false);
   }
   /* 记录拖动未越阈值 → 抬起时补一次点击（用按下那一刻的射线） */
   function rayFromStored(drag) {
@@ -1220,8 +1335,9 @@ export async function createXR(ctx) {
       const ay = gp.axes[3] || 0;
       if (src.handedness === "right") {
         if (Math.abs(ax) > 0.15) rig.rotation.y -= ax * dt * 2.4; /* 旋转动作 */
-        /* 右摇杆 Y = 翻历史（无 dom-overlay 时的浏览手段；推上=看更早，与桌面 ←/↑ 同向） */
-        if (Math.abs(ay) > 0.15) scrollBy(-ay * dt * 2.2);
+        /* 右摇杆 Y = 翻历史：**只在射线指着记录/滚行条时生效**，避免与全局摇杆动作
+           （如传送）冲突；推上 = 看更早，与桌面 ←/↑ 同向 */
+        if (Math.abs(ay) > 0.15 && xrPointingAtLog()) scrollBy(-ay * dt * 2.2);
       } else if (Math.abs(ax) > 0.15 || Math.abs(ay) > 0.15) {
         /* 移动动作：以头向水平 yaw 为基准推杆平移 */
         camera.getWorldDirection(_xrV1);
@@ -1299,6 +1415,7 @@ export async function createXR(ctx) {
     lastT = tNow;
     updateXRInput(dt);  /* 手柄摇杆平移/转向/翻历史（无会话 no-op） */
     if (xrDrag) dragMove(xrDrag, xrRayFrom(xrDrag.c)); /* 按住拖动记录/滚行条：跟手滚动 */
+    refreshSbActive();  /* 指着记录/滚行条时拇指高亮（手柄射线每帧移动） */
     updateControls(dt);
     if (follow && hArc > 0.001) {
       hArc *= Math.exp(-dt * 4);
@@ -1365,6 +1482,8 @@ export async function createXR(ctx) {
       trackBot: SB_BOT, trackTop: SB_TOP,
     }),
     dragState: () => (dragInfo ? { mode: dragInfo.mode, moved: +dragInfo.moved.toFixed(1) } : (xrDrag ? { mode: xrDrag.mode } : null)),
+    sbActive: () => sbActive,      /* 滚行条拇指是否高亮（指着/拖动中） */
+    hoverLog: () => hoverLog,      /* 桌面：鼠标是否指着记录/滚行条 */
     nativeGroup: () => native.group,
     avatarGroup: () => avatars.group,
     avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */

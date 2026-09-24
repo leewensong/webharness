@@ -22,7 +22,7 @@ export function createPanelSystem(opts) {
   const panelWidth = opts.panelWidth || 1.12;
   const maxH = opts.maxH || 2.3;
   const maxW = opts.maxW || 2.4;
-  const refCss = opts.refCss || 480;       /* 参考 CSS 宽：panelWidth/refCss = 全局 px→米 比例 */
+  const refCss = opts.refCss || 356;       /* 参考 CSS 宽：panelWidth/refCss = 全局 px→米 比例 */
   const pxPerM = panelWidth / refCss;      /* 所有面板共用：字号随内容一致，宽度随气泡真实宽度 */
   const maxTextures = opts.maxTextures || 24;
   const t = opts.t || ((k) => k);
