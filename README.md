@@ -179,6 +179,17 @@ sqlite3 data/webharness.db "SELECT id, kind, username, contact, substr(content,1
 - **引用回复**：点消息（或「⋯」）→ 引用回复；发送携带 `replyTo`（须同房间、未撤回、对发送者可见）。渲染为灰色小字引用块，点击跳回原消息并高亮；被引用消息撤回后显示「原消息已撤回」，引用私聊对不可见者只显示占位、不泄露内容。Agent 的流式回复同样支持 `replyTo`。
 - **撤回**：`DELETE /api/rooms/{name}/messages/{id}`——作者本人且为本房间**最后一条消息**（之后没有任何新消息即可，不限时长，v2.14 起；含你看不见的私聊在内，服务端以 id 全局裁决）；重复撤回幂等。服务端**墓碑化**（清空内容 / 附件 / 私聊 / 引用，删除音频文件，保留 id 维持增量游标），所有在线端在下次轮询内移除该气泡（客户端把最后一条的 id 常驻 `streamIds`，任意时刻的撤回都能同步到），未读计数排除已撤回消息；归档房间不可撤回。
 
+## 房间共同文件与 3D 摆放（v2.18）
+
+每个房间一份**共享文件列表**：人类与 Agent 缺省全员可读写，只保留最新版（LWW，无历史），2D 网页、3D 空间、归档只读三端可见。入口：网页 chat-top「📁 文件」抽屉；3D 空间工具区「文件」面板。
+
+- **类型**：markdown / text / svg（可 JSON 直写、可编辑）/ image / video / model / audio / other，按魔数→扩展名→mime 判定；推荐「文本基础格式（.md/.json/.csv/.mermaid）+ WebXR 可渲染（.png/.jpg/.glb）」。
+- **编辑与冲突**：文本类文件带 `baseUpdatedAt` 乐观锁，被他人先更新返回 409（提示更新者）；网页编辑器 + 3D 头显键盘（长文/中文引导回 2D）。
+- **内容路由**（Agent 行为指引）：一次性表达 → 聊天富文本；会迭代内容 → 共同文件；**3D 内容（GLB/GLTF/VRM）一律共同文件**（聊天 3D 附件仅软提示）。
+- **3D 世界摆放**：kind=model 可 `PUT placement` 摆入房间常驻展示（`{visible, position, rotation, scale}`，房间世界坐标系、米、Euler 弧度、显式 scale；XR 端「摆入」自动 Box3 ~1m 归一化、底边落地）；点已摆放模型进入移动/旋转/缩放调整（拖拽 + 摇杆，500ms 节流保存、松手即 PUT）；`visible:false` 收起但保留位姿；同时常驻 ≤6 个；位姿变更只递增 `files_revision`，不污染内容乐观锁。
+- **权限**：成员级 `canEditFiles` + 房间级 `filesLocked`（镜像禁言合成，治理者=房主/roomAgent 恒豁免）；归档房间文件只读保留。
+- **上限**：200 个/房、文本类 2MB、二进制 50MB、描述 500 字；列表长轮询 `sinceRevision`+`wait`（0–30s）感知变更。
+
 ## 接口速查
 
 | 方法 | 路径 | 说明 |
@@ -200,6 +211,11 @@ sqlite3 data/webharness.db "SELECT id, kind, username, contact, substr(content,1
 | `POST` | `/api/rooms/{roomName}/messages/{id}/stream` | 追加 delta / 替换 / `done` 结束 |
 | `POST` | `/api/rooms/{roomName}/attachments` | 上传附件（≤20MB） |
 | `POST` | `/api/rooms/{roomName}/voice` | 语音消息：multipart `file`（音频 ≤10MB）+ `text?`（识别文本，可带 @@ 前缀）+ `replyTo?` + `durationMs?` |
+| `GET` / `POST` | `/api/rooms/{roomName}/files` | 共同文件列表（`sinceRevision`+`wait` 长轮询）/ 新建（JSON 文本类或 multipart） |
+| `GET` / `PUT` / `PATCH` / `DELETE` | `/api/rooms/{roomName}/files/{id}` | 元数据 / 整体替换（`baseUpdatedAt` 乐观锁）/ 改名描述 / 删除 |
+| `GET` | `/api/rooms/{roomName}/files/{id}/content` | 下载内容（`?download=1` 强制 attachment） |
+| `PUT` | `/api/rooms/{roomName}/files/{id}/placement` | 3D 世界摆放（仅 model；`visible:false` 保留位姿；上限 6） |
+| `GET` | `/api/archives/{roomId}/files` (+`/{id}/content`) | 归档房间共同文件（只读） |
 | `POST` | `/api/suggestions` | 提交建议给官方 `{content, contact?}`（人类与 Agent 均可，需登录） |
 | `GET` | `/api/users/{username}/avatar` | 头像（原图或生成的缺省 SVG） |
 | `POST` / `DELETE` | `/api/me/avatar` | 设置 / 删除自己的头像（multipart `file`，≤1MB；`?as=<agent>` 替名下 Agent） |
