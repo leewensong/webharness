@@ -21,6 +21,9 @@ const ANCHOR = Math.PI;  // 消息列方位角（相机默认在 +Z 侧面向 �
 const FLOOR_Y = 0.42;    // 列底基准：最新面板底边（历史向上堆叠，越旧越高）
 const GAP = 0.02;        // 面板纵向间距（贴紧：像 2D 里连续的气泡列）
 const BAND_HI = 3.02;    // 可视带顶（带底 = FLOOR_Y）：带高 2.6m ≈ 同时 5~8 条（有 3D 滚行条后不必一次显示太多）
+const LOG_W = 1.9;       // scroll panel 记录区宽（米）：面板宽度上限，右侧留出滚行条的专属区域
+const LOG_PAD = 0.14;    // 记录区内边距（边界框相对内容外扩）
+const LOG_L = -PANEL_W / 2 - LOG_PAD; /* 记录区左缘（面板左对齐于此） */
 const EYE_Y = 1.55;
 const MAX_RADIUS = 5.1;  // 相机水平活动半径（离墙 0.9m）
 
@@ -113,6 +116,7 @@ export async function createXR(ctx) {
     t,
     panelWidth: PANEL_W,
     refCss: REF_CSS,
+    maxW: LOG_W, /* 记录区宽即面板宽上限：再宽的面板也不会伸到右侧滚行条底下 */
     maxH: 2.35,
     maxTextures: 24,
   });
@@ -556,8 +560,8 @@ export async function createXR(ctx) {
       place: (e, hWorld, wWorld) => {
         if (focus && focus.kind === "panel" && e.id === focus.id) return focusPose(Math.max(wWorld, hWorld));
         return {
-          /* 面板宽度随 2D 气泡宽度变化 → 左边缘对齐同一列轴，列右侧参差即 2D 观感本身 */
-          x: -PANEL_W / 2 + wWorld / 2,
+          /* 面板宽度随 2D 气泡宽度变化 → 左边缘对齐记录区左缘（右缘参差即 2D 观感本身） */
+          x: LOG_L + wWorld / 2,
           y: FLOOR_Y + e._a - hArc + hWorld / 2,
           z: -R,
           rotY: 0,
@@ -827,7 +831,7 @@ export async function createXR(ctx) {
      命中判定走「射线 ∩ z 平面」，不逐帧求交网格——薄片也能稳稳抓住。
      外观：圆角凹槽轨道 + 胶囊拇指（带握纹），指着记录/滚行条或拖动时拇指变亮。 */
 
-  const SB_X = 0.8;             /* 列参考右缘外约 0.2m */
+  const SB_X = LOG_L + LOG_W + LOG_PAD * 2 + 0.16; /* 记录区（含边界）右侧之外，与面板不重叠 */
   const SB_Z = -R + 0.3;        /* 浮在面板前：便于拾取，也不与面板同面闪烁 */
   const SB_TRACK_W = 0.18, SB_THUMB_W = 0.30;
   const SB_BOT = FLOOR_Y + 0.15, SB_TOP = BAND_HI - 0.35;
@@ -906,6 +910,39 @@ export async function createXR(ctx) {
       }
     });
   }
+
+  /* ---------- scroll panel 的可见边界 ----------
+     记录区背后一块圆角面板（半透明底 + 描边 + 顶部淡高光），让「聊天记录装在一个
+     scroll panel 里」看得出来；记录区宽 LOG_W + 两侧 LOG_PAD，滚行条在其右侧之外。
+     放在面板之后一层（z 更负），透明材质靠深度测试被面板正确遮挡。 */
+  const LOG_FRAME_W = LOG_W + LOG_PAD * 2;
+  const LOG_FRAME_H = (BAND_HI - FLOOR_Y) + LOG_PAD * 2;
+  const LOG_CX = LOG_L + LOG_FRAME_W / 2;
+  function logFrameTexture() {
+    const W = 512;
+    const H = Math.min(1024, Math.round(W * (LOG_FRAME_H / LOG_FRAME_W)));
+    return sbTexture(W, H, (g) => {
+      sbRoundRect(g, 3, 3, W - 6, H - 6, 26);
+      g.fillStyle = "rgba(9,13,21,0.62)";
+      g.fill();
+      g.lineWidth = 3;
+      g.strokeStyle = "rgba(120,160,220,0.38)";
+      g.stroke();
+      const grd = g.createLinearGradient(0, 0, 0, H);
+      grd.addColorStop(0, "rgba(150,180,230,0.10)");
+      grd.addColorStop(0.25, "rgba(150,180,230,0.02)");
+      grd.addColorStop(1, "rgba(0,0,0,0.20)");
+      sbRoundRect(g, 3, 3, W - 6, H - 6, 26);
+      g.fillStyle = grd;
+      g.fill();
+    });
+  }
+  const logFrame = new THREE.Mesh(
+    new THREE.PlaneGeometry(LOG_FRAME_W, LOG_FRAME_H),
+    new THREE.MeshBasicMaterial({ map: logFrameTexture(), transparent: true, depthWrite: false })
+  );
+  logFrame.position.set(LOG_CX, (FLOOR_Y + BAND_HI) / 2, -R - 0.012);
+  scene.add(logFrame);
 
   const scrollBar = new THREE.Group();
   const sbTrackMat = new THREE.MeshBasicMaterial({ map: sbTrackTexture(), transparent: true, depthWrite: false });
@@ -1181,7 +1218,7 @@ export async function createXR(ctx) {
   vrHint.visible = false;
   vrBar.add(vrHint);
   /* 钉在消息列底部前方（世界内固定，离墙 0.85m 便于手柄射线瞄准；不跟头） */
-  vrBar.position.set(0, FLOOR_Y - 0.26, -R + 0.85);
+  vrBar.position.set(LOG_CX, FLOOR_Y - 0.26, -R + 0.85); /* 与 scroll panel 的边界居中 */
   vrBar.rotation.x = -0.3; /* 略上仰，便于低头看 */
 
   function drawVrHint(text) {
