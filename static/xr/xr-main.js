@@ -20,10 +20,10 @@ const PX_PER_M = PANEL_W / REF_CSS; /* 短消息窄、长消息宽，字号全�
 const ANCHOR = Math.PI;  // 消息列方位角（相机默认在 +Z 侧面向 −Z 看墙正面）
 const FLOOR_Y = 0.42;    // 列底基准：最新面板底边（历史向上堆叠，越旧越高）
 const GAP = 0.02;        // 面板纵向间距（贴紧：像 2D 里连续的气泡列）
-const BAND_HI = 3.02;    // 可视带顶（带底 = FLOOR_Y）：带高 2.6m ≈ 同时 5~8 条（有 3D 滚行条后不必一次显示太多）
-const LOG_W = 1.9;       // scroll panel 记录区宽（米）：面板宽度上限，右侧留出滚行条的专属区域
-const LOG_PAD = 0.14;    // 记录区内边距（边界框相对内容外扩）
-const LOG_L = -PANEL_W / 2 - LOG_PAD; /* 记录区左缘（面板左对齐于此） */
+const BAND_HI = 2.42;    // 可视带顶（带底 = FLOOR_Y）：带高 2.0m ≈ 同时 4~5 条
+const LOG_W = 1.9;       // scroll panel 记录区内容宽上限（米）：再宽的面板等比收缩
+const LOG_PAD = 0.14;    // 记录区内边距（边界相对内容外扩）
+const LOG_L = -PANEL_W / 2 - LOG_PAD; /* 记录区内容左缘（面板左对齐于此） */
 const EYE_Y = 1.55;
 const MAX_RADIUS = 5.1;  // 相机水平活动半径（离墙 0.9m）
 
@@ -570,6 +570,13 @@ export async function createXR(ctx) {
       dt,
     });
     native.sync(entries, (id) => panels.positionOf(id), dt);
+    /* 记录区宽度贴内容：取窗口内最宽面板（未栅格化时退回 2D 量测估算） */
+    let mw = 0.9;
+    for (const e of entries) {
+      const w = panels.widthOf(e.id) || ((e.widthCss || 480) * PX_PER_M);
+      if (w > mw) mw = w;
+    }
+    logContentW += (mw - logContentW) * (1 - Math.exp(-(dt || 0.016) * 4));
     updateScrollBar();
   }
 
@@ -831,12 +838,14 @@ export async function createXR(ctx) {
      命中判定走「射线 ∩ z 平面」，不逐帧求交网格——薄片也能稳稳抓住。
      外观：圆角凹槽轨道 + 胶囊拇指（带握纹），指着记录/滚行条或拖动时拇指变亮。 */
 
-  const SB_X = LOG_L + LOG_W + LOG_PAD * 2 + 0.16; /* 记录区（含边界）右侧之外，与面板不重叠 */
+  /* 滚行条几何：macOS 式浮层——细胶囊拇指嵌在 scroll panel 内缘（不占面板之外空间），
+     轨道极淡；指着/拖动时拇指变亮变实。x 由记录区右缘每帧推出（见 updateScrollBar）。 */
+  const SB_INSET = 0.24;        /* 面板内为滚行条预留的右侧空间 */
   const SB_Z = -R + 0.3;        /* 浮在面板前：便于拾取，也不与面板同面闪烁 */
-  const SB_TRACK_W = 0.18, SB_THUMB_W = 0.30;
-  const SB_BOT = FLOOR_Y + 0.15, SB_TOP = BAND_HI - 0.35;
+  const SB_TRACK_W = 0.11, SB_THUMB_W = 0.085;
+  const SB_BOT = FLOOR_Y + 0.12, SB_TOP = BAND_HI - 0.12;
   const SB_TRACK_H = SB_TOP - SB_BOT;
-  const SB_THUMB_MIN = 0.14;
+  const SB_THUMB_MIN = 0.12;
   const LOG_DRAG_MIN = 0.04;    /* 记录拖动阈值（米）：小于它仍算点击 */
 
   function sbRoundRect(g, x, y, w, h, r) {
@@ -862,67 +871,51 @@ export async function createXR(ctx) {
     tex.anisotropy = 4;
     return tex;
   }
-  /* 轨道：圆角凹槽（描边 + 内槽渐变）。画布高宽比跟随世界尺寸，圆角不被拉伸 */
+  /* 轨道：极淡的胶囊槽（macOS 风格几乎看不到槽，只留一点底 + 发丝描边） */
   function sbTrackTexture() {
-    const W = 128;
+    const W = 96;
     const H = Math.min(2048, Math.round(W * (SB_TRACK_H / SB_TRACK_W)));
     return sbTexture(W, H, (g) => {
-      const r = W / 2 - 2;
-      sbRoundRect(g, 2, 2, W - 4, H - 4, r);
-      g.fillStyle = "rgba(10,15,24,0.72)";
+      sbRoundRect(g, 1, 1, W - 2, H - 2, W / 2 - 1);
+      g.fillStyle = "rgba(8,12,20,0.34)";
       g.fill();
-      g.lineWidth = 3;
-      g.strokeStyle = "rgba(91,140,255,0.42)";
+      g.lineWidth = 1.5;
+      g.strokeStyle = "rgba(190,210,240,0.14)";
       g.stroke();
-      const grd = g.createLinearGradient(0, 0, W, 0);
-      grd.addColorStop(0, "rgba(0,0,0,0.45)");
-      grd.addColorStop(0.5, "rgba(150,180,230,0.10)");
-      grd.addColorStop(1, "rgba(0,0,0,0.45)");
-      sbRoundRect(g, 2, 2, W - 4, H - 4, r);
-      g.fillStyle = grd;
-      g.fill();
     });
   }
-  /* 拇指：胶囊渐变 + 握纹；active = 被指着/正被拖动 */
+  /* 拇指：浅色半透明胶囊（macOS 式，无握纹）；active = 被指着/正被拖动 → 更亮更实 */
   function sbThumbTexture(hWorld, active) {
-    const W = 128;
-    const H = Math.min(1024, Math.max(40, Math.round(W * (hWorld / SB_THUMB_W))));
+    const W = 96;
+    const H = Math.min(2048, Math.max(36, Math.round(W * (hWorld / SB_THUMB_W))));
     return sbTexture(W, H, (g) => {
-      sbRoundRect(g, 2, 2, W - 4, H - 4, W / 2 - 2);
+      sbRoundRect(g, 1, 1, W - 2, H - 2, W / 2 - 1);
       const grd = g.createLinearGradient(0, 0, W, 0);
-      if (active) { grd.addColorStop(0, "#8fbcff"); grd.addColorStop(0.5, "#5b8cff"); grd.addColorStop(1, "#3f6fd8"); }
-      else { grd.addColorStop(0, "#5c7cb4"); grd.addColorStop(0.5, "#46608c"); grd.addColorStop(1, "#2f4364"); }
+      if (active) { grd.addColorStop(0, "rgba(255,255,255,0.95)"); grd.addColorStop(1, "rgba(214,226,244,0.85)"); }
+      else { grd.addColorStop(0, "rgba(236,242,252,0.60)"); grd.addColorStop(1, "rgba(200,214,235,0.48)"); }
       g.fillStyle = grd;
       g.fill();
-      g.lineWidth = 2;
-      g.strokeStyle = active ? "rgba(240,246,255,0.85)" : "rgba(200,214,235,0.55)";
+      g.lineWidth = 1.5;
+      g.strokeStyle = active ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.32)";
       g.stroke();
-      g.strokeStyle = active ? "rgba(240,246,255,0.7)" : "rgba(214,226,244,0.45)";
-      g.lineWidth = 2;
-      g.lineCap = "round";
-      const step = Math.min(11, H / 7);
-      for (let i = 0; i < 3; i++) {
-        const y = H / 2 + (i - 1) * step;
-        g.beginPath();
-        g.moveTo(W * 0.34, y);
-        g.lineTo(W * 0.66, y);
-        g.stroke();
-      }
     });
   }
 
   /* ---------- scroll panel 的可见边界 ----------
      记录区背后一块圆角面板（半透明底 + 描边 + 顶部淡高光），让「聊天记录装在一个
-     scroll panel 里」看得出来；记录区宽 LOG_W + 两侧 LOG_PAD，滚行条在其右侧之外。
+     scroll panel 里」看得出来。**宽度贴着内容**：面板最宽 + 滚行条内缘空间 + 内边距，
+     所以右侧不留大片空白；滚行条嵌在这块面板的内缘（macOS 式浮层）。
      放在面板之后一层（z 更负），透明材质靠深度测试被面板正确遮挡。 */
-  const LOG_FRAME_W = LOG_W + LOG_PAD * 2;
   const LOG_FRAME_H = (BAND_HI - FLOOR_Y) + LOG_PAD * 2;
-  const LOG_CX = LOG_L + LOG_FRAME_W / 2;
-  function logFrameTexture() {
+  let logContentW = 0.9;   /* 当前窗口内最宽面板（layout 每帧写） */
+  let logW = 1.2;          /* 记录区当前宽度（平滑跟随内容宽度） */
+  let frameDrawnW = 0;
+  function logFrameTexture(worldW) {
     const W = 512;
-    const H = Math.min(1024, Math.round(W * (LOG_FRAME_H / LOG_FRAME_W)));
+    const H = Math.min(2048, Math.round(W * (LOG_FRAME_H / worldW)));
     return sbTexture(W, H, (g) => {
-      sbRoundRect(g, 3, 3, W - 6, H - 6, 26);
+      const r = Math.round(W * 0.05);
+      sbRoundRect(g, 3, 3, W - 6, H - 6, r);
       g.fillStyle = "rgba(9,13,21,0.62)";
       g.fill();
       g.lineWidth = 3;
@@ -932,28 +925,34 @@ export async function createXR(ctx) {
       grd.addColorStop(0, "rgba(150,180,230,0.10)");
       grd.addColorStop(0.25, "rgba(150,180,230,0.02)");
       grd.addColorStop(1, "rgba(0,0,0,0.20)");
-      sbRoundRect(g, 3, 3, W - 6, H - 6, 26);
+      sbRoundRect(g, 3, 3, W - 6, H - 6, r);
       g.fillStyle = grd;
       g.fill();
     });
   }
-  const logFrame = new THREE.Mesh(
-    new THREE.PlaneGeometry(LOG_FRAME_W, LOG_FRAME_H),
-    new THREE.MeshBasicMaterial({ map: logFrameTexture(), transparent: true, depthWrite: false })
-  );
-  logFrame.position.set(LOG_CX, (FLOOR_Y + BAND_HI) / 2, -R - 0.012);
+  const logFrameMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
+  const logFrame = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), logFrameMat);
+  logFrame.position.set(LOG_L, (FLOOR_Y + BAND_HI) / 2, -R - 0.012); /* x 每帧按宽度校正 */
   scene.add(logFrame);
+  function drawLogFrame() {
+    if (Math.abs(logW - frameDrawnW) < 0.05) return; /* 宽度变化不到 5cm 不重画纹理 */
+    frameDrawnW = logW;
+    if (logFrameMat.map) logFrameMat.map.dispose();
+    logFrameMat.map = logFrameTexture(logW);
+    logFrameMat.needsUpdate = true;
+  }
 
   const scrollBar = new THREE.Group();
+  scrollBar.position.z = SB_Z;
   const sbTrackMat = new THREE.MeshBasicMaterial({ map: sbTrackTexture(), transparent: true, depthWrite: false });
   const sbTrack = new THREE.Mesh(new THREE.PlaneGeometry(SB_TRACK_W, SB_TRACK_H), sbTrackMat);
-  sbTrack.position.set(SB_X, (SB_BOT + SB_TOP) / 2, SB_Z);
   const sbThumbMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
   const sbThumb = new THREE.Mesh(new THREE.PlaneGeometry(SB_THUMB_W, 1), sbThumbMat);
-  sbThumb.position.set(SB_X, SB_BOT, SB_Z + 0.012); /* 略前一层，避免与轨道同面 z-fighting */
+  sbThumb.position.z = 0.006; /* 略前一层，避免与轨道同面 z-fighting */
   scrollBar.add(sbTrack, sbThumb);
   scrollBar.visible = false; /* 首帧 updateScrollBar 之前不显示，避免闪一条空轨 */
   scene.add(scrollBar);
+  let sbX = 0;               /* 滚行条 x（每帧由记录区右缘推出） */
 
   let sbThumbH = SB_THUMB_MIN;
   let sbActive = false;      /* 被指着或正被拖动 → 拇指变亮 */
@@ -982,6 +981,17 @@ export async function createXR(ctx) {
   }
 
   function updateScrollBar() {
+    /* scroll panel：宽度贴着内容（面板最宽 + 滚行条内缘 + 内边距），平滑跟随 */
+    const targetW = Math.max(0.9, logContentW) + SB_INSET + LOG_PAD * 2;
+    logW += (targetW - logW) * 0.25;
+    const frameLeft = LOG_L - LOG_PAD;
+    logFrame.scale.set(logW, LOG_FRAME_H, 1);
+    logFrame.position.x = frameLeft + logW / 2;
+    drawLogFrame();
+    vrBar.position.x = logFrame.position.x; /* 脚边控制条与面板居中 */
+    /* 滚行条嵌在面板内缘（macOS 式浮层），随记录区右缘移动 */
+    sbX = frameLeft + logW - LOG_PAD - SB_THUMB_W / 2 - 0.02;
+    sbTrack.position.set(sbX, (SB_BOT + SB_TOP) / 2, 0);
     const ma = maxScroll();
     if (ma <= 0) { scrollBar.visible = false; return; }
     scrollBar.visible = true;
@@ -989,7 +999,7 @@ export async function createXR(ctx) {
     sbThumbH = Math.max(SB_THUMB_MIN, SB_TRACK_H * frac);
     sbThumb.scale.y = sbThumbH;
     /* 世界 y 向上、DOM 的 top 向下：t = hArc/ma（0 = 最新、拇指沉底；1 = 最旧、拇指到顶） */
-    sbThumb.position.y = SB_BOT + (SB_TRACK_H - sbThumbH) * (hArc / ma) + sbThumbH / 2;
+    sbThumb.position.set(sbX, SB_BOT + (SB_TRACK_H - sbThumbH) * (hArc / ma) + sbThumbH / 2, 0);
     sbDrawThumb();
   }
   /* 世界 y → 轨道自底向上的比例 t（算上拇指半高，与旧 DOM 的 top 映射同构） */
@@ -1009,7 +1019,7 @@ export async function createXR(ctx) {
   function sbHitTest(ray) {
     if (!scrollBar.visible) return false;
     if (!rayPlanePoint(ray, SB_Z, _sbHit)) return false;
-    return Math.abs(_sbHit.x - SB_X) <= SB_TRACK_W / 2 + 0.04 &&
+    return Math.abs(_sbHit.x - sbX) <= SB_TRACK_W / 2 + 0.05 &&
       _sbHit.y >= SB_BOT - 0.08 && _sbHit.y <= SB_TOP + 0.08;
   }
 
@@ -1218,7 +1228,7 @@ export async function createXR(ctx) {
   vrHint.visible = false;
   vrBar.add(vrHint);
   /* 钉在消息列底部前方（世界内固定，离墙 0.85m 便于手柄射线瞄准；不跟头） */
-  vrBar.position.set(LOG_CX, FLOOR_Y - 0.26, -R + 0.85); /* 与 scroll panel 的边界居中 */
+  vrBar.position.set(LOG_L + 0.6, FLOOR_Y - 0.26, -R + 0.85); /* x 每帧跟随 scroll panel 居中 */
   vrBar.rotation.x = -0.3; /* 略上仰，便于低头看 */
 
   function drawVrHint(text) {
@@ -1514,9 +1524,12 @@ export async function createXR(ctx) {
     scrollBy: (d) => scrollBy(d), /* 与摇杆/←→ 同一条滚动路径（无头显时验证用） */
     scrollBar: () => ({
       visible: scrollBar.visible,
+      x: +sbX.toFixed(3),
       thumbY: +sbThumb.position.y.toFixed(3),
       thumbH: +sbThumbH.toFixed(3),
       trackBot: SB_BOT, trackTop: SB_TOP,
+      logW: +logW.toFixed(3),
+      contentW: +logContentW.toFixed(3),
     }),
     dragState: () => (dragInfo ? { mode: dragInfo.mode, moved: +dragInfo.moved.toFixed(1) } : (xrDrag ? { mode: xrDrag.mode } : null)),
     sbActive: () => sbActive,      /* 滚行条拇指是否高亮（指着/拖动中） */
