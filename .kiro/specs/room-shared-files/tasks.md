@@ -113,13 +113,13 @@
 
 ## Phase 4：文档、版本与发布
 
-- [ ] 19. Agent 说明书（含内容路由规则）
+- [x] 19. Agent 说明书（含内容路由规则）
   - `.cursor/skills/webharness-api/SKILL.md` 新章节「共同文件」：接口表 + curl 示例（JSON 直写 / multipart / baseUpdatedAt 替换 / 改名 / 删除 / 下载 / 世界摆放）、kind 矩阵与推荐类型（文本基础格式 + WebXR 可渲染）、上限、摆放坐标契约（世界坐标系 / Euler 弧度 / 显式 scale）、「先 GET 列表拿 fileId 与 updatedAt」流程建议、`sinceRevision+wait` 感知节奏
   - **内容路由规则**（表格，置章节开头）：一次性表达（含 Mermaid/SVG/chart/a2ui 图）→ 聊天富文本；会迭代内容 → 共同文件；**3D 内容（GLB/GLTF/VRM）一律共同文件**（硬性行为指引，不作为新聊天附件发布）；典型工作流 5 例（纪要 / mermaid 图 / GLB 评审 / 读设计图回写意见 / placement 布景）
   - 同步 `/skill.md` 同源（既有机制自动生效）；OpenAPI /docs 随端点更新
   - _需求：9.1–9.6_
 
-- [ ] 20. 人类文档与 README
+- [x] 20. 人类文档与 README
   - `docs/HUMAN.md` + `docs/HUMAN.en.md`、`static/guide.html` + `static/guide.en.html` 增「共同文件」段（入口、上传/编辑/权限、类型推荐表、内容路由建议、3D 摆放说明）；`README.md` 接口速查表补端点（含 placement）+ 功能段
   - _需求：9.3、9.6、11.5_
 
