@@ -4,7 +4,9 @@ import binascii
 import colorsys
 import hashlib
 import json
+import math
 import mimetypes
+import os
 import re
 import sqlite3
 from contextlib import asynccontextmanager
@@ -17,10 +19,11 @@ from urllib.parse import quote
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from starlette.datastructures import UploadFile as StarletteUploadFile
+from pydantic import BaseModel, Field, ValidationError
 
 from . import auth
-from .db import UPLOADS_DIR, get_db, init_db, seed_builtin_templates
+from .db import FILES_DIR, UPLOADS_DIR, get_db, init_db, seed_builtin_templates
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
@@ -41,6 +44,31 @@ MAX_RULES_CHARS = 32000
 MAX_LONG_POLL_SECONDS = 30
 MAX_VOICE_BYTES = 10 * 1024 * 1024
 MAX_STREAM_IDS = 60
+# ---------- 共同文件（room_files）----------
+# 文本类（markdown/text/svg）与二进制两档大小上限；文本类可走 JSON 直写，二进制必须 multipart
+MAX_FILE_TEXT_BYTES = 2 * 1024 * 1024
+MAX_FILE_BYTES = 50 * 1024 * 1024
+MAX_FILES_PER_ROOM = 200
+MAX_FILE_DESCRIPTION_CHARS = 500
+# 同时常驻展示（world_visible=1）的 3D 模型上限，超限开启返回 400
+MAX_WORLD_MODELS = 6
+# 文本类文件扩展名白名单：命中才归 kind=text（未命中的未知扩展名即使恰为 UTF-8 也归 other，
+# 防止把 .docx 等二进制当文本渲染出乱码）。.md/.markdown 单列 markdown，不在此列
+TEXT_FILE_EXTS = {
+    ".txt", ".json", ".xml", ".yaml", ".yml", ".csv", ".tsv", ".ini", ".cfg", ".toml",
+    ".log", ".html", ".htm", ".css", ".js", ".mjs", ".ts", ".py", ".rb", ".go", ".rs",
+    ".java", ".c", ".h", ".cpp", ".cs", ".php", ".sh", ".sql",
+    ".mermaid", ".mmd", ".drawio", ".puml", ".plantuml", ".tex", ".srt", ".vtt",
+}
+# 声明 mime 可信的文本类白名单（其余声明只在扩展名命中时采信）
+TEXT_FILE_MIMES = {"application/json", "application/xml", "application/yaml", "application/javascript"}
+MODEL_FILE_EXTS = {".glb", ".gltf", ".vrm"}
+VIDEO_FILE_EXTS = {".mp4", ".webm", ".mov", ".m4v"}
+VIDEO_MIME_BY_EXT = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".m4v": "video/x-m4v"}
+IMAGE_MIME_BY_EXT = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+}
 # 私聊语法：消息以 @@用户名 开头（后面跟空白或整条结束）即只对该用户、
 # 发送者和房主可见；连续多个 @@用户名 前缀表示多个接收者（v2.5）。
 # 名字规则与用户名一致（[\w.\-]+），后跟空白/结尾避免「@@bob你好」这类连写被误解析。
@@ -240,6 +268,8 @@ class RoomUpdate(BaseModel):
     password: str | None = Field(default=None, max_length=128)
     visibility: Literal["private", "public"] | None = None
     muted: bool | None = None
+    # 共同文件锁定：开启后除治理者外任何成员不可写文件（与 muted 并列）
+    filesLocked: bool | None = None
     rules: str | None = Field(default=None, max_length=MAX_RULES_CHARS)
     # 传空字符串表示清空 room agent；不传（None）表示不改
     roomAgent: str | None = Field(default=None, max_length=32)
@@ -251,6 +281,35 @@ class PermissionUpdate(BaseModel):
     canSpeak: bool | None = None
     canUpload: bool | None = None
     canViewHistory: bool | None = None
+    canEditFiles: bool | None = None
+
+
+class FileCreate(BaseModel):
+    """文本类共同文件 JSON 直写（二进制走 multipart）。"""
+    name: str = Field(min_length=1, max_length=256)
+    content: str
+    description: str | None = Field(default=None, max_length=MAX_FILE_DESCRIPTION_CHARS)
+
+
+class FileReplace(BaseModel):
+    """整体替换（JSON 直写文本类）；baseUpdatedAt 不符返回 409。"""
+    content: str
+    baseUpdatedAt: str | None = Field(default=None, max_length=40)
+
+
+class FileMetaUpdate(BaseModel):
+    """重命名 / 改描述。"""
+    name: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str | None = Field(default=None, max_length=MAX_FILE_DESCRIPTION_CHARS)
+
+
+class PlacementUpdate(BaseModel):
+    """3D 世界摆放（需求 10）。visible=true 时 position 必填；rotation/scale 缺省不重置为
+    单位阵，而是服务端补默认值（首摆语义）；visible=false 关闭显示但保留位姿。"""
+    visible: bool
+    position: list[float] | None = None
+    rotation: list[float] | None = None
+    scale: list[float] | None = None
 
 
 class MessageCreate(BaseModel):
@@ -575,7 +634,7 @@ def _get_user(conn, username: str):
 ROOM_SELECT = """
         SELECT r.id, r.name, r.created_by, r.password_hash, r.visibility, r.muted,
                r.ended_at, r.archived_at, r.created_at, r.rules, r.room_agent_id, r.template,
-               r.map3d, r.scene_updated_at,
+               r.map3d, r.scene_updated_at, r.files_locked, r.files_revision,
                u.username AS ownerName, u.kind AS creatorKind, u.owner_id AS creatorOwnerId,
                ra.username AS roomAgentName
         FROM rooms r
@@ -1692,11 +1751,13 @@ def room_detail(room_name: str, user: CurrentUser):
             "canSpeak": bool(member["can_speak"]),
             "canUpload": bool(member["can_upload"]),
             "canViewHistory": bool(member["can_view_history"]),
+            "canEditFiles": bool(member["can_edit_files"]),
         }
         data["memberCount"] = conn.execute(
             "SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?", (room["id"],)
         ).fetchone()["c"]
         data["groups"] = _group_dicts(conn, room, user["id"])
+        data["files"] = _files_summary(conn, room, member, user["id"])
         _attach_template_fields(conn, room, data)
     return data
 
@@ -1710,6 +1771,7 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
         and body.password is None
         and body.visibility is None
         and body.muted is None
+        and body.filesLocked is None
         and body.rules is None
         and body.roomAgent is None
         and not scene_provided
@@ -1733,6 +1795,7 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
             password_hash = auth.hash_password(password) if password else None
         visibility = body.visibility or room["visibility"]
         muted = room["muted"] if body.muted is None else int(body.muted)
+        files_locked = room["files_locked"] if body.filesLocked is None else int(body.filesLocked)
         rules = room["rules"] if body.rules is None else (_blank_to_none(body.rules) or "")
         if body.roomAgent is None:
             room_agent_id = room["room_agent_id"]
@@ -1741,11 +1804,17 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
         conn.execute(
             """
             UPDATE rooms
-            SET name = ?, password_hash = ?, visibility = ?, muted = ?, rules = ?, room_agent_id = ?
+            SET name = ?, password_hash = ?, visibility = ?, muted = ?, files_locked = ?,
+                rules = ?, room_agent_id = ?
             WHERE id = ?
             """,
-            (new_name, password_hash, visibility, muted, rules, room_agent_id, room["id"]),
+            (new_name, password_hash, visibility, muted, files_locked, rules, room_agent_id, room["id"]),
         )
+        if files_locked != room["files_locked"]:
+            # 锁定状态是文件列表元信息的一部分，递增 revision 让文件长轮询者也醒来
+            conn.execute(
+                "UPDATE rooms SET files_revision = files_revision + 1 WHERE id = ?", (room["id"],)
+            )
         if scene_provided:
             # 换成内置/外链/清空时一并丢弃已上传的场景本体（换回 file 需重新上传）
             conn.execute(
@@ -1916,7 +1985,17 @@ def archive_detail(room_id: int, user: CurrentUser):
                 "canSpeak": False,
                 "canUpload": False,
                 "canViewHistory": bool(member["can_view_history"]),
+                "canEditFiles": False,
             }
+        # 归档只读：canEdit 恒 False；文件列表与内容经归档接口只读访问
+        data["files"] = {
+            "revision": room["files_revision"],
+            "locked": bool(room["files_locked"]),
+            "canEdit": False,
+            "count": conn.execute(
+                "SELECT COUNT(*) AS c FROM room_files WHERE room_id = ?", (room["id"],)
+            ).fetchone()["c"],
+        }
     return data
 
 
@@ -1973,6 +2052,7 @@ def _member_dict(row, online_cutoff: str = ONLINE_WINDOW) -> dict:
         "canSpeak": bool(row["can_speak"]),
         "canUpload": bool(row["can_upload"]),
         "canViewHistory": bool(row["can_view_history"]),
+        "canEditFiles": bool(row["can_edit_files"]),
         "online": bool(row["online"]),
         "avatarUrl": _avatar_url(row["username"], _row_get(row, "avatarV")),
     }
@@ -1999,7 +2079,12 @@ def list_members(room_name: str, user: CurrentUser):
 
 @app.put("/api/rooms/{room_name}/permissions/{username}")
 def set_permissions(room_name: str, username: str, body: PermissionUpdate, user: CurrentUser):
-    if body.canSpeak is None and body.canUpload is None and body.canViewHistory is None:
+    if (
+        body.canSpeak is None
+        and body.canUpload is None
+        and body.canViewHistory is None
+        and body.canEditFiles is None
+    ):
         raise HTTPException(status_code=400, detail="没有需要修改的权限")
     with get_db() as conn:
         room = _require_active_room(conn, room_name)
@@ -2015,13 +2100,14 @@ def set_permissions(room_name: str, username: str, body: PermissionUpdate, user:
         conn.execute(
             """
             UPDATE room_members
-            SET can_speak = ?, can_upload = ?, can_view_history = ?
+            SET can_speak = ?, can_upload = ?, can_view_history = ?, can_edit_files = ?
             WHERE room_id = ? AND user_id = ?
             """,
             (
                 int(member["can_speak"] if body.canSpeak is None else body.canSpeak),
                 int(member["can_upload"] if body.canUpload is None else body.canUpload),
                 int(member["can_view_history"] if body.canViewHistory is None else body.canViewHistory),
+                int(member["can_edit_files"] if body.canEditFiles is None else body.canEditFiles),
                 room["id"],
                 target["id"],
             ),
@@ -2033,6 +2119,7 @@ def set_permissions(room_name: str, username: str, body: PermissionUpdate, user:
         "canSpeak": bool(member["can_speak"]),
         "canUpload": bool(member["can_upload"]),
         "canViewHistory": bool(member["can_view_history"]),
+        "canEditFiles": bool(member["can_edit_files"]),
     }
 
 
@@ -2899,6 +2986,596 @@ def download_attachment(room_name: str, message_id: int, user: CurrentUser):
             raise HTTPException(status_code=404, detail="附件文件缺失")
         media = _voice_media_type(row["attachment_name"]) if row["msg_type"] == "voice" else None
     return _file_response(path, row["attachment_name"], inline=row["msg_type"] in ("image", "voice"), media_type=media)
+
+
+# ---------- 共同文件（room_files）----------
+# 房间级共享文件列表：只存最新状态（LWW），无历史版本。内容落盘 data/files/<room_id>/<file_id><ext>，
+# 元数据入 room_files 表；2D / XR / Agent 三端同一套 API，变更感知靠 rooms.files_revision + notify_room。
+
+FILE_SELECT = """
+        SELECT f.*, cu.username AS createdByName, uu.username AS updatedByName,
+               wu.username AS worldUpdatedByName
+        FROM room_files f
+        JOIN users cu ON cu.id = f.created_by
+        LEFT JOIN users uu ON uu.id = f.updated_by
+        LEFT JOIN users wu ON wu.id = f.world_updated_by
+"""
+
+_CTRL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _get_file(conn, room_id: int, file_id: int):
+    return conn.execute(
+        FILE_SELECT + " WHERE f.room_id = ? AND f.id = ?", (room_id, file_id)
+    ).fetchone()
+
+
+def _files_revision(conn, room_id: int) -> int:
+    return conn.execute(
+        "SELECT files_revision FROM rooms WHERE id = ?", (room_id,)
+    ).fetchone()["files_revision"]
+
+
+def _bump_files_revision(conn, room_id: int) -> None:
+    conn.execute("UPDATE rooms SET files_revision = files_revision + 1 WHERE id = ?", (room_id,))
+
+
+def _check_file_edit_allowed(room, member, user_id: int) -> None:
+    """文件编辑权 = 治理者恒放行 → 房间锁定 403 → 成员级 can_edit_files 403。
+
+    镜像 _check_action_allowed 的 muted/can_speak 合成；与发言/附件权限完全正交。
+    读取（列表/内容）不进此判定，只查成员身份。
+    """
+    if _is_room_governor(room, user_id):
+        return
+    if room["files_locked"]:
+        raise HTTPException(status_code=403, detail="房间共同文件已锁定")
+    if not member["can_edit_files"]:
+        raise HTTPException(status_code=403, detail="你已被禁止编辑房间文件")
+
+
+def _files_summary(conn, room, member, user_id: int) -> dict:
+    return {
+        "revision": room["files_revision"],
+        "locked": bool(room["files_locked"]),
+        "canEdit": _is_room_governor(room, user_id)
+        or (not room["files_locked"] and bool(member["can_edit_files"])),
+        "count": conn.execute(
+            "SELECT COUNT(*) AS c FROM room_files WHERE room_id = ?", (room["id"],)
+        ).fetchone()["c"],
+    }
+
+
+def _validate_file_name(name: str) -> str:
+    """共同文件显示名校验：去路径分量、拒控制字符、1–128 字符。
+
+    与附件的 _sanitize_filename 不同：显示名不进磁盘路径（路径只由 room_id/file_id
+    组成），允许中文与空格，无需激进替换。
+    """
+    base = Path(name or "").name.strip()
+    if not base:
+        raise HTTPException(status_code=400, detail="文件名不能为空")
+    if _CTRL_CHARS_RE.search(base):
+        raise HTTPException(status_code=400, detail="文件名不能包含控制字符")
+    if len(base) > 128:
+        raise HTTPException(status_code=400, detail="文件名过长（最多 128 字符）")
+    return base
+
+
+def _file_storage_ext(name: str) -> str:
+    """磁盘路径里的扩展名：仅接受安全的短字母数字扩展名，其余置空（人工排障用，不参与寻址）。"""
+    ext = Path(name).suffix.lower()
+    return ext if re.fullmatch(r"\.[\w]{1,16}", ext) else ""
+
+
+def _image_mime_from_data(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _classify_file(name: str, declared_mime: str | None, data: bytes) -> tuple[str, str]:
+    """服务器权威分类（kind, mime），按「魔数 → 扩展名 → 声明 mime」判定。
+
+    注意不能整用 _gltf_mime：它的 `{` 起头分支会把任意 JSON 文本当成 glTF——
+    那个 helper 服务于「上传者本来就要传 3D 文件」的场景，这里 JSON 是常见文本类型。
+    """
+    ext = Path(name or "").suffix.lower()
+    ctype = (declared_mime or "").split(";")[0].strip().lower()
+
+    if data.startswith(b"glTF"):
+        return "model", ("model/vrm" if _glb_looks_vrm(data) else "model/gltf-binary")
+    if ext == ".vrm":
+        return "model", "model/vrm"
+    if ext == ".glb":
+        return "model", "model/gltf-binary"
+    if ext == ".gltf":
+        return "model", "model/gltf+json"
+    magic_mime = _image_mime_from_data(data)
+    if magic_mime:
+        return "image", magic_mime
+    if ext in IMAGE_EXTS:
+        return "image", IMAGE_MIME_BY_EXT.get(ext) or (ctype if ctype in IMAGE_TYPES else "image/png")
+    if ext == ".svg" or ctype == "image/svg+xml":
+        return "svg", "image/svg+xml"
+    if ext in VIDEO_FILE_EXTS:
+        return "video", VIDEO_MIME_BY_EXT.get(ext, "video/mp4")
+    # webm/mp4 的魔数与音频重叠，只有声明 video/* 时魔数才可信为视频
+    if data.startswith(b"\x1a\x45\xdf\xa3") and ctype.startswith("video/"):
+        return "video", "video/webm"
+    if len(data) > 12 and data[4:8] == b"ftyp" and ctype.startswith("video/"):
+        return "video", "video/mp4"
+    audio_ext = _audio_ext(name, declared_mime, data)
+    if audio_ext:
+        return "audio", AUDIO_MIME_BY_EXT.get(audio_ext, "audio/webm")
+    if ext in (".md", ".markdown"):
+        return "markdown", "text/markdown"
+    declared_text = ctype.startswith("text/") or ctype in TEXT_FILE_MIMES
+    if ext in TEXT_FILE_EXTS or declared_text:
+        return "text", (ctype if declared_text else (mimetypes.guess_type(name)[0] or "text/plain"))
+    return "other", (ctype or "application/octet-stream")
+
+
+def _reclassify_file(kind: str, mime: str, name: str) -> tuple[str, str]:
+    """改名后按「新扩展名 + 存量 mime」重算 kind/mime，不重读内容字节。"""
+    ext = Path(name).suffix.lower()
+    if ext == ".vrm":
+        return "model", "model/vrm"
+    if ext == ".glb":
+        return "model", "model/gltf-binary"
+    if ext == ".gltf":
+        return "model", "model/gltf+json"
+    if ext == ".svg":
+        return "svg", "image/svg+xml"
+    if ext in VIDEO_FILE_EXTS:
+        return "video", VIDEO_MIME_BY_EXT.get(ext, "video/mp4")
+    if ext in AUDIO_MIME_BY_EXT:
+        return "audio", AUDIO_MIME_BY_EXT[ext]
+    if ext in IMAGE_EXTS:
+        return "image", IMAGE_MIME_BY_EXT.get(ext) or mime
+    if ext in (".md", ".markdown"):
+        return "markdown", "text/markdown"
+    if ext in TEXT_FILE_EXTS:
+        return "text", mimetypes.guess_type(name)[0] or "text/plain"
+    # 未知扩展名：保持既有分类（model.glb → model.fbx 仍是 model）
+    return kind, mime
+
+
+def _file_size_limit(kind: str) -> int:
+    return MAX_FILE_TEXT_BYTES if kind in ("markdown", "text", "svg") else MAX_FILE_BYTES
+
+
+def _write_file_bytes(dest: Path, data: bytes) -> None:
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, dest)
+
+
+def _unlink_file_content(rel_path: str | None) -> None:
+    if not rel_path:
+        return
+    try:
+        (FILES_DIR / rel_path).unlink(missing_ok=True)
+    except OSError:
+        pass  # 磁盘清理失败不阻断删行（沿用撤回附件的容错风格）
+
+
+def _file_dict(row, room_name: str, archive_id: int | None = None) -> dict:
+    version = quote(str(_row_get(row, "updated_at") or ""), safe="")
+    if archive_id is not None:
+        content_url = f"/api/archives/{archive_id}/files/{row['id']}/content?v={version}"
+    else:
+        content_url = f"/api/rooms/{room_name}/files/{row['id']}/content?v={version}"
+    world = None
+    if row["kind"] == "model" and _row_get(row, "world_updated_at"):
+        pose = None
+        raw_pose = _row_get(row, "world_pose")
+        if raw_pose:
+            try:
+                pose = json.loads(raw_pose)
+            except (ValueError, TypeError):
+                pose = None
+        world = {
+            "visible": bool(row["world_visible"]),
+            "pose": pose,
+            "updatedBy": row["worldUpdatedByName"],
+            "updatedAt": row["world_updated_at"],
+        }
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "kind": row["kind"],
+        "mime": row["mime"],
+        "size": row["size"],
+        "description": _row_get(row, "description"),
+        "createdBy": row["createdByName"],
+        "createdAt": row["created_at"],
+        "updatedBy": _row_get(row, "updatedByName") or row["createdByName"],
+        "updatedAt": row["updated_at"],
+        "contentUrl": content_url,
+        "world": world,
+    }
+
+
+def _files_payload(conn, room) -> dict:
+    rows = conn.execute(
+        FILE_SELECT + " WHERE f.room_id = ? ORDER BY f.updated_at DESC, f.id ASC",
+        (room["id"],),
+    ).fetchall()
+    return {
+        "roomName": room["name"],
+        "revision": room["files_revision"],
+        "files": [_file_dict(row, room["name"]) for row in rows],
+    }
+
+
+def _single_file_payload(conn, room_name: str, room_id: int, file_id: int) -> dict:
+    return {
+        "roomName": room_name,
+        "revision": _files_revision(conn, room_id),
+        "file": _file_dict(_get_file(conn, room_id, file_id), room_name),
+    }
+
+
+async def _read_file_request_body(request: Request):
+    """创建/替换端点的双格式请求体：JSON `{name, content, ...}`（文本直写）或
+    multipart（`file` + 可选 `name`/`description`/`baseUpdatedAt`）。返回
+    (data_bytes, raw_name, declared_mime, description, base_updated_at, is_json)。"""
+    content_type = (request.headers.get("content-type") or "").lower()
+    if content_type.startswith("multipart/"):
+        form = await request.form()
+        upload = form.get("file")
+        # request.form() 返回的是 starlette 的 UploadFile（fastapi.UploadFile 是其子类，
+        # 反向 isinstance 不成立），这里按 starlette 类判断
+        if not isinstance(upload, StarletteUploadFile):
+            raise HTTPException(status_code=400, detail="multipart 请求需要 file 字段")
+        data = await upload.read()
+        raw_name = (str(form.get("name")) if isinstance(form.get("name"), str) else "") or (upload.filename or "")
+        declared = upload.content_type
+        description = str(form.get("description")) if isinstance(form.get("description"), str) else None
+        base = str(form.get("baseUpdatedAt")) if isinstance(form.get("baseUpdatedAt"), str) else None
+        return data, raw_name, declared, description, base, False
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 或 multipart") from exc
+    try:
+        if isinstance(payload, dict) and "content" in payload and "name" not in payload:
+            body = FileReplace.model_validate(payload)
+            name, description = None, None
+        else:
+            body = FileCreate.model_validate(payload)
+            name, description = body.name, body.description
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"参数错误：{exc.errors()[0].get('msg', '无效请求')}") from exc
+    return (
+        body.content.encode("utf-8"),
+        name,
+        None,
+        description,
+        getattr(body, "baseUpdatedAt", None),
+        True,
+    )
+
+
+@app.get("/api/rooms/{room_name}/files")
+async def list_room_files(
+    room_name: str,
+    user: CurrentUser,
+    since_revision: Annotated[int | None, Query(alias="sinceRevision", ge=0)] = None,
+    wait: Annotated[int, Query(ge=0, le=MAX_LONG_POLL_SECONDS)] = 0,
+):
+    """房间共同文件列表。`sinceRevision`+`wait` 长轮询：revision 未变则挂起等待，
+    任何文件/锁定变更经 notify_room 唤醒（消息等活动也会假唤醒，醒来多比对一次 revision 无害）。"""
+    with get_db() as conn:
+        room, _member = _require_membership(conn, room_name, user["id"])
+        payload = _files_payload(conn, room)
+        room_id = room["id"]
+    if wait and since_revision is not None and payload["revision"] == since_revision:
+        ev = _room_event(room_id)
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=wait)
+        except asyncio.TimeoutError:
+            return payload
+        with get_db() as conn:
+            room = _get_room_by_id(conn, room_id)
+            if not room or _is_ended(room):
+                raise HTTPException(status_code=410, detail="房间已结束")
+            payload = _files_payload(conn, room)
+    return payload
+
+
+@app.post("/api/rooms/{room_name}/files")
+async def create_room_file(room_name: str, request: Request, user: CurrentUser):
+    data, raw_name, declared_mime, description, _base, is_json = await _read_file_request_body(request)
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+    file_name = _validate_file_name(raw_name)
+    if not data:
+        raise HTTPException(status_code=400, detail="文件内容为空")
+    kind, mime = _classify_file(file_name, declared_mime, data)
+    if is_json and kind not in ("markdown", "text", "svg"):
+        raise HTTPException(
+            status_code=400,
+            detail="JSON 直写仅支持文本类（.md/.txt/.json 等）；二进制文件请用 multipart 上传",
+        )
+    limit = _file_size_limit(kind)
+    if len(data) > limit:
+        detail = "文本文件超过 2MB 上限" if limit == MAX_FILE_TEXT_BYTES else "文件超过 50MB 上限"
+        raise HTTPException(status_code=413, detail=detail)
+    with get_db() as conn:
+        room, member = _require_membership(conn, room_name, user["id"])
+        _check_file_edit_allowed(room, member, user["id"])
+        exists = conn.execute(
+            "SELECT 1 FROM room_files WHERE room_id = ? AND name = ? COLLATE NOCASE",
+            (room["id"], file_name),
+        ).fetchone()
+        if exists:
+            raise HTTPException(status_code=409, detail="同名文件已存在")
+        count = conn.execute(
+            "SELECT COUNT(*) AS c FROM room_files WHERE room_id = ?", (room["id"],)
+        ).fetchone()["c"]
+        if count >= MAX_FILES_PER_ROOM:
+            raise HTTPException(status_code=400, detail=f"房间文件数已达上限（{MAX_FILES_PER_ROOM}）")
+        now = _db_now(conn)
+        conn.execute(
+            """
+            INSERT INTO room_files (room_id, name, kind, mime, size, description,
+                                    created_by, created_at, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (room["id"], file_name, kind, mime, len(data), description, user["id"], now, user["id"], now),
+        )
+        file_id = conn.execute("SELECT last_insert_rowid() AS fid").fetchone()["fid"]
+        rel_path = f"{room['id']}/{file_id}{_file_storage_ext(file_name)}"
+        dest = FILES_DIR / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _write_file_bytes(dest, data)
+        conn.execute("UPDATE room_files SET content_path = ? WHERE id = ?", (rel_path, file_id))
+        _bump_files_revision(conn, room["id"])
+        payload = _single_file_payload(conn, room["name"], room["id"], file_id)
+        room_id = room["id"]
+    notify_room(room_id)
+    return payload
+
+
+@app.get("/api/rooms/{room_name}/files/{file_id}")
+def get_room_file(room_name: str, file_id: int, user: CurrentUser):
+    with get_db() as conn:
+        room, _member = _require_membership(conn, room_name, user["id"])
+        row = _get_file(conn, room["id"], file_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        return _single_file_payload(conn, room["name"], room["id"], file_id)
+
+
+@app.get("/api/rooms/{room_name}/files/{file_id}/content")
+def download_room_file_content(
+    room_name: str,
+    file_id: int,
+    user: CurrentUser,
+    download: bool = False,
+):
+    with get_db() as conn:
+        room, _mem = _require_membership(conn, room_name, user["id"])
+        row = _get_file(conn, room["id"], file_id)
+        if not row or not row["content_path"]:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        path = FILES_DIR / row["content_path"]
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="文件内容缺失")
+        mime = row["mime"]
+        name = row["name"]
+    return _file_response(path, name, inline=not download, media_type=mime)
+
+
+@app.put("/api/rooms/{room_name}/files/{file_id}")
+async def replace_room_file(room_name: str, file_id: int, request: Request, user: CurrentUser):
+    data, _raw_name, declared_mime, _desc, base_updated_at, is_json = await _read_file_request_body(request)
+    if not data:
+        raise HTTPException(status_code=400, detail="文件内容为空")
+    with get_db() as conn:
+        room, member = _require_membership(conn, room_name, user["id"])
+        _check_file_edit_allowed(room, member, user["id"])
+        row = _get_file(conn, room["id"], file_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        if base_updated_at and base_updated_at != row["updated_at"]:
+            updated_by = _row_get(row, "updatedByName") or row["createdByName"]
+            raise HTTPException(status_code=409, detail=f"文件已被 {updated_by} 更新")
+        kind, mime = _classify_file(row["name"], declared_mime, data)
+        if is_json and kind not in ("markdown", "text", "svg"):
+            raise HTTPException(
+                status_code=400,
+                detail="JSON 直写仅支持文本类（.md/.txt/.json 等）；二进制文件请用 multipart 上传",
+            )
+        if len(data) > _file_size_limit(kind):
+            detail = "文本文件超过 2MB 上限" if kind in ("markdown", "text", "svg") else "文件超过 50MB 上限"
+            raise HTTPException(status_code=413, detail=detail)
+        now = _db_now(conn)
+        # 整体替换：文件名与磁盘路径不变（路径由 room_id/file_id + 原名扩展名决定），kind/mime/size 重算
+        rel_path = f"{room['id']}/{file_id}{_file_storage_ext(row['name'])}"
+        dest = FILES_DIR / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _write_file_bytes(dest, data)
+        conn.execute(
+            """
+            UPDATE room_files
+            SET kind = ?, mime = ?, size = ?, content_path = ?, updated_by = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (kind, mime, len(data), rel_path, user["id"], now, file_id),
+        )
+        _bump_files_revision(conn, room["id"])
+        payload = _single_file_payload(conn, room["name"], room["id"], file_id)
+        room_id = room["id"]
+    notify_room(room_id)
+    return payload
+
+
+@app.patch("/api/rooms/{room_name}/files/{file_id}")
+def update_room_file(room_name: str, file_id: int, body: FileMetaUpdate, user: CurrentUser):
+    new_name = _blank_to_none(body.name)
+    desc_provided = "description" in body.model_fields_set
+    new_description = _blank_to_none(body.description) if desc_provided else None
+    if not new_name and not desc_provided:
+        raise HTTPException(status_code=400, detail="没有需要修改的字段")
+    with get_db() as conn:
+        room, member = _require_membership(conn, room_name, user["id"])
+        _check_file_edit_allowed(room, member, user["id"])
+        row = _get_file(conn, room["id"], file_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        if new_name:
+            file_name = _validate_file_name(new_name)
+            if file_name.lower() != row["name"].lower():
+                exists = conn.execute(
+                    "SELECT 1 FROM room_files WHERE room_id = ? AND name = ? COLLATE NOCASE AND id != ?",
+                    (room["id"], file_name, file_id),
+                ).fetchone()
+                if exists:
+                    raise HTTPException(status_code=409, detail="同名文件已存在")
+            kind, mime = _reclassify_file(row["kind"], row["mime"], file_name)
+        else:
+            file_name, kind, mime = row["name"], row["kind"], row["mime"]
+        description = new_description if desc_provided else _row_get(row, "description")
+        conn.execute(
+            """
+            UPDATE room_files SET name = ?, kind = ?, mime = ?, description = ? WHERE id = ?
+            """,
+            (file_name, kind, mime, description, file_id),
+        )
+        _bump_files_revision(conn, room["id"])
+        payload = _single_file_payload(conn, room["name"], room["id"], file_id)
+        room_id = room["id"]
+    notify_room(room_id)
+    return payload
+
+
+@app.delete("/api/rooms/{room_name}/files/{file_id}")
+def delete_room_file(room_name: str, file_id: int, user: CurrentUser):
+    with get_db() as conn:
+        room, member = _require_membership(conn, room_name, user["id"])
+        _check_file_edit_allowed(room, member, user["id"])
+        row = _get_file(conn, room["id"], file_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        _unlink_file_content(row["content_path"])
+        conn.execute("DELETE FROM room_files WHERE id = ?", (file_id,))
+        _bump_files_revision(conn, room["id"])
+        payload = {"roomName": room["name"], "revision": _files_revision(conn, room["id"]), "deleted": file_id}
+        room_id = room["id"]
+    notify_room(room_id)
+    return payload
+
+
+def _validate_pose_vec(values: list, label: str) -> list[float]:
+    if len(values) != 3:
+        raise HTTPException(status_code=400, detail=f"{label} 必须是 [x, y, z] 三元组")
+    try:
+        vec = [float(v) for v in values]
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"{label} 必须是数字数组") from exc
+    if not all(math.isfinite(v) for v in vec):
+        raise HTTPException(status_code=400, detail=f"{label} 不能包含 NaN 或 Infinity")
+    return vec
+
+
+@app.put("/api/rooms/{room_name}/files/{file_id}/placement")
+def set_file_placement(room_name: str, file_id: int, body: PlacementUpdate, user: CurrentUser):
+    """3D 世界摆放（需求 10）：visible 开关 + 位姿 {position, rotation, scale}。
+
+    LWW 无乐观锁（XR 拖拽期间客户端节流保存，并发互踩最多位姿跳变）；不改
+    updated_at/contentUrl（内容乐观锁不受污染），只递增 revision。
+    """
+    pose_json = None
+    if body.visible:
+        if body.position is None:
+            raise HTTPException(status_code=400, detail="visible=true 时必须提供 position")
+        position = _validate_pose_vec(body.position, "position")
+        rotation = _validate_pose_vec(body.rotation, "rotation") if body.rotation is not None else [0.0, 0.0, 0.0]
+        scale = _validate_pose_vec(body.scale, "scale") if body.scale is not None else [1.0, 1.0, 1.0]
+        pose_json = json.dumps({"position": position, "rotation": rotation, "scale": scale})
+    with get_db() as conn:
+        room, member = _require_membership(conn, room_name, user["id"])
+        _check_file_edit_allowed(room, member, user["id"])
+        row = _get_file(conn, room["id"], file_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        if row["kind"] != "model":
+            raise HTTPException(status_code=400, detail="只有 3D 模型文件可摆入房间")
+        now = _db_now(conn)
+        if body.visible:
+            others = conn.execute(
+                "SELECT COUNT(*) AS c FROM room_files WHERE room_id = ? AND world_visible = 1 AND id != ?",
+                (room["id"], file_id),
+            ).fetchone()["c"]
+            if others >= MAX_WORLD_MODELS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"同时常驻展示的 3D 模型已达上限（{MAX_WORLD_MODELS}），请先关闭其他模型",
+                )
+            conn.execute(
+                """
+                UPDATE room_files
+                SET world_visible = 1, world_pose = ?, world_updated_by = ?, world_updated_at = ?
+                WHERE id = ?
+                """,
+                (pose_json, user["id"], now, file_id),
+            )
+        else:
+            # 关闭显示但保留位姿：再显示时按原位姿回来
+            conn.execute(
+                """
+                UPDATE room_files
+                SET world_visible = 0, world_updated_by = ?, world_updated_at = ?
+                WHERE id = ?
+                """,
+                (user["id"], now, file_id),
+            )
+        _bump_files_revision(conn, room["id"])
+        payload = _single_file_payload(conn, room["name"], room["id"], file_id)
+        room_id = room["id"]
+    notify_room(room_id)
+    return payload
+
+
+@app.get("/api/archives/{room_id}/files")
+def list_archive_files(room_id: int, user: CurrentUser):
+    """归档房间的共同文件列表（只读）。"""
+    with get_db() as conn:
+        room, _member = _require_archive_access(conn, room_id, user)
+        rows = conn.execute(
+            FILE_SELECT + " WHERE f.room_id = ? ORDER BY f.updated_at DESC, f.id ASC",
+            (room["id"],),
+        ).fetchall()
+    return {
+        "roomName": room["name"],
+        "revision": room["files_revision"],
+        "readOnly": True,
+        "files": [_file_dict(row, room["name"], archive_id=room["id"]) for row in rows],
+    }
+
+
+@app.get("/api/archives/{room_id}/files/{file_id}/content")
+def download_archive_file_content(room_id: int, file_id: int, user: CurrentUser, download: bool = False):
+    with get_db() as conn:
+        room, _member = _require_archive_access(conn, room_id, user)
+        row = _get_file(conn, room["id"], file_id)
+        if not row or not row["content_path"]:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        path = FILES_DIR / row["content_path"]
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="文件内容缺失")
+        mime = row["mime"]
+        name = row["name"]
+    return _file_response(path, name, inline=not download, media_type=mime)
 
 
 # ---------- 页面与说明书 ----------

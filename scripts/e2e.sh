@@ -356,6 +356,121 @@ check "超 50MB 场景 413" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "
 check "DELETE 清场景" "$(curl -sS -X DELETE "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK")" '"scene":null'
 check "清空后下载 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK")" "404"
 
+echo "== 共同文件 =="
+FROOM="e2e-files-$SUF"
+python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"visibility":"public"}))' "$FROOM" > "$TMP/f_join.json"
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d @"$TMP/f_join.json" >/dev/null
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d @"$TMP/f_join.json" >/dev/null
+check "初始文件列表 revision 0" "$(curl -sS "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK")" '"revision":0'
+check "房间详情含 files 概要" "$(curl -sS "$URL/api/rooms/$FROOM" -H "Authorization: Bearer $ATOK")" '"files":{"revision":0,"locked":false,"canEdit":true,"count":0}'
+check "房间详情 myPermissions 含 canEditFiles" "$(curl -sS "$URL/api/rooms/$FROOM" -H "Authorization: Bearer $ATOK")" '"canEditFiles":true'
+check "非成员读文件列表 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $OTOK")" "403"
+# 长轮询先挂起，等下面的创建唤醒它
+( curl -sS "$URL/api/rooms/$FROOM/files?sinceRevision=0&wait=5" -H "Authorization: Bearer $ATOK" > "$TMP/lp.json" ) &
+LP=$!
+sleep 1
+CREATE_OUT=$(curl -sS -X POST "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d '{"name":"会议纪要.md","content":"# 第一轮纪要","description":"纪要 Agent 维护"}')
+check "JSON 直写 markdown" "$CREATE_OUT" '"kind":"markdown"'
+wait $LP || true
+check "长轮询被文件变更唤醒" "$(cat "$TMP/lp.json")" "会议纪要"
+check "重名创建 409" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d '{"name":"会议纪要.md","content":"x"}')" "409"
+check "二进制扩展名 JSON 直写 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d '{"name":"pic.png","content":"x"}')" "400"
+mk_glb "$TMP/f.glb"
+check "multipart 上传 GLB" "$(curl -sS -X POST "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $HTOK" \
+  -F "file=@$TMP/f.glb;filename=样机.glb" -F "description=评审用样机")" '"kind":"model"'
+FLIST=$(curl -sS "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK")
+check "列表 revision=2" "$FLIST" '"revision":2'
+FID1=$(printf '%s' "$FLIST" | python3 -c "import sys,json;print([f['id'] for f in json.load(sys.stdin)['files'] if f['kind']=='markdown'][0])")
+FID2=$(printf '%s' "$FLIST" | python3 -c "import sys,json;print([f['id'] for f in json.load(sys.stdin)['files'] if f['kind']=='model'][0])")
+check "未摆放 model 的 world 为 null" "$(printf '%s' "$FLIST" | python3 -c "import sys,json;print(all(f['world'] is None for f in json.load(sys.stdin)['files']))")" "True"
+check "房主下载 md 内容" "$(curl -sS "$URL/api/rooms/$FROOM/files/$FID1/content" -H "Authorization: Bearer $HTOK")" "第一轮纪要"
+check "单文件 GET 元数据" "$(curl -sS "$URL/api/rooms/$FROOM/files/$FID1" -H "Authorization: Bearer $HTOK")" '"file":{"id":'"$FID1"',"name":"会议纪要.md"'
+check "内容 inline 带 Content-Type" "$(curl -sS -o /dev/null -w '%{content_type}' "$URL/api/rooms/$FROOM/files/$FID1/content" -H "Authorization: Bearer $HTOK")" "text/markdown"
+check "?download=1 改 attachment" "$(curl -sS -D - -o /dev/null "$URL/api/rooms/$FROOM/files/$FID1/content?download=1" -H "Authorization: Bearer $HTOK" | tr -d '\r')" "attachment"
+PUT_OUT=$(curl -sS -X PUT "$URL/api/rooms/$FROOM/files/$FID1" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"content":"# 第二轮纪要"}')
+check "PUT 替换（LWW）" "$(curl -sS "$URL/api/rooms/$FROOM/files/$FID1/content" -H "Authorization: Bearer $HTOK")" "第二轮纪要"
+check "替换后 revision=3" "$PUT_OUT" '"revision":3'
+check "旧 baseUpdatedAt 409" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/rooms/$FROOM/files/$FID1" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"content":"x","baseUpdatedAt":"2000-01-01 00:00:00.000"}')" "409"
+NEW_BASE=$(printf '%s' "$PUT_OUT" | J "['file']['updatedAt']")
+check "新 baseUpdatedAt 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/rooms/$FROOM/files/$FID1" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"content":"# 第三轮纪要","baseUpdatedAt":sys.argv[1]}))' "$NEW_BASE")")" "200"
+printf 'plain text v4\n' > "$TMP/a.txt"
+check "multipart 替换（kind 随存量名保持 markdown）" "$(curl -sS -X PUT "$URL/api/rooms/$FROOM/files/$FID1" -H "Authorization: Bearer $ATOK" \
+  -F "file=@$TMP/a.txt")" '"kind":"markdown"'
+curl -sS -X POST "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"name":"草稿.txt","content":"草稿"}' >/dev/null
+FID3=$(curl -sS "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" | python3 -c "import sys,json;print([f['id'] for f in json.load(sys.stdin)['files'] if f['name']=='草稿.txt'][0])")
+check "PATCH 改名重分类 txt→md" "$(curl -sS -X PATCH "$URL/api/rooms/$FROOM/files/$FID3" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"name":"草稿.md"}')" '"kind":"markdown"'
+check "改名撞名 409" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$FROOM/files/$FID3" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"name":"会议纪要.md"}')" "409"
+check "PATCH 空字段 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$FROOM/files/$FID3" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{}')" "400"
+check "单文件元数据 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$FROOM/files/999999" -H "Authorization: Bearer $ATOK")" "404"
+check "DELETE 文件" "$(curl -sS -X DELETE "$URL/api/rooms/$FROOM/files/$FID3" -H "Authorization: Bearer $ATOK")" '"deleted"'
+check "二次删除 404" "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$URL/api/rooms/$FROOM/files/$FID3" -H "Authorization: Bearer $ATOK")" "404"
+curl -sS -X PUT "$URL/api/rooms/$FROOM/permissions/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"canEditFiles": false}' >/dev/null
+check "canEditFiles=0 后创建 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"name":"x.md","content":"x"}')" "403"
+check "canEditFiles=0 后删除仍 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$URL/api/rooms/$FROOM/files/$FID1" -H "Authorization: Bearer $ATOK")" "403"
+check "编辑权不影响读取" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK")" "200"
+curl -sS -X PUT "$URL/api/rooms/$FROOM/permissions/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"canEditFiles": true}' >/dev/null
+REV_LOCKED=$(curl -sS "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" | J "['revision']")
+curl -sS -X PATCH "$URL/api/rooms/$FROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"filesLocked": true}' >/dev/null
+check "filesLocked 后成员创建 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"name":"y.md","content":"y"}')" "403"
+check "filesLocked 后房主仍可写" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$FROOM/files/$FID1" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"description":"锁定态房主可改"}')" "200"
+check "filesLocked 变更递增 revision" "$(curl -sS "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" | J "['revision']")" "$(python3 -c "print($REV_LOCKED + 2)")"
+curl -sS -X PATCH "$URL/api/rooms/$FROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"filesLocked": false}' >/dev/null
+
+echo "== 共同文件 3D 摆放（需求 10）=="
+for i in 1 2 3 4 5 6 7; do
+  mk_glb "$TMP/m$i.glb"
+  curl -sS -X POST "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/m$i.glb" -F "name=m$i.glb" >/dev/null
+done
+MIDS=$(curl -sS "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;ids=[f['id'] for f in json.load(sys.stdin)['files'] if f['kind']=='model'];print(' '.join(str(i) for i in sorted(ids)))")
+PLACE() { # PLACE <fileId> <body> → http 码
+  curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/rooms/$FROOM/files/$1/placement" -H "Authorization: Bearer ${3:-$HTOK}" -H 'Content-Type: application/json' -d "$2"
+}
+i=0
+for mid in $MIDS; do
+  i=$((i+1))
+  [ $i -gt 6 ] && break
+  BODY=$(printf '{"visible":true,"position":[%s.0,0.0,-2.5],"rotation":[0.0,3.14,0.0],"scale":[1.2,1.2,1.2]}' "$i")
+  check "摆入第 $i 个 200" "$(PLACE "$mid" "$BODY")" "200"
+done
+M7=$(printf '%s' "$MIDS" | awk '{print $7}')
+check "第 7 个摆入 400" "$(PLACE "$M7" '{"visible":true,"position":[0.0,0.0,-1.0]}')" "400"
+check "非 model 摆入 400" "$(PLACE "$FID1" '{"visible":true,"position":[0.0,0.0,-1.0]}')" "400"
+check "摆入缺少 position 400" "$(PLACE "$M7" '{"visible":true}')" "400"
+check "position 非三元组 400" "$(PLACE "$M7" '{"visible":true,"position":[1,2]}')" "400"
+check "列表返回 world 位姿（样机.glb）" "$(curl -sS "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK" | python3 -c "
+import sys,json
+f=[x for x in json.load(sys.stdin)['files'] if x['name']=='样机.glb'][0]
+w=f['world']
+ok=w and w['visible'] and w['pose']['position']==[1.0,0.0,-2.5] and w['pose']['rotation']==[0.0,3.14,0.0] and w['pose']['scale']==[1.2,1.2,1.2] and w['updatedBy']
+print('OK' if ok else 'BAD:'+json.dumps(w))")" "OK"
+check "world 带更新者" "$(curl -sS "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $ATOK")" '"updatedBy"'
+curl -sS -X PUT "$URL/api/rooms/$FROOM/permissions/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"canEditFiles": false}' >/dev/null
+check "无编辑权摆入 403" "$(PLACE "$M7" '{"visible":true,"position":[0.0,0.0,-1.0]}' "$ATOK")" "403"
+curl -sS -X PATCH "$URL/api/rooms/$FROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"filesLocked": true}' >/dev/null
+check "filesLocked 下摆入 403" "$(PLACE "$M7" '{"visible":true,"position":[0.0,0.0,-1.0]}' "$ATOK")" "403"
+curl -sS -X PATCH "$URL/api/rooms/$FROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"filesLocked": false}' >/dev/null
+curl -sS -X PUT "$URL/api/rooms/$FROOM/permissions/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"canEditFiles": true}' >/dev/null
+M6=$(printf '%s' "$MIDS" | awk '{print $6}')
+CLOSE_OUT=$(curl -sS -X PUT "$URL/api/rooms/$FROOM/files/$M6/placement" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"visible":false}')
+check "关闭后 visible false 保留位姿" "$CLOSE_OUT" '"visible":false'
+check "关闭后 pose 仍在" "$CLOSE_OUT" '"position":[6.0,0.0,-2.5]'
+check "腾位后第 7 个可摆入" "$(PLACE "$M7" '{"visible":true,"position":[0.0,0.0,-1.0]}')" "200"
+
+echo "== 共同文件归档 =="
+ARCHF=$(curl -sS -X POST "$URL/api/rooms/$FROOM/archive" -H "Authorization: Bearer $HTOK" | J "['roomId']")
+check "归档后房间文件接口 404（房间名不可再寻址）" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$FROOM/files" -H "Authorization: Bearer $HTOK")" "404"
+ARCH_FILES=$(curl -sS "$URL/api/archives/$ARCHF/files" -H "Authorization: Bearer $HTOK")
+check "归档文件列表可读" "$ARCH_FILES" "会议纪要"
+check "归档文件列表 readOnly" "$ARCH_FILES" '"readOnly":true'
+check "归档文件 world 只读可见" "$(printf '%s' "$ARCH_FILES" | python3 -c "import sys,json;print(sum(1 for f in json.load(sys.stdin)['files'] if f['world'] and f['world']['visible']))")" "6"
+check "归档文件内容可下载" "$(curl -sS "$URL/api/archives/$ARCHF/files/$FID1/content" -H "Authorization: Bearer $HTOK")" "plain text v4"
+check "外人读归档文件 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/archives/$ARCHF/files" -H "Authorization: Bearer $OTOK")" "403"
+
 echo "== 内置缺省 3D 形象 =="
 check "内置形象目录含 robert" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK")" '"id":"robert"'
 check "内置形象 6 个" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["avatars"]))')" "6"

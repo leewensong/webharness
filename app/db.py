@@ -7,6 +7,8 @@ _NEW_DB = DATA_DIR / "webharness.db"
 _OLD_DB = DATA_DIR / "chatroom.db"
 DB_PATH = _OLD_DB if _OLD_DB.exists() and not _NEW_DB.exists() else _NEW_DB
 UPLOADS_DIR = DATA_DIR / "uploads"
+# 房间共同文件的内容落盘目录（元数据在 room_files 表；与 uploads/ 同模式）
+FILES_DIR = DATA_DIR / "files"
 
 
 def _connect() -> sqlite3.Connection:
@@ -75,6 +77,7 @@ def _rebuild_rooms_if_name_globally_unique(conn: sqlite3.Connection) -> None:
 
 def init_db() -> None:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    FILES_DIR.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
         conn.executescript(
             """
@@ -210,8 +213,32 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS room_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'other',
+                mime TEXT NOT NULL DEFAULT 'application/octet-stream',
+                size INTEGER NOT NULL DEFAULT 0,
+                description TEXT,
+                content_path TEXT,
+                created_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_by INTEGER REFERENCES users(id),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                -- 3D 世界摆放：仅 kind=model 有意义，其余 kind 恒为默认值
+                world_visible INTEGER NOT NULL DEFAULT 0,
+                world_pose TEXT,
+                world_updated_by INTEGER REFERENCES users(id),
+                world_updated_at TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_messages_room_id
                 ON messages(room_id, id DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_room_files_name
+                ON room_files(room_id, name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_room_files_world
+                ON room_files(room_id) WHERE world_visible = 1;
             """
         )
 
@@ -253,6 +280,9 @@ def init_db() -> None:
         _add_column_if_missing(conn, "rooms", "scene_mime", "TEXT")
         _add_column_if_missing(conn, "rooms", "scene_updated_at", "TEXT")
         _add_column_if_missing(conn, "rooms", "xr_state", "TEXT")
+        # 共同文件：房间级锁定开关 + 列表版本号（计数器，删除类变更无法用时间戳推导）
+        _add_column_if_missing(conn, "rooms", "files_locked", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "rooms", "files_revision", "INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_live_name
@@ -263,6 +293,7 @@ def init_db() -> None:
         _add_column_if_missing(conn, "room_members", "can_speak", "INTEGER NOT NULL DEFAULT 1")
         _add_column_if_missing(conn, "room_members", "can_upload", "INTEGER NOT NULL DEFAULT 1")
         _add_column_if_missing(conn, "room_members", "can_view_history", "INTEGER NOT NULL DEFAULT 1")
+        _add_column_if_missing(conn, "room_members", "can_edit_files", "INTEGER NOT NULL DEFAULT 1")
         _add_column_if_missing(conn, "room_members", "first_visible_msg_id", "INTEGER NOT NULL DEFAULT 0")
         if _add_column_if_missing(conn, "room_members", "last_read_msg_id", "INTEGER NOT NULL DEFAULT 0"):
             conn.execute(
