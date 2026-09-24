@@ -336,6 +336,47 @@
     .badge.off { background: #4a2430; color: var(--danger); }
     .mono { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
 
+    /* ---- v2.18 房间共同文件：抽屉 / 行 / 编辑器 / 预览 ---- */
+    .files-dlg { width: min(640px, 94vw); }
+    .files-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .file-list { max-height: 52vh; overflow-y: auto; }
+    .file-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .file-row:last-child { border-bottom: 0; }
+    .file-ico { font-size: 18px; width: 26px; text-align: center; flex-shrink: 0; }
+    .file-main { flex: 1; min-width: 0; }
+    .file-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-name .badge { margin-left: 6px; }
+    .file-desc { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-meta { font-size: 12px; color: var(--muted); }
+    .file-ops { display: flex; gap: 4px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+    .file-ops .btn { padding: 3px 8px; font-size: 12px; }
+    .conflict-box { border: 1px solid var(--danger); border-radius: 10px; padding: 10px; margin-top: 8px; background: #2a1a22; }
+    .editor-dlg { width: min(720px, 94vw); }
+    .preview-dlg { width: min(760px, 94vw); }
+    .preview-dlg #pvBody { max-height: 56vh; overflow: auto; }
+    .pv-text { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 13px; }
+    .pv-img { max-width: 100%; max-height: 52vh; border-radius: 10px; }
+    .pv-model { display: flex; gap: 12px; align-items: center; }
+    .pv-model-thumb {
+      width: 160px; height: 160px; border-radius: 12px; background: #0b1018; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; font-size: 48px; overflow: hidden;
+    }
+    .pv-model-thumb img { width: 100%; height: 100%; object-fit: contain; }
+    /* 预览容器的 Markdown 样式：与消息 .bubble .body 同一套管线，选择器独立 */
+    .md-body { white-space: normal; word-break: break-word; line-height: 1.45; }
+    .md-body pre { background: #1c2430; padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+    .md-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+    .md-body :not(pre) > code { background: #1c2430; padding: 1px 5px; border-radius: 5px; }
+    .md-body table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+    .md-body th, .md-body td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+    .md-body th { background: #1c2430; }
+    .md-body a { color: var(--accent); }
+    .md-body blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--accent); color: var(--muted); }
+    .md-body ul, .md-body ol { margin: 6px 0; padding-left: 22px; }
+    .md-body h1, .md-body h2, .md-body h3, .md-body h4 { margin: 10px 0 6px; line-height: 1.3; }
+    .md-body hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+    .md-body img { max-width: 100%; border-radius: 8px; }
+
     /* ---- v2.0 语音模块 ---- */
     .voice-toggles { display: flex; gap: 6px; }
     .btn.voice-on { border: 1px solid var(--ok); color: var(--ok); }
@@ -526,6 +567,7 @@
           <button id="voiceBtn" class="btn ghost small" onclick="openVoiceSettings()" title="语音设置" data-i18n-title="voiceSettingsTitle">🎙 <span data-i18n="voiceSettings">语音设置</span></button>
         </div>
         <button id="manageBtn" class="btn ghost small hidden" onclick="openSettings()" data-i18n="manage">管理</button>
+        <button id="filesBtn" class="btn ghost small hidden" onclick="openFiles()" data-i18n="filesBtn">📁 文件</button>
         <button class="btn ghost small menu-btn" id="peopleBtn" onclick="togglePresence()" title="在线成员" data-i18n-title="peopleTitle">👥 <span id="peopleCount"></span></button>
         <button id="view3dBtn" class="btn ghost small hidden" onclick="toggleXR()" data-i18n="view3d" data-i18n-title="view3dTitle">3D</button>
       </div>
@@ -668,6 +710,9 @@
     </select>
     <label style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
       <input type="checkbox" id="editMuted" style="width:auto;margin:0" /> <span data-i18n="muteAll">全体禁言（仅房主可发言）</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
+      <input type="checkbox" id="editFilesLocked" style="width:auto;margin:0" /> <span data-i18n="filesLockToggle">锁定共同文件（房主 / Room Agent 仍可编辑）</span>
     </label>
     <label for="editRules" data-i18n="rulesLabel">房间规则（可空）</label>
     <textarea id="editRules" rows="3" maxlength="32000" style="resize:vertical" data-i18n-placeholder="rulesPlaceholder" placeholder="房主填写的规则，未来由 Room Agent 依此执行（如私聊黑白名单、禁言）"></textarea>
@@ -863,6 +908,95 @@
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="document.getElementById('suggest').close()" data-i18n="close">关闭</button>
       <button type="button" class="btn" onclick="submitSuggestion()" data-i18n="submit">提交</button>
+    </div>
+  </dialog>
+
+  <dialog id="filesDlg" class="files-dlg">
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="filesTitle">📁 房间共同文件</h2>
+    <div class="files-head">
+      <span class="hint mono" id="filesCount"></span>
+      <span class="badge off hidden" id="filesLockBadge" data-i18n="filesLockedBadge">已锁定</span>
+      <span style="flex:1"></span>
+      <button type="button" class="btn small" id="filesUploadBtn" onclick="openFileUpload()" data-i18n="filesUpload">上传文件</button>
+      <button type="button" class="btn small" id="filesNewTextBtn" onclick="openFileNewText()" data-i18n="filesNewText">新建文本</button>
+    </div>
+    <div id="fileList" class="file-list"><div class="hint" data-i18n="loading">加载中…</div></div>
+    <p class="msg-status" id="filesStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('filesDlg').close()" data-i18n="close">关闭</button>
+    </div>
+  </dialog>
+
+  <dialog id="fileUploadDlg">
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="filesUploadTitle">上传文件</h2>
+    <input type="file" id="upFile" onchange="onUpFilePick()" />
+    <label for="upName" data-i18n="fileNameLabel">名称</label>
+    <input id="upName" maxlength="128" data-i18n-placeholder="fileNamePlaceholder" placeholder="显示名称（含扩展名）" />
+    <label for="upDesc" data-i18n="fileDescLabel">描述（可空）</label>
+    <input id="upDesc" maxlength="2000" />
+    <p class="msg-status" id="upStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('fileUploadDlg').close()" data-i18n="cancel">取消</button>
+      <button type="button" class="btn" id="upSubmitBtn" onclick="submitFileUpload()" data-i18n="filesUpload">上传文件</button>
+    </div>
+  </dialog>
+
+  <dialog id="fileNewTextDlg">
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="filesNewTextTitle">新建文本</h2>
+    <label for="ntName" data-i18n="fileNameLabel">名称</label>
+    <input id="ntName" maxlength="128" data-i18n-placeholder="fileNamePlaceholder" placeholder="显示名称（含扩展名）" />
+    <label for="ntContent" data-i18n="fileContentLabel">内容</label>
+    <textarea id="ntContent" rows="10" style="resize:vertical;font-family:ui-monospace,monospace;font-size:13px"></textarea>
+    <p class="msg-status" id="ntStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('fileNewTextDlg').close()" data-i18n="cancel">取消</button>
+      <button type="button" class="btn" id="ntSubmitBtn" onclick="submitFileNewText()" data-i18n="create">创建</button>
+    </div>
+  </dialog>
+
+  <dialog id="fileRenameDlg">
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="fileRenameTitle">重命名 / 描述</h2>
+    <label for="rnName" data-i18n="fileNameLabel">名称</label>
+    <input id="rnName" maxlength="128" />
+    <label for="rnDesc" data-i18n="fileDescLabel">描述（可空）</label>
+    <input id="rnDesc" maxlength="2000" />
+    <p class="msg-status" id="rnStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('fileRenameDlg').close()" data-i18n="cancel">取消</button>
+      <button type="button" class="btn" id="rnSubmitBtn" onclick="submitFileRename()" data-i18n="save">保存</button>
+    </div>
+  </dialog>
+
+  <dialog id="fileEditorDlg" class="editor-dlg">
+    <h2 style="margin:0 0 8px;font-size:18px" id="feTitle"></h2>
+    <textarea id="feText" rows="14" style="width:100%;resize:vertical;font-family:ui-monospace,monospace;font-size:13px;line-height:1.5" oninput="onEditorInput()"></textarea>
+    <div class="hint" id="feMeta" style="display:flex;justify-content:space-between;gap:8px;margin-top:4px"></div>
+    <div id="feConflict" class="conflict-box hidden">
+      <p class="msg-status" id="feConflictMsg" style="margin:0 0 6px"></p>
+      <div class="dialog-actions" style="margin-top:0">
+        <button type="button" class="btn ghost small" onclick="hideEditorConflict()" data-i18n="cancel">取消</button>
+        <button type="button" class="btn ghost small" onclick="reloadEditorContent()" data-i18n="fileConflictReload">重载最新</button>
+        <button type="button" class="btn small" onclick="saveFileEditor(true)" data-i18n="fileConflictOverwrite">强制覆盖</button>
+      </div>
+    </div>
+    <p class="msg-status" id="feStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('fileEditorDlg').close()" data-i18n="cancel">取消</button>
+      <button type="button" class="btn" id="feSaveBtn" onclick="saveFileEditor(false)" data-i18n="save">保存</button>
+    </div>
+  </dialog>
+
+  <dialog id="filePreviewDlg" class="preview-dlg">
+    <h2 style="margin:0 0 4px;font-size:18px" id="pvTitle"></h2>
+    <div class="hint mono" id="pvMeta"></div>
+    <div id="pvUpdateBar" class="conflict-box hidden" style="margin-top:8px">
+      <span data-i18n="fileUpdatedBar">文件已被他人更新，以下内容可能不是最新。</span>
+      <button type="button" class="btn ghost small" style="margin-top:6px" onclick="reopenPreview()" data-i18n="fileReopen">重新打开</button>
+    </div>
+    <div id="pvBody" class="md-body" style="margin-top:8px"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="pvDownloadBtn" onclick="downloadFile(pvFile)" data-i18n="fileDownload">下载</button>
+      <button type="button" class="btn ghost" onclick="document.getElementById('filePreviewDlg').close()" data-i18n="close">关闭</button>
     </div>
   </dialog>
 
@@ -1082,6 +1216,44 @@
         xrTruncated: "内容过长已截断，点击面板展开",
         modelCardBadge: "3D 模型",
         modelCardTitle: "3D 模型附件 · 点击下载；进入 3D 视图后点击该消息面板可放置到场景中",
+        filesBtn: "📁 文件",
+        filesTitle: "📁 房间共同文件",
+        filesCountFmt: "{{n}}/{{max}} 个文件",
+        filesLockedBadge: "已锁定",
+        filesUpload: "上传文件",
+        filesNewText: "新建文本",
+        filesEmpty: "还没有文件。上传一个，或让 Agent 帮你建。",
+        filesUploadTitle: "上传文件",
+        filesNewTextTitle: "新建文本",
+        fileNameLabel: "名称",
+        fileNamePlaceholder: "显示名称（含扩展名）",
+        fileDescLabel: "描述（可空）",
+        fileContentLabel: "内容",
+        filePickFirst: "请先选择文件",
+        fileNameRequired: "请填写名称",
+        fileContentRequired: "内容不能为空",
+        fileUploaded: "文件已保存",
+        fileRenamed: "已更新名称 / 描述",
+        fileDeleteConfirm: "删除「{{name}}」？内容不可恢复。",
+        filePreview: "预览",
+        fileEditTitle: "编辑文件",
+        fileDownload: "下载",
+        filePlaced: "已摆入房间",
+        fileEditorChars: "{{n}} 字",
+        fileDraftRestored: "已恢复未保存的草稿",
+        fileSaved: "已保存",
+        fileConflictReload: "重载最新",
+        fileConflictOverwrite: "强制覆盖",
+        fileUpdatedBar: "文件已被他人更新，以下内容可能不是最新。",
+        fileReopen: "重新打开",
+        pvDownloadOnly: "此类型暂不支持在线预览，请下载后查看。",
+        suggestSharedFile3D: "3D 内容建议存入共同文件（可在 XR 房间摆放）",
+        filesLockToggle: "锁定共同文件（房主 / Room Agent 仍可编辑）",
+        filesCol: "文件",
+        relJustNow: "刚刚",
+        relMinutesAgo: "{{n}} 分钟前",
+        relHoursAgo: "{{n}} 小时前",
+        relDaysAgo: "{{n}} 天前",
       },
       en: {
         langSwitchTitle: "Switch to Chinese",
@@ -1276,6 +1448,44 @@
         xrTruncated: "Long content truncated; click a panel to expand",
         modelCardBadge: "3D model",
         modelCardTitle: "3D model attachment · click to download; in 3D view, click the message panel to place it",
+        filesBtn: "📁 Files",
+        filesTitle: "📁 Room shared files",
+        filesCountFmt: "{{n}}/{{max}} files",
+        filesLockedBadge: "Locked",
+        filesUpload: "Upload file",
+        filesNewText: "New text",
+        filesEmpty: "No files yet. Upload one, or ask an Agent to create it.",
+        filesUploadTitle: "Upload file",
+        filesNewTextTitle: "New text file",
+        fileNameLabel: "Name",
+        fileNamePlaceholder: "Display name (with extension)",
+        fileDescLabel: "Description (optional)",
+        fileContentLabel: "Content",
+        filePickFirst: "Pick a file first",
+        fileNameRequired: "Please enter a name",
+        fileContentRequired: "Content cannot be empty",
+        fileUploaded: "File saved",
+        fileRenamed: "Name / description updated",
+        fileDeleteConfirm: "Delete \"{{name}}\"? The content cannot be recovered.",
+        filePreview: "Preview",
+        fileEditTitle: "Edit file",
+        fileDownload: "Download",
+        filePlaced: "Placed in room",
+        fileEditorChars: "{{n}} chars",
+        fileDraftRestored: "Unsaved draft restored",
+        fileSaved: "Saved",
+        fileConflictReload: "Reload latest",
+        fileConflictOverwrite: "Overwrite anyway",
+        fileUpdatedBar: "The file was updated by someone else — the preview below may be stale.",
+        fileReopen: "Reopen",
+        pvDownloadOnly: "No inline preview for this type — download to view.",
+        suggestSharedFile3D: "3D content is better stored in shared files (placeable in the XR room)",
+        filesLockToggle: "Lock shared files (owner / Room Agent can still edit)",
+        filesCol: "Files",
+        relJustNow: "just now",
+        relMinutesAgo: "{{n}} min ago",
+        relHoursAgo: "{{n}} h ago",
+        relDaysAgo: "{{n}} d ago",
       },
     };
 
@@ -1350,6 +1560,16 @@
         [/语音内容为空/, "The voice message is empty"],
         [/语音必须是音频文件/, "The voice message must be an audio file (webm/ogg/mp4/mp3/wav/aac)"],
         [/语音识别文本超过 64000 字上限/, "Voice transcript exceeds 64000 characters"],
+        [/房间共同文件已锁定/, "Room shared files are locked"],
+        [/你已被禁止编辑房间文件/, "You are not allowed to edit room files"],
+        [/同名文件已存在/, "A file with the same name already exists"],
+        [/文件已被 (.+) 更新/, "The file was updated by $1"],
+        [/文本文件超过 2MB 上限/, "Text file exceeds the 2MB limit"],
+        [/文件超过 50MB 上限/, "File exceeds the 50MB limit"],
+        [/房间文件数已达上限（(\d+)）/, "The room reached its file limit ($1)"],
+        [/文件不存在|文件内容缺失/, "File not found"],
+        [/文件内容为空/, "The file content is empty"],
+        [/缺少文件名/, "Missing file name"],
       ];
       for (const [re, en] of m) {
         const hit = msg.match(re);
@@ -1513,6 +1733,18 @@
             st.textContent = "";
           },
           logElement: $("log"),
+          /* 共同文件（需求 8/10）：权限只读 2D 合成结果（filesCanEdit）；markdown 预览
+             复用 2D 渲染管线——renderBody 是同步的，栅到隐藏 staging 区后由 3D 端
+             rasterizeDom 栅格化，el 用完即删（xr-files 负责 remove） */
+          filesCanEdit,
+          renderFileMarkdown: async (text) => {
+            const el = document.createElement("div");
+            el.className = "md-body";
+            el.style.cssText = "width:520px;background:#10151d;padding:10px 14px;box-sizing:border-box;color:#dfe8f4;";
+            $("xrStage").appendChild(el);
+            renderBody(el, String(text || ""), false);
+            return el;
+          },
           onExit: () => { xrSession = null; },
         });
         setHint("");
@@ -2065,6 +2297,7 @@
       store.perms = info.myPermissions || { canSpeak: true, canUpload: true };
       store.roomAgent = info.roomAgent || "";
       store.scene = info.scene || null;
+      store.files = info.files || null;
       if (!store.viewingArchive) {
         store.roomName = info.roomName;
         saveSession();
@@ -2083,6 +2316,7 @@
         $("editName").value = info.roomName;
         $("editVisibility").value = info.visibility;
         $("editMuted").checked = !!info.muted;
+        $("editFilesLocked").checked = !!(info.files && info.files.locked);
         $("editRules").value = info.rules || "";
       }
       renderOnline(store.viewingArchive ? [] : (info.onlineUsers || []));
@@ -2099,6 +2333,7 @@
       $("micBtn").disabled = store.viewingArchive;
       renderMicUI();
       $("view3dBtn").classList.toggle("hidden", !store.roomName || store.viewingArchive);
+      $("filesBtn").classList.toggle("hidden", !store.roomName || store.viewingArchive);
       roomEvents.emit({
         roomName: info.roomName,
         isOwner: !!info.isOwner,
@@ -2536,6 +2771,7 @@
       $("roomTitle").textContent = t("chooseRoom");
       $("manageBtn").classList.add("hidden");
       $("view3dBtn").classList.add("hidden");
+      $("filesBtn").classList.add("hidden");
       roomEvents.emit({ closed: true });
       $("composer").classList.remove("hidden");
       disposeCharts();
@@ -3333,6 +3569,8 @@
 
     async function sendFile(file) {
       if (!file || !store.roomName || store.viewingArchive) return;
+      /* 3D 内容软引导：聊天附件也能传，但提醒「共同文件」可在 XR 摆放（不阻断） */
+      if (/\.(glb|gltf|vrm)$/i.test(file.name || "")) voiceToast(t("suggestSharedFile3D"));
       const isImage = (file.type || "").startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name || "");
       const tempId = "tmp-" + Date.now();
       const localUrl = isImage ? URL.createObjectURL(file) : null;
@@ -3451,12 +3689,13 @@
       if (!members.length) { box.textContent = t("noMembers"); return; }
       box.innerHTML = `
         <table class="perm-table">
-          <tr><th>${t("memberCol")}</th><th>${t("speakCol")}</th><th>${t("attachCol")}</th><th>${t("historyCol")}</th><th></th></tr>
+          <tr><th>${t("memberCol")}</th><th>${t("speakCol")}</th><th>${t("attachCol")}</th><th>${t("filesCol")}</th><th>${t("historyCol")}</th><th></th></tr>
           ${members.map((m) => `
             <tr data-name="${escapeHtml(m.username)}">
               <td><span class="who-cell"><img class="avatar" data-src="${escapeHtml(m.avatarUrl || "")}" alt="" />${escapeHtml(m.username)} ${m.online ? "🟢" : ""} <span class="badge">${m.kind === "agent" ? t("kindAgent") : t("kindHuman")}</span></span></td>
               <td><input type="checkbox" data-p="canSpeak" ${m.canSpeak ? "checked" : ""} /></td>
               <td><input type="checkbox" data-p="canUpload" ${m.canUpload ? "checked" : ""} /></td>
+              <td><input type="checkbox" data-p="canEditFiles" ${m.canEditFiles !== false ? "checked" : ""} /></td>
               <td><input type="checkbox" data-p="canViewHistory" ${m.canViewHistory ? "checked" : ""} /></td>
               <td><button class="btn ghost small" data-save="${escapeHtml(m.username)}">${t("save")}</button></td>
             </tr>`).join("")}
@@ -3485,6 +3724,7 @@
           roomName: $("editName").value.trim(),
           visibility: $("editVisibility").value,
           muted: $("editMuted").checked,
+          filesLocked: $("editFilesLocked").checked,
           rules: $("editRules").value.trim(),
           roomAgent: $("editRoomAgent").value,
         };
@@ -3527,6 +3767,434 @@
         $("tabPublic").classList.remove("active");
         await refreshRooms();
       } catch (err) { setHint(err.message); }
+    }
+
+    // ---------- v2.18 房间共同文件 ----------
+
+    const FILE_KIND_ICON = { markdown: "📝", mermaid: "📊", text: "📄", svg: "🖼", image: "🖼", audio: "🎵", video: "🎬", model: "🧊", other: "📎" };
+    const EDITABLE_FILE_KINDS = new Set(["markdown", "text", "svg"]);
+
+    let filesCache = [];
+    let filesPollTimer = null;
+    let lastFilesRevision = -1;
+    let editorFile = null;
+    let editorBase = "";
+    let rnFile = null;
+    let pvFile = null;
+    let pvTimer = null;
+
+    function filesCanEdit() {
+      if (!store.roomName || store.viewingArchive) return false;
+      if (store.isOwner || (store.roomAgent && store.username === store.roomAgent)) return true;
+      if (store.files && store.files.locked) return false;
+      return store.perms.canEditFiles !== false;
+    }
+
+    function fileDraftKey(roomName, fileId) { return `webharness.filedraft.${roomName}.${fileId}`; }
+
+    function fmtSize(n) {
+      n = Number(n) || 0;
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    /* SQLite datetime 是 UTC 裸串，补 Z 再比 */
+    function relTime(sql) {
+      if (!sql) return "";
+      const d = new Date(String(sql).replace(" ", "T") + "Z");
+      const s = (Date.now() - d.getTime()) / 1000;
+      if (!isFinite(s) || s < 0) return "";
+      if (s < 60) return t("relJustNow");
+      if (s < 3600) return tf("relMinutesAgo", { n: Math.floor(s / 60) });
+      if (s < 86400) return tf("relHoursAgo", { n: Math.floor(s / 3600) });
+      return tf("relDaysAgo", { n: Math.floor(s / 86400) });
+    }
+
+    async function openFiles() {
+      if (!store.roomName || store.viewingArchive) return;
+      $("filesStatus").textContent = "";
+      lastFilesRevision = -1;
+      $("filesDlg").showModal();
+      await refreshFiles(true);
+      if (!filesPollTimer) filesPollTimer = setInterval(() => refreshFiles(false), 2000);
+    }
+
+    function stopFilesPoll() {
+      if (filesPollTimer) { clearInterval(filesPollTimer); filesPollTimer = null; }
+    }
+
+    function stopPreviewPoll() {
+      if (pvTimer) { clearInterval(pvTimer); pvTimer = null; }
+      pvFile = null;
+    }
+
+    $("filesDlg").addEventListener("close", stopFilesPoll);
+    $("filePreviewDlg").addEventListener("close", stopPreviewPoll);
+
+    async function refreshFiles(force) {
+      if (!store.roomName || store.viewingArchive) return;
+      try {
+        const data = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files`);
+        filesCache = data.files || [];
+        updateFilesHead();
+        if (!force && data.revision === lastFilesRevision) return;
+        lastFilesRevision = data.revision;
+        renderFileList();
+      } catch (err) {
+        if (err.status === 410 || err.status === 404) {
+          $("filesDlg").close();
+          leaveEndedRoom(err.message);
+          return;
+        }
+        $("filesStatus").textContent = err.message;
+      }
+    }
+
+    function updateFilesHead() {
+      $("filesCount").textContent = tf("filesCountFmt", { n: filesCache.length, max: 200 });
+      const locked = !!(store.files && store.files.locked);
+      $("filesLockBadge").classList.toggle("hidden", !locked);
+      const canEdit = filesCanEdit();
+      $("filesUploadBtn").disabled = !canEdit;
+      $("filesNewTextBtn").disabled = !canEdit;
+    }
+
+    function renderFileList() {
+      const box = $("fileList");
+      if (!filesCache.length) {
+        box.innerHTML = `<div class="hint" style="margin-top:16px">${t("filesEmpty")}</div>`;
+        return;
+      }
+      const canEdit = filesCanEdit();
+      box.innerHTML = filesCache.map((f) => {
+        const editable = EDITABLE_FILE_KINDS.has(f.kind);
+        const placed = f.kind === "model" && f.world && f.world.visible
+          ? ` <span class="badge">${t("filePlaced")}</span>` : "";
+        return `
+          <div class="file-row" data-id="${f.id}">
+            <span class="file-ico">${FILE_KIND_ICON[f.kind] || "📎"}</span>
+            <div class="file-main">
+              <div class="file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}${placed}</div>
+              ${f.description ? `<div class="file-desc" title="${escapeHtml(f.description)}">${escapeHtml(f.description)}</div>` : ""}
+              <div class="file-meta">${fmtSize(f.size)} · ${escapeHtml(f.updatedBy || "")} · ${relTime(f.updatedAt)}</div>
+            </div>
+            <div class="file-ops">
+              <button type="button" class="btn ghost small" data-act="preview">${t("filePreview")}</button>
+              ${editable && canEdit ? `<button type="button" class="btn ghost small" data-act="edit">${t("edit")}</button>` : ""}
+              <button type="button" class="btn ghost small" data-act="download">${t("fileDownload")}</button>
+              ${canEdit ? `<button type="button" class="btn ghost small" data-act="rename">${t("rename")}</button>
+              <button type="button" class="btn ghost small" data-act="delete">${t("del")}</button>` : ""}
+            </div>
+          </div>`;
+      }).join("");
+    }
+
+    $("fileList").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-act]");
+      if (!btn) return;
+      const row = btn.closest(".file-row");
+      const f = filesCache.find((x) => String(x.id) === row?.dataset.id);
+      if (!f) return;
+      const act = btn.dataset.act;
+      if (act === "preview") openFilePreview(f);
+      else if (act === "edit") openFileEditor(f);
+      else if (act === "download") downloadFile(f);
+      else if (act === "rename") openFileRename(f);
+      else if (act === "delete") deleteRoomFile(f);
+    });
+
+    async function downloadFile(f) {
+      if (!f) return;
+      try {
+        const url = await authBlobUrl(f.contentUrl);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = f.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (err) { setHint(err.message); }
+    }
+
+    /* 上传 */
+    function openFileUpload() {
+      $("upFile").value = ""; $("upName").value = ""; $("upDesc").value = ""; $("upStatus").textContent = "";
+      $("fileUploadDlg").showModal();
+    }
+
+    function onUpFilePick() {
+      const f = $("upFile").files[0];
+      if (f && !$("upName").value.trim()) $("upName").value = f.name;
+    }
+
+    async function submitFileUpload() {
+      const file = $("upFile").files[0];
+      const name = $("upName").value.trim();
+      if (!file) { $("upStatus").textContent = t("filePickFirst"); return; }
+      if (!name) { $("upStatus").textContent = t("fileNameRequired"); return; }
+      const form = new FormData();
+      form.append("file", file);
+      form.append("name", name);
+      if ($("upDesc").value.trim()) form.append("description", $("upDesc").value.trim());
+      $("upSubmitBtn").disabled = true;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files`, { method: "POST", body: form });
+        $("fileUploadDlg").close();
+        voiceToast(t("fileUploaded"));
+        refreshFiles(true);
+      } catch (err) { $("upStatus").textContent = err.message; }
+      $("upSubmitBtn").disabled = false;
+    }
+
+    /* 新建文本 */
+    function openFileNewText() {
+      $("ntName").value = ""; $("ntContent").value = ""; $("ntStatus").textContent = "";
+      $("fileNewTextDlg").showModal();
+      setTimeout(() => $("ntName").focus(), 0);
+    }
+
+    async function submitFileNewText() {
+      const name = $("ntName").value.trim();
+      const content = $("ntContent").value;
+      if (!name) { $("ntStatus").textContent = t("fileNameRequired"); return; }
+      if (!content) { $("ntStatus").textContent = t("fileContentRequired"); return; }
+      $("ntSubmitBtn").disabled = true;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files`, {
+          method: "POST", body: JSON.stringify({ name, content }),
+        });
+        $("fileNewTextDlg").close();
+        voiceToast(t("fileUploaded"));
+        refreshFiles(true);
+      } catch (err) { $("ntStatus").textContent = err.message; }
+      $("ntSubmitBtn").disabled = false;
+    }
+
+    /* 重命名 / 描述 */
+    function openFileRename(f) {
+      rnFile = f;
+      $("rnName").value = f.name;
+      $("rnDesc").value = f.description || "";
+      $("rnStatus").textContent = "";
+      $("fileRenameDlg").showModal();
+    }
+
+    async function submitFileRename() {
+      if (!rnFile) return;
+      const name = $("rnName").value.trim();
+      if (!name) { $("rnStatus").textContent = t("fileNameRequired"); return; }
+      $("rnSubmitBtn").disabled = true;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files/${rnFile.id}`, {
+          method: "PATCH", body: JSON.stringify({ name, description: $("rnDesc").value }),
+        });
+        $("fileRenameDlg").close();
+        voiceToast(t("fileRenamed"));
+        refreshFiles(true);
+      } catch (err) { $("rnStatus").textContent = err.message; }
+      $("rnSubmitBtn").disabled = false;
+    }
+
+    async function deleteRoomFile(f) {
+      if (!confirm(tf("fileDeleteConfirm", { name: f.name }))) return;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files/${f.id}`, { method: "DELETE" });
+        refreshFiles(true);
+      } catch (err) { $("filesStatus").textContent = err.message; }
+    }
+
+    /* 文本编辑器：draft → baseUpdatedAt → 409 冲突对话 */
+    function onEditorInput() {
+      if (!editorFile) return;
+      try {
+        localStorage.setItem(fileDraftKey(store.roomName, editorFile.id), $("feText").value);
+      } catch (e) {}
+      $("feMeta").firstElementChild.textContent = tf("fileEditorChars", { n: $("feText").value.length.toLocaleString() });
+    }
+
+    async function openFileEditor(f) {
+      editorFile = f;
+      editorBase = f.updatedAt;
+      $("feTitle").textContent = `${t("fileEditTitle")} · ${f.name}`;
+      $("feStatus").textContent = "";
+      $("feSaveBtn").disabled = false;
+      hideEditorConflict();
+      $("feText").value = "";
+      $("feMeta").innerHTML = `<span></span><span></span>`;
+      $("fileEditorDlg").showModal();
+      try {
+        const text0 = await authFetchText(f.contentUrl);
+        let text = text0;
+        let draftHint = "";
+        const draft = localStorage.getItem(fileDraftKey(store.roomName, f.id));
+        if (draft !== null) { text = draft; draftHint = t("fileDraftRestored"); }
+        $("feText").value = text;
+        $("feMeta").firstElementChild.textContent = tf("fileEditorChars", { n: text.length.toLocaleString() });
+        $("feMeta").lastElementChild.textContent = draftHint;
+      } catch (err) {
+        $("feStatus").textContent = mapApiError(err.message);
+      }
+    }
+
+    function fileEditorDraftClear() {
+      if (editorFile) {
+        try { localStorage.removeItem(fileDraftKey(store.roomName, editorFile.id)); } catch (e) {}
+      }
+    }
+
+    async function saveFileEditor(force) {
+      if (!editorFile) return;
+      let base = editorBase;
+      if (force) {
+        /* 强制覆盖：以服务端最新 updatedAt 为 base，压过对方的更新 */
+        try {
+          const cur = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files/${editorFile.id}`);
+          base = cur.file.updatedAt;
+        } catch (err) { $("feStatus").textContent = err.message; return; }
+      }
+      $("feSaveBtn").disabled = true;
+      try {
+        const payload = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files/${editorFile.id}`, {
+          method: "PUT", body: JSON.stringify({ content: $("feText").value, baseUpdatedAt: base }),
+        });
+        fileEditorDraftClear();
+        /* 以服务端返回的新 updatedAt 作为后续保存的 base，否则同会话第二次保存必 409 */
+        editorBase = payload.file.updatedAt;
+        $("fileEditorDlg").close();
+        voiceToast(t("fileSaved"));
+        refreshFiles(true);
+      } catch (err) {
+        if (err.status === 409) showEditorConflict(err.message);
+        else $("feStatus").textContent = err.message;
+      }
+      $("feSaveBtn").disabled = false;
+    }
+
+    function showEditorConflict(msg) {
+      $("feConflictMsg").textContent = msg;
+      $("feConflict").classList.remove("hidden");
+    }
+
+    function hideEditorConflict() {
+      $("feConflict").classList.add("hidden");
+    }
+
+    async function reloadEditorContent() {
+      if (!editorFile) return;
+      try {
+        const text = await authFetchText(editorFile.contentUrl);
+        $("feText").value = text;
+        const cur = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files/${editorFile.id}`);
+        editorBase = cur.file.updatedAt;
+        fileEditorDraftClear();
+        $("feMeta").firstElementChild.textContent = tf("fileEditorChars", { n: text.length.toLocaleString() });
+        hideEditorConflict();
+        $("feStatus").textContent = "";
+      } catch (err) { $("feStatus").textContent = err.message; }
+    }
+
+    /* 预览矩阵：markdown 复用消息管线；mermaid/svg/img/audio/video/model 各自渲染 */
+    async function authFetchText(path) {
+      const res = await fetch(path, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} });
+      if (!res.ok) {
+        let msg = "HTTP " + res.status;
+        try { msg = (await res.json()).detail || msg; } catch (e) {}
+        throw new Error(mapApiError(msg));
+      }
+      return res.text();
+    }
+
+    async function openFilePreview(f) {
+      pvFile = f;
+      $("pvTitle").textContent = f.name;
+      $("pvMeta").textContent = `${fmtSize(f.size)} · ${f.updatedBy || ""} · ${f.updatedAt}`;
+      $("pvUpdateBar").classList.add("hidden");
+      $("pvBody").innerHTML = `<div class="hint">${t("loading")}</div>`;
+      $("filePreviewDlg").showModal();
+      await renderFilePreview(f);
+      if (!pvTimer) pvTimer = setInterval(checkPreviewUpdate, 3000);
+    }
+
+    async function renderFilePreview(f) {
+      const body = $("pvBody");
+      try {
+        if (f.kind === "markdown") {
+          const text = await authFetchText(f.contentUrl);
+          body.classList.add("md-body");
+          renderBody(body, text, false);
+        } else if (f.kind === "mermaid" || (f.kind === "text" && /\.(mermaid|mmd)$/i.test(f.name))) {
+          const text = await authFetchText(f.contentUrl);
+          body.classList.remove("md-body");
+          if (window.mermaid) {
+            body.innerHTML = `<pre><code class="language-mermaid"></code></pre>`;
+            body.querySelector("code").textContent = text;
+            renderMermaidBlocks(body);
+          } else {
+            body.innerHTML = `<pre class="pv-text"></pre>`;
+            body.firstChild.textContent = text;
+          }
+        } else if (f.kind === "text") {
+          const text = await authFetchText(f.contentUrl);
+          body.classList.remove("md-body");
+          body.innerHTML = `<pre class="pv-text"></pre>`;
+          body.firstChild.textContent = text;
+        } else if (f.kind === "svg" || f.kind === "image") {
+          const url = await authBlobUrl(f.contentUrl);
+          body.classList.remove("md-body");
+          body.innerHTML = `<img class="pv-img" alt="${escapeHtml(f.name)}" />`;
+          body.querySelector("img").src = url;
+        } else if (f.kind === "audio") {
+          const url = await authBlobUrl(f.contentUrl);
+          body.classList.remove("md-body");
+          body.innerHTML = `<audio controls style="width:100%" src="${url}"></audio>`;
+        } else if (f.kind === "video") {
+          const url = await authBlobUrl(f.contentUrl);
+          body.classList.remove("md-body");
+          body.innerHTML = `<video controls style="width:100%;max-height:52vh;border-radius:10px" src="${url}"></video>`;
+        } else if (f.kind === "model") {
+          body.classList.remove("md-body");
+          body.innerHTML = `<div class="pv-model"><div class="pv-model-thumb">🧊</div>
+            <div><div>${escapeHtml(t("modelCardBadge"))}</div><div class="hint">${fmtSize(f.size)} · ${escapeHtml(f.updatedBy || "")}</div></div></div>`;
+          try {
+            const mod = await import("/static/model-preview.js");
+            const dataUrl = await mod.renderModelPreview(f.contentUrl, {
+              getBlob: (u) => fetch(u, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} })
+                .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); }),
+            });
+            if (dataUrl) {
+              const img = document.createElement("img");
+              img.src = dataUrl;
+              body.querySelector(".pv-model-thumb").replaceChildren(img);
+            }
+          } catch (e) { /* 缩略图失败保留 🧊 占位 */ }
+        } else {
+          body.classList.remove("md-body");
+          body.innerHTML = `<div class="hint">${t("pvDownloadOnly")}</div>`;
+        }
+      } catch (err) {
+        body.classList.remove("md-body");
+        body.innerHTML = `<div class="hint">${escapeHtml(err.message || t("imageLoadFail"))}</div>`;
+      }
+    }
+
+    async function checkPreviewUpdate() {
+      if (!pvFile || !$("filePreviewDlg").open) return;
+      try {
+        const data = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/files/${pvFile.id}`);
+        if (data.file.updatedAt !== pvFile.updatedAt) {
+          pvFile = data.file;
+          $("pvMeta").textContent = `${fmtSize(pvFile.size)} · ${pvFile.updatedBy || ""} · ${pvFile.updatedAt}`;
+          $("pvUpdateBar").classList.remove("hidden");
+        }
+      } catch (err) { /* 轮询失败静默 */ }
+    }
+
+    async function reopenPreview() {
+      if (!pvFile) return;
+      $("pvUpdateBar").classList.add("hidden");
+      $("pvBody").innerHTML = `<div class="hint">${t("loading")}</div>`;
+      await renderFilePreview(pvFile);
     }
 
     // ---------- Agent 管理 ----------
