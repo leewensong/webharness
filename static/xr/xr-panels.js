@@ -139,19 +139,18 @@ export function createPanelSystem(opts) {
     return clone;
   }
 
-  /* 单条消息栅格化 → { img, wCss, hCss, bg, segments }；失败返回 null（调用方降级） */
-  async function rasterize(entry) {
-    const el = entry.el;
-    if (!el || !el.offsetWidth || !el.offsetHeight) return null;
+  /* 通用 DOM 栅格化（共同文件 3D 预览复用消息管线）：任意已渲染 DOM（须挂载、有布局）
+     → { img, wCss, hCss, bg }；失败返回 null。与消息栅格化同一套克隆/内联/foreignObject 流程。 */
+  async function rasterizeDom(el, wCssOverride) {
+    if (!el || disposed) return null;
     await waitForQuiet(el);
     if (disposed) return null;
     const clone = await prepareClone(el);
     if (disposed) return null;
-    const wCss = el.offsetWidth;
+    const wCss = wCssOverride || el.offsetWidth;
     const hCss = Math.min(el.offsetHeight, RASTER_MAX_H);
+    if (!wCss || !hCss) return null;
 
-    /* 重建 <body>：嵌入的 <style> 里 body/:root 规则（字体、颜色、背景、CSS 变量）才会生效。
-       SVG 视口固定 1280 宽（桌面断点），气泡容器与 2D 的 #log 同 id/class。 */
     const styleEl = document.createElementNS(NS_XHTML, "style");
     styleEl.textContent = docStyles();
     const holder = document.createElementNS(NS_XHTML, "div");
@@ -178,12 +177,21 @@ export function createPanelSystem(opts) {
     const img = new Image();
     await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url; });
     if (disposed) return null;
+    return { img, wCss, hCss, bg: bodyBg() };
+  }
+
+  /* 单条消息栅格化 → { img, wCss, hCss, bg, segments }；失败返回 null（调用方降级） */
+  async function rasterize(entry) {
+    const el = entry.el;
+    if (!el || !el.offsetWidth || !el.offsetHeight) return null;
+    const out = await rasterizeDom(el);
+    if (!out || !out.img) return null;
     return {
-      img,
-      wCss,
-      hCss,
-      bg: bodyBg(),
-      segments: Math.max(1, Math.ceil(hCss / SEG_H)),
+      img: out.img,
+      wCss: out.wCss,
+      hCss: out.hCss,
+      bg: out.bg,
+      segments: Math.max(1, Math.ceil(out.hCss / SEG_H)),
       truncated: el.offsetHeight > RASTER_MAX_H,
     };
   }
@@ -580,5 +588,5 @@ export function createPanelSystem(opts) {
     };
   }
 
-  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, heightOf, widthOf, dispose, stats, debugRec };
+  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, heightOf, widthOf, rasterizeDom, dispose, stats, debugRec };
 }

@@ -11,6 +11,7 @@ import { mergeXRI18n } from "./xr-i18n.js";
 import { createPanelSystem } from "./xr-panels.js";
 import { createNativeSystem } from "./xr-native.js";
 import { createAvatarSystem } from "./xr-avatars.js";
+import { createXRFiles } from "./xr-files.js";
 import { buildRoomScene, sceneKeyOf } from "./xr-rooms.js";
 
 const R = 6;             // 消息列半径（米）
@@ -282,6 +283,7 @@ export async function createXR(ctx) {
       <button type="button" class="xr-btn" data-act="vr"></button>
       <button type="button" class="xr-btn" data-act="follow"></button>
       <button type="button" class="xr-btn" data-act="native"></button>
+      <button type="button" class="xr-btn" data-act="files"></button>
       <span class="xr-title"></span>
     </div>
     <div class="xr-hint">${t("xrHintDesktop")}</div>
@@ -299,6 +301,41 @@ export async function createXR(ctx) {
   const titleEl = hud.querySelector(".xr-title");
   const statusEl = hud.querySelector(".xr-status");
   exitBtn.addEventListener("click", () => doExit());
+
+  /* ---------- 房间共同文件（需求 8/10）：列表面板 + 分类型预览 + 世界摆放 + 文本编辑。
+     自包含系统模块，初始化失败降级为 no-op 存根（3D 故障不影响 2D 的架构不变量）。 */
+  let files;
+  try {
+    files = createXRFiles({
+      t, tf,
+      scene, camera,
+      api: ctx.api,
+      token: ctx.token,
+      roomName: ctx.roomName,
+      canEdit: ctx.filesCanEdit,
+      rasterizeDom: panels.rasterizeDom,
+      renderFileMarkdown: ctx.renderFileMarkdown,
+      placeChatModel, removeChatModel,
+      disposeObjectTree,
+      statusEl, hud,
+      pxPerM: PANEL_W / REF_CSS,
+    });
+    scene.add(files.group);
+  } catch (err) {
+    console.warn("[xr] files system init failed", err);
+    const noop = () => {};
+    files = {
+      group: new THREE.Group(), openPanel: noop, closePanel: noop, isOpen: () => false,
+      handlePick: () => false, beginDrag: () => null, dragMove: noop, dragEnd: noop,
+      xrJoystick: () => false, scrollPanelContentBy: () => false, hoverPanel: () => false,
+      adjusting: () => false, exitAdjust: noop, escStack: () => false, tick: noop, dispose: noop,
+    };
+  }
+  const filesBtn = hud.querySelector('[data-act="files"]');
+  filesBtn.textContent = t("xrFiles");
+  filesBtn.addEventListener("click", () => {
+    try { files.isOpen() ? files.closePanel() : files.openPanel(); } catch (err) {}
+  });
   /* 沉浸式入口（需求 1.2）：仅当浏览器报告支持 immersive-vr 时显示 */
   function refreshVRBtn() {
     if (!ctx.immersible || !ctx.immersible()) { vrBtn.style.display = "none"; return; }
@@ -728,6 +765,8 @@ export async function createXR(ctx) {
   }
 
   function handlePick(pickRay) {
+    /* 共同文件 UI/世界模型优先（未开面板且无摆放时是廉价的 no-op） */
+    try { if (files.handlePick(pickRay)) return; } catch (err) {}
     /* 饼图扇区点击 → 名称/数值/百分比浮签（需求 3.2） */
     const sector = native.pickSector(pickRay);
     if (sector) { native.showSectorTip(sector); return; }
@@ -771,6 +810,9 @@ export async function createXR(ctx) {
 
   renderer.domElement.addEventListener("wheel", (e) => {
     e.preventDefault();
+    try {
+      if (files.hoverPanel(pointerRay(e))) { files.scrollPanelContentBy(e.deltaY * 0.6); return; }
+    } catch (err) {}
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     camera.position.addScaledVector(dir, -e.deltaY * 0.0022);
     clampCamera();
@@ -786,6 +828,7 @@ export async function createXR(ctx) {
   function onKeyDown(e) {
     if (disposed) return;
     if (e.key === "Escape") {
+      try { if (files.escStack()) return; } catch (err) {} /* 文件编辑→调整→面板，分级退出 */
       if (focus) { exitFocus(); return; } /* 先退聚焦，再退 3D（需求 7.2） */
       doExit();
       return;
@@ -1053,6 +1096,11 @@ export async function createXR(ctx) {
       sbSetActive(true);
       return { mode: "bar", moved: 0 };
     }
+    /* 共同文件面板滚动 / 调整中模型拖拽（列表面板开着时优先于记录墙） */
+    try {
+      const fd = files.beginDrag(ray);
+      if (fd) return fd;
+    } catch (err) {}
     const onLog = panels.raycast(ray) != null || native.pickImage(ray) != null;
     if (onLog) {
       const p = rayPlanePoint(ray, -R, _sbHit);
@@ -1063,6 +1111,7 @@ export async function createXR(ctx) {
     return null;
   }
   function dragMove(drag, ray) {
+    if (drag.kind && String(drag.kind).startsWith("xrfile")) { try { files.dragMove(drag, ray); } catch (err) {} return; }
     if (drag.mode === "bar") {
       const p = rayPlanePoint(ray, SB_Z, _sbHit);
       if (p) sbApplyY(p.y);
@@ -1080,6 +1129,7 @@ export async function createXR(ctx) {
   }
   function dragEnd(drag) {
     if (!drag) return;
+    if (drag.kind && String(drag.kind).startsWith("xrfile")) { try { files.dragEnd(drag); } catch (err) {} return; }
     if (drag.mode === "bar") sbSetActive(false);
   }
   /* 记录拖动未越阈值 → 抬起时补一次点击（用按下那一刻的射线） */
@@ -1367,8 +1417,9 @@ export async function createXR(ctx) {
     const drag = xrDrag;
     xrDrag = null;
     dragEnd(drag);
-    /* 未越阈值的按下-抬起 = 点击（翻段/聚焦/播放语音/放模型） */
+    /* 未越阈值的按下-抬起 = 点击（翻段/聚焦/播放语音/放模型/文件面板行） */
     if (drag.mode === "log" && drag.moved < LOG_DRAG_MIN) handlePick(rayFromStored(drag));
+    else if (drag.kind === "xrfile-panel" && (drag.moved || 0) < LOG_DRAG_MIN) handlePick(rayFromStored(drag));
   }
 
   /* 移动/旋转（手柄摇杆，xr-standard：axes[2]=X axes[3]=Y，死区 0.15） */
@@ -1380,6 +1431,8 @@ export async function createXR(ctx) {
       if (!gp || !gp.axes || gp.axes.length < 4) continue;
       const ax = gp.axes[2] || 0;
       const ay = gp.axes[3] || 0;
+      /* 调整共同文件模型时摇杆被文件系统接管（左手柄平移 / 右手柄旋转缩放） */
+      try { if (files.xrJoystick(src.handedness, ax, ay, dt)) continue; } catch (err) {}
       if (src.handedness === "right") {
         if (Math.abs(ax) > 0.15) rig.rotation.y -= ax * dt * 2.4; /* 旋转动作 */
         /* 右摇杆 Y = 翻历史：**只在射线指着记录/滚行条时生效**，避免与全局摇杆动作
@@ -1472,6 +1525,7 @@ export async function createXR(ctx) {
     layout(dt);
     try { avatars.update(dt); } catch (err) {} /* 形象呼吸/浮动/表情推进（需求 4.4） */
     updateSpatialVoices(); /* 语音声源跟随站位/面板位 + 口型推进（任务 9） */
+    try { files.tick(); } catch (err) {}
     /* 接近已加载的最旧一端 → 向前分页回填（一次性拉全，需求 2.7） */
     const bandH = BAND_HI - FLOOR_Y;
     if (strip.length && !historyEnd && hArc + bandH > totalH - 1.2 && (totalH < bandH + 1 || hArc > 0)) {
@@ -1556,7 +1610,9 @@ export async function createXR(ctx) {
     room: () => (roomSystem ? { id: roomSystem.sceneId, seats: roomSystem.seats.length } : null),
     roomGroup: () => (roomSystem ? roomSystem.group : null),
     seatOf: (name) => avatars.positionOf(name),
+    files: () => files, /* 共同文件系统（验证用：isOpen/内部状态） */
     mem: () => ({ geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }),
+    render: () => { renderer.render(scene, camera); return renderer.info.render.frame; }, /* 验证用：rAF 被遮挡暂停时手动驱动一帧 */
   };
 
   /* ---------- 退出与释放（需求 7.4） ---------- */
@@ -1593,6 +1649,7 @@ export async function createXR(ctx) {
     document.removeEventListener("visibilitychange", onVis);
     try { unsubMsg(); } catch (e) {}
     try { unsubRoom(); } catch (e) {}
+    try { files.dispose(); } catch (e) {}
     native.dispose();
     avatars.dispose();
     panels.dispose();
