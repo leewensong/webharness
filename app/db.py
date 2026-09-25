@@ -239,6 +239,32 @@ def init_db() -> None:
                 ON room_files(room_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_room_files_world
                 ON room_files(room_id) WHERE world_visible = 1;
+
+            -- 房间内用户的 3D 位姿：latest 表每人一份最新（全量快照），log 表按时间追加
+            -- 变更（增量）。pose/state 均为 JSON 文本；log 按 10 分钟滚动清理。
+            CREATE TABLE IF NOT EXISTS room_presence (
+                room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                pose TEXT NOT NULL,
+                state TEXT,
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+                PRIMARY KEY (room_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS room_presence_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL DEFAULT 'pose',
+                pose TEXT,
+                state TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_room_presence_log_room
+                ON room_presence_log(room_id, id);
+            CREATE INDEX IF NOT EXISTS idx_room_presence_log_time
+                ON room_presence_log(created_at);
             """
         )
 

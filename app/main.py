@@ -3546,6 +3546,239 @@ def set_file_placement(room_name: str, file_id: int, body: PlacementUpdate, user
     return payload
 
 
+# ---------- 房间内 3D 位姿（presence）----------
+# 两张表：room_presence 存每人最新位姿（全量快照来源），room_presence_log 按时间追加
+# 变更（增量来源）。客户端首次拉全量、记下服务端返回的 serverTime 作为游标，之后每
+# 0.5s 拉 since 之后的增量。人类位姿来自键盘/头显 6DoF；Agent 走同一接口自报，
+# 由下面的步行速度校验兜底「不许瞬移」。
+PRESENCE_RETENTION = "-10 minutes"
+PRESENCE_RETENTION_SECS = 600.0      # 与上面 SQL 窗口保持一致（超窗的游标一律让客户端全量重取）
+PRESENCE_WALK_SPEED = 2.2            # 允许的最大水平速度（米/秒，略高于人类快走）
+PRESENCE_SPEED_SLACK = 0.8           # 速度校验容差（米）：抖动/丢包重传不至于被拒
+PRESENCE_COALESCE_MS = 250           # 同人两次增量事件的合并间隔：更密只刷新最新位姿、不再追加事件
+PRESENCE_RADIUS_LIMIT = 40.0         # 位置绝对值上限（米）：远超房间尺寸即判非法
+PRESENCE_Y_MIN, PRESENCE_Y_MAX = -2.0, 12.0
+PRESENCE_MAX_HANDS = 2
+PRESENCE_DELTA_LIMIT = 500
+PRESENCE_STATE_CHARS = 500
+
+
+class PresenceHand(BaseModel):
+    p: list[float]
+    q: list[float] | None = None
+
+
+class PresenceUpdate(BaseModel):
+    p: list[float]                     # 头/身体位置（世界坐标，米）
+    yaw: float = 0.0                   # 朝向（弧度，绕 y）
+    pitch: float = 0.0
+    hands: list[PresenceHand] | None = None   # 可选：双手 6DoF（头显才有）
+    state: dict | None = None          # 可选小状态（speaking/expression/…）
+
+
+def _presence_secs(conn, a: str | None, b: str | None) -> float:
+    """两个时间戳字符串之差（秒，时间运算交给 SQLite，与仓库其它处一致）。
+
+    任一侧为空/非法返回极大值（视为「太久远」，让调用方走全量重置）。
+    """
+    if not a or not b:
+        return 1e9
+    row = conn.execute("SELECT (julianday(?) - julianday(?)) * 86400.0 AS s", (b, a)).fetchone()
+    if not row or row["s"] is None:
+        return 1e9
+    return float(row["s"])
+
+
+def _presence_validate(body: PresenceUpdate) -> dict:
+    """位姿规范化 + 合法性校验（越界/NaN 直接 400）。"""
+    p = _validate_pose_vec(body.p, "p")
+    if abs(p[0]) > PRESENCE_RADIUS_LIMIT or abs(p[2]) > PRESENCE_RADIUS_LIMIT:
+        raise HTTPException(status_code=400, detail=f"位置超出允许范围（±{PRESENCE_RADIUS_LIMIT:g}m）")
+    if not (PRESENCE_Y_MIN <= p[1] <= PRESENCE_Y_MAX):
+        raise HTTPException(status_code=400, detail=f"高度超出允许范围（{PRESENCE_Y_MIN:g}~{PRESENCE_Y_MAX:g}m）")
+    for label, val in (("yaw", body.yaw), ("pitch", body.pitch)):
+        if not math.isfinite(float(val)):
+            raise HTTPException(status_code=400, detail=f"{label} 必须是有限数字")
+    hands = []
+    for i, h in enumerate(body.hands or []):
+        if i >= PRESENCE_MAX_HANDS:
+            raise HTTPException(status_code=400, detail=f"手部最多 {PRESENCE_MAX_HANDS} 个")
+        hp = _validate_pose_vec(h.p, f"hands[{i}].p")
+        hq = None
+        if h.q is not None:
+            if len(h.q) != 4:
+                raise HTTPException(status_code=400, detail=f"hands[{i}].q 必须是四元数 [x, y, z, w]")
+            hq = [float(v) for v in h.q]
+            if not all(math.isfinite(v) for v in hq):
+                raise HTTPException(status_code=400, detail=f"hands[{i}].q 不能包含 NaN 或 Infinity")
+        hands.append({"p": hp, "q": hq})
+    state = body.state
+    if state is not None:
+        if not isinstance(state, dict):
+            raise HTTPException(status_code=400, detail="state 必须是对象")
+        if len(json.dumps(state, ensure_ascii=False)) > PRESENCE_STATE_CHARS:
+            raise HTTPException(status_code=413, detail=f"state 过大（上限 {PRESENCE_STATE_CHARS} 字符）")
+    return {"p": p, "yaw": float(body.yaw), "pitch": float(body.pitch), "hands": hands, "state": state}
+
+
+def _presence_purge(conn) -> None:
+    """增量表滚动清理（走 idx_room_presence_log_time）。"""
+    conn.execute("DELETE FROM room_presence_log WHERE created_at < datetime('now', ?)", (PRESENCE_RETENTION,))
+
+
+@app.post("/api/rooms/{room_name}/presence")
+def update_presence(room_name: str, body: PresenceUpdate, user: CurrentUser):
+    """上报自己的 3D 位姿（头/身体 + 可选双手 6DoF）。
+
+    全量表更新为该用户最新位姿；增量表按时间追加一条事件（同人 250ms 内合并）。
+    **自然运动兜底**：与上一次位姿的水平位移超过「允许速度 × 间隔 + 容差」时，按上限
+    **裁剪**（不是拒绝——硬拒会让滚轮快走的人类永久卡住）；别人永远看不到瞬移，
+    响应带 `clamped: true` 与原位姿，Agent 据此按步行速度改正。
+    """
+    pose = _presence_validate(body)
+    with get_db() as conn:
+        room, _member = _require_membership(conn, room_name, user["id"])
+        now = _db_now(conn)
+        prev = conn.execute(
+            "SELECT pose, updated_at FROM room_presence WHERE room_id = ? AND user_id = ?",
+            (room["id"], user["id"]),
+        ).fetchone()
+        prev_pose = None
+        if prev and prev["pose"]:
+            try:
+                prev_pose = json.loads(prev["pose"])
+            except ValueError:
+                prev_pose = None
+        clamped = False
+        if prev_pose:
+            # 自然运动：水平位移按「允许速度 × 间隔 + 容差」裁剪，而不是拒绝——人类滚轮
+            # 走动/手柄传送若被硬拒会永久卡住；裁剪后别人永远看不到瞬移，Agent 也快不起来。
+            # 响应里的 clamped=true 让 Agent 自查并按步行速度改正。
+            dt = _presence_secs(conn, prev["updated_at"], now)
+            dx = pose["p"][0] - prev_pose["p"][0]
+            dz = pose["p"][2] - prev_pose["p"][2]
+            dist = math.hypot(dx, dz)
+            allowed = PRESENCE_WALK_SPEED * dt + PRESENCE_SPEED_SLACK
+            if dist > allowed and dist > 0:
+                k = allowed / dist
+                pose["p"][0] = prev_pose["p"][0] + dx * k
+                pose["p"][2] = prev_pose["p"][2] + dz * k
+                clamped = True
+        log_it = True
+        if prev:
+            log_it = _presence_secs(conn, prev["updated_at"], now) * 1000.0 >= PRESENCE_COALESCE_MS
+        pose_json = json.dumps(pose, ensure_ascii=False)
+        state_json = json.dumps(pose["state"], ensure_ascii=False) if pose["state"] is not None else None
+        conn.execute(
+            """
+            INSERT INTO room_presence (room_id, user_id, pose, state, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(room_id, user_id) DO UPDATE SET
+                pose = excluded.pose, state = excluded.state, updated_at = excluded.updated_at
+            """,
+            (room["id"], user["id"], pose_json, state_json, now),
+        )
+        if log_it:
+            conn.execute(
+                """
+                INSERT INTO room_presence_log (room_id, user_id, kind, pose, state, created_at)
+                VALUES (?, ?, 'pose', ?, ?, ?)
+                """,
+                (room["id"], user["id"], pose_json, state_json, now),
+            )
+            _presence_purge(conn)
+    return {"ok": True, "serverTime": now, "logged": log_it, "clamped": clamped, "pose": pose}
+
+
+@app.post("/api/rooms/{room_name}/presence/leave")
+def leave_presence(room_name: str, user: CurrentUser):
+    """离开 3D：删除自己的最新位姿并追加一条 leave 事件，其他人立即移除其形象。"""
+    with get_db() as conn:
+        room, _member = _require_membership(conn, room_name, user["id"])
+        now = _db_now(conn)
+        conn.execute("DELETE FROM room_presence WHERE room_id = ? AND user_id = ?", (room["id"], user["id"]))
+        conn.execute(
+            "INSERT INTO room_presence_log (room_id, user_id, kind, created_at) VALUES (?, ?, 'leave', ?)",
+            (room["id"], user["id"], now),
+        )
+        _presence_purge(conn)
+    return {"ok": True, "serverTime": now}
+
+
+@app.get("/api/rooms/{room_name}/presence")
+def presence_snapshot(room_name: str, user: CurrentUser):
+    """全量快照：房内在线的每人最新位姿 + 服务端当前时间（客户端把它当增量游标）。"""
+    with get_db() as conn:
+        room, _member = _require_membership(conn, room_name, user["id"])
+        now = _db_now(conn)
+        rows = conn.execute(
+            """
+            SELECT u.username, p.pose, p.state, p.updated_at
+            FROM room_presence p
+            JOIN users u ON u.id = p.user_id
+            JOIN room_members m ON m.room_id = p.room_id AND m.user_id = p.user_id
+            WHERE p.room_id = ? AND m.last_seen_at > datetime('now', ?)
+            ORDER BY u.username
+            """,
+            (room["id"], ONLINE_WINDOW),
+        ).fetchall()
+    users = [
+        {
+            "username": r["username"],
+            "pose": json.loads(r["pose"]) if r["pose"] else None,
+            "state": json.loads(r["state"]) if r["state"] else None,
+            "at": r["updated_at"],
+        }
+        for r in rows
+    ]
+    return {"roomName": room["name"], "serverTime": now, "users": users}
+
+
+@app.get("/api/rooms/{room_name}/presence/delta")
+def presence_delta(room_name: str, user: CurrentUser, since: str | None = Query(default=None)):
+    """增量：since（服务端时间戳）之后的变更事件。
+
+    since 早于增量保留窗口（或缺失/异常）时返回 reset=true，客户端须重新拉全量快照。
+    """
+    with get_db() as conn:
+        room, _member = _require_membership(conn, room_name, user["id"])
+        now = _db_now(conn)
+        reset = False
+        if not since:
+            reset = True
+        else:
+            age = _presence_secs(conn, since, now)
+            if age > PRESENCE_RETENTION_SECS or age < -5.0:
+                reset = True
+        events = []
+        if not reset:
+            rows = conn.execute(
+                """
+                SELECT u.username, l.kind, l.pose, l.state, l.created_at
+                FROM room_presence_log l
+                JOIN users u ON u.id = l.user_id
+                WHERE l.room_id = ? AND l.created_at > ?
+                ORDER BY l.id ASC
+                LIMIT ?
+                """,
+                (room["id"], since, PRESENCE_DELTA_LIMIT),
+            ).fetchall()
+            events = [
+                {
+                    "username": r["username"],
+                    "kind": r["kind"],
+                    "pose": json.loads(r["pose"]) if r["pose"] else None,
+                    "state": json.loads(r["state"]) if r["state"] else None,
+                    "at": r["created_at"],
+                }
+                for r in rows
+            ]
+            if len(rows) >= PRESENCE_DELTA_LIMIT:
+                reset = True      # 落后太多：直接全量重取，避免分页追赶
+                events = []
+    return {"roomName": room["name"], "serverTime": now, "reset": reset, "events": events}
+
+
 @app.get("/api/archives/{room_id}/files")
 def list_archive_files(room_id: int, user: CurrentUser):
     """归档房间的共同文件列表（只读）。"""

@@ -37,6 +37,7 @@ export const ARKIT52 = [
   "mouthUpperUpRight", "tongueOut",
 ];
 const ARKIT_SET = new Set(ARKIT52);
+const _handQ = new THREE.Quaternion();   /* 手部四元数插值临时值 */
 
 const ARKIT_TO_VRM = {
   jawOpen: [["aa", 1]],
@@ -126,6 +127,11 @@ export function createAvatarSystem(opts) {
   function disposeRec(rec) {
     rec.disposed = true;
     group.remove(rec.root);
+    for (const m of rec.handMeshes || []) {
+      group.remove(m);          /* 手部标记挂在 group 下（世界坐标），不在 rec.root 里 */
+      m.visible = false;
+    }
+    rec.handMeshes = [];
     rec.root.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       if (o.material) {
@@ -267,6 +273,7 @@ export function createAvatarSystem(opts) {
   }
 
   function placeAvatar(rec, username) {
+    if (rec.hasPose) return;   /* 已有 6DoF 位姿：座位只是默认位，不再抢位 */
     const idx = seatAssignment.get(username);
     const seat = idx === undefined ? null : seats[idx];
     if (seat) {
@@ -286,6 +293,7 @@ export function createAvatarSystem(opts) {
     const seen = new Set();
     assignSeats(users.map((u) => u.username));   /* 先排座，再按座建 rec */
     for (const u of users) {
+      if (leftSet.has(u.username)) continue; /* 已显式离开 3D：等他再次上报位姿才出现 */
       seen.add(u.username);
       let rec = avatars.get(u.username);
       if (!rec) {
@@ -295,6 +303,7 @@ export function createAvatarSystem(opts) {
           isOwner: !!u.isRoomOwner, humanoidFlag: !!u.model3dHumanoid, arkitFlag: !!u.model3dArkit,
           vrm: null, arkitMorphs: null, humanoidOn: false, breathBone: null, armBone: null,
           foreArm: null, waveT: null,
+          poseTarget: null, hasPose: false, handTargets: null, handMeshes: [],
         };
         buildCapsule(rec, u.username, rec.isOwner);
         rec.plate = buildNamePlate(u.username, rec.isOwner, t("xrOwnerTag"));
@@ -359,12 +368,95 @@ export function createAvatarSystem(opts) {
     if (rec && !rec.disposed && rec.humanoidOn) rec.waveT = 0;
   }
 
+  /* ---------- 远端位姿（房间内 3D 位姿同步）----------
+     服务端 room_presence 下发的是「目标位姿」：这里保存目标并逐帧插值趋近，避免瞬移。
+     有 6DoF 位姿的成员不再按座位/环形摆放（座位只是他还没上报位姿时的默认位）；
+     显式离开 3D（presence/leave）的成员先隐藏，等他再次上报位姿才重新出现。 */
+  const leftSet = new Set();
+  const HAND_GEO = new THREE.BoxGeometry(0.075, 0.05, 0.14);
+  const HAND_MAT = new THREE.MeshBasicMaterial({ color: 0x9fc4ff, transparent: true, opacity: 0.85 });
+
+  function ensureHands(rec) {
+    if (rec.handMeshes.length) return rec.handMeshes;
+    for (let i = 0; i < 2; i++) {
+      const m = new THREE.Mesh(HAND_GEO, HAND_MAT);
+      m.visible = false;
+      group.add(m);
+      rec.handMeshes.push(m);
+    }
+    return rec.handMeshes;
+  }
+
+  /* 目标位姿 = 服务端最新一份；返回是否命中在场成员 */
+  function setRemotePose(username, pose) {
+    const name = String(username);
+    const rec = avatars.get(name);
+    leftSet.delete(name);          /* 再次上报 = 又回到 3D 里了 */
+    if (!rec || rec.disposed) return false;
+    if (pose && Array.isArray(pose.p) && pose.p.length === 3 && pose.p.every(Number.isFinite)) {
+      const [x, y, z] = pose.p;
+      const ry = Number.isFinite(pose.yaw) ? pose.yaw : rec.root.rotation.y;
+      rec.poseTarget = { x, y, z, ry };
+      if (!rec.hasPose) {          /* 首次：直接就位，避免从座位慢慢飘过去 */
+        rec.hasPose = true;
+        rec.root.position.x = x;
+        rec.root.position.z = z;
+        rec.root.rotation.y = ry;
+      }
+    }
+    const hands = Array.isArray(pose && pose.hands) ? pose.hands.filter((h) => h && Array.isArray(h.p)).slice(0, 2) : [];
+    rec.handTargets = hands;
+    const meshes = hands.length ? ensureHands(rec) : rec.handMeshes;
+    meshes.forEach((m, i) => { m.visible = i < hands.length; });
+    return true;
+  }
+
+  /* 显式离开 3D：立即移除形象，并记住该成员（房间轮询再看到他时不重建） */
+  function removeRemote(username) {
+    const name = String(username);
+    leftSet.add(name);
+    const rec = avatars.get(name);
+    if (rec) { disposeRec(rec); avatars.delete(name); }
+  }
+
+  function clearLeft(username) {
+    if (username === undefined) leftSet.clear();
+    else leftSet.delete(String(username));
+  }
+
   /* 逐帧：未勾选 Humanoid（或缺省胶囊）→ 轻微上下浮动；勾选的 VRM 做呼吸 +
      挥手窗口，并推进 three-vrm 表情/弹簧骨骼。 */
   function update(dt) {
     const now = performance.now() / 1000;
     for (const [, rec] of avatars) {
       if (rec.disposed) continue;
+      /* 远端位姿插值（指数趋近，~6/s：0.5s 一次目标也能平滑移动） */
+      if (rec.hasPose && rec.poseTarget) {
+        const k = 1 - Math.exp(-dt * 6);
+        rec.root.position.x += (rec.poseTarget.x - rec.root.position.x) * k;
+        rec.root.position.z += (rec.poseTarget.z - rec.root.position.z) * k;
+        let dr = rec.poseTarget.ry - rec.root.rotation.y;
+        while (dr > Math.PI) dr -= Math.PI * 2;
+        while (dr < -Math.PI) dr += Math.PI * 2;
+        rec.root.rotation.y += dr * k;
+      }
+      /* 双手 6DoF 标记（头显用户才有；直接世界坐标，挂在 group 下） */
+      if (rec.handMeshes.length) {
+        const hs = rec.handTargets || [];
+        for (let i = 0; i < rec.handMeshes.length; i++) {
+          const m = rec.handMeshes[i];
+          const h = hs[i];
+          if (!h || !m.visible) { m.visible = false; continue; }
+          const k = 1 - Math.exp(-dt * 10);
+          m.position.x += (h.p[0] - m.position.x) * k;
+          m.position.y += (h.p[1] - m.position.y) * k;
+          m.position.z += (h.p[2] - m.position.z) * k;
+          if (Array.isArray(h.q) && h.q.length === 4) {
+            _handQ.set(h.q[0], h.q[1], h.q[2], h.q[3]);
+            m.quaternion.slerp(_handQ, k);
+          }
+        }
+      }
       if (!rec.humanoidOn) {
         rec.root.position.y = Math.abs(Math.sin(now * 1.5)) * 0.03;
       } else if (rec.vrm) {
@@ -394,5 +486,5 @@ export function createAvatarSystem(opts) {
     inFlight = 0;
   }
 
-  return { group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats };
+  return { group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats, setRemotePose, removeRemote, clearLeft };
 }

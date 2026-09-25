@@ -176,6 +176,130 @@ export async function createXR(ctx) {
   try { applyRoomScene((ctx.roomInfo && ctx.roomInfo() && ctx.roomInfo().scene) || null); } catch (err) {}
   try { avatars.applyRoom(ctx.roomInfo && ctx.roomInfo()); } catch (err) {}
 
+  /* ---------- 房间内 3D 位姿同步（人类上报 + 他人位姿渲染） ----------
+     人类位姿 = camera 世界位姿（桌面 WASD / 头显 6DoF 都反映在这里）+（沉浸式）两只
+     手柄位姿；0.5s 上报一次。Agent 走同一接口自报，服务端按步行速度校验不许瞬移。
+     首次拉全量快照并记下服务端 serverTime 当游标，之后每 0.5s 拉增量；服务端返回
+     reset=true（游标过期 / 落后太多）时退回全量重取。离开 3D 时发一条 leave，
+     其他人立即移除其形象。旧服务端没有这些接口时静默关闭（404 → presenceOff）。 */
+  const PRESENCE_SEND_MS = 500;
+  const PRESENCE_POLL_MS = 500;
+  let presenceSendAcc = 0;
+  let presencePollAcc = 0;
+  let presenceCursor = null;   /* 服务端时间戳游标（用服务端时间，避免本地时钟偏差） */
+  let presenceBusy = false;    /* 拉取在途（0.5s 一次，避免请求堆积） */
+  let presenceOff = false;     /* 服务端不支持（404）→ 关闭 */
+  let memberRefreshAt = 0;
+
+  function presenceRoom() {
+    const r = ctx.roomName && ctx.roomName();
+    return r ? encodeURIComponent(r) : "";
+  }
+
+  function localPosePayload() {
+    const p = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    camera.getWorldPosition(p);
+    camera.getWorldQuaternion(q);
+    const e = new THREE.Euler().setFromQuaternion(q, "YXZ");
+    const hands = [];
+    if (xrInImmersive && renderer.xr.isPresenting) {
+      for (const c of xrControllers) {
+        const hp = new THREE.Vector3();
+        const hq = new THREE.Quaternion();
+        c.getWorldPosition(hp);
+        c.getWorldQuaternion(hq);
+        if (![hp.x, hp.y, hp.z, hq.x, hq.y, hq.z, hq.w].every(Number.isFinite)) continue;
+        hands.push({ p: [hp.x, hp.y, hp.z], q: [hq.x, hq.y, hq.z, hq.w] });
+      }
+    }
+    return { p: [p.x, p.y, p.z], yaw: e.y, pitch: e.x, hands };
+  }
+
+  async function presenceSend() {
+    const room = presenceRoom();
+    if (presenceOff || disposed || !room) return;
+    try {
+      const res = await ctx.api(`/api/rooms/${room}/presence`, {
+        method: "POST",
+        body: JSON.stringify(localPosePayload()),
+      });
+      if (res && res.serverTime) presenceCursor = res.serverTime;
+    } catch (err) {
+      if (err && err.status === 404) presenceOff = true; /* 旧服务端：静默关闭 */
+      /* 服务端会把越速位移裁到步行上限（响应 clamped），不报错；这里只需忽略网络抖动 */
+    }
+  }
+
+  /* 收到位的位姿事件但本地还没有这个成员的形象（房间快照还没轮询到）→ 拉一次房间详情重建 */
+  async function ensurePresenceMember(username, pose) {
+    const now = performance.now();
+    if (now - memberRefreshAt < 3000) return; /* 去抖：3s 内最多拉一次 */
+    memberRefreshAt = now;
+    const room = presenceRoom();
+    if (!room) return;
+    try {
+      const info = await ctx.api(`/api/rooms/${room}`);
+      avatars.applyRoom(info);
+      if (username) avatars.setRemotePose(username, pose);
+    } catch (err) { /* 拉不到就等下一次房间轮询 */ }
+  }
+
+  function applyRemoteState(username, state) {
+    if (!state) return;
+    if (typeof state.expression === "string") {
+      try { avatars.setExpression(username, state.expression, Number(state.weight) || 1); } catch (err) {}
+    }
+  }
+
+  async function presencePoll() {
+    const room = presenceRoom();
+    if (presenceOff || disposed || presenceBusy || !room) return;
+    presenceBusy = true;
+    const me = ctx.username && ctx.username();
+    try {
+      if (!presenceCursor) {
+        /* 全量：首次进入 3D，或游标过期/落后太多后重取 */
+        const snap = await ctx.api(`/api/rooms/${room}/presence`);
+        presenceCursor = snap.serverTime || null;
+        for (const u of snap.users || []) {
+          if (!u.username || u.username === me) continue;
+          if (!avatars.setRemotePose(u.username, u.pose)) ensurePresenceMember(u.username, u.pose);
+          else applyRemoteState(u.username, u.state);
+        }
+      } else {
+        const data = await ctx.api(
+          `/api/rooms/${room}/presence/delta?since=${encodeURIComponent(presenceCursor)}`
+        );
+        if (data.serverTime) presenceCursor = data.serverTime;
+        if (data.reset) {
+          presenceCursor = null; /* 下一轮走全量重取 */
+        } else {
+          for (const ev of data.events || []) {
+            if (!ev.username || ev.username === me) continue;
+            if (ev.kind === "leave") { avatars.removeRemote(ev.username); continue; }
+            if (!avatars.setRemotePose(ev.username, ev.pose)) ensurePresenceMember(ev.username, ev.pose);
+            else applyRemoteState(ev.username, ev.state);
+          }
+        }
+      }
+    } catch (err) {
+      if (err && err.status === 404) presenceOff = true;
+    } finally {
+      presenceBusy = false;
+    }
+  }
+
+  /* 离开 3D：发一条 leave（别人立即移除我的形象），并清空本地游标 */
+  function presenceLeave() {
+    const room = presenceRoom();
+    presenceCursor = null;
+    if (presenceOff || !room) return;
+    try {
+      ctx.api(`/api/rooms/${room}/presence/leave`, { method: "POST", body: "{}" });
+    } catch (err) { /* 退出路径不容错：失败就靠在线窗口自然过期 */ }
+  }
+
   /* ---------- 语音空间音频（需求 5.1/5.2）：2D 播放链创建的 audio 元素经
      setVoiceSpatial 注册的钩子路由进 PositionalAudio(HRTF)；声源绑定发送者形象
      站位（随站位），无形象回退消息面板位。播放结束自动摘除；进 3D 时 2D 端
@@ -1547,6 +1671,11 @@ export async function createXR(ctx) {
     }
     layout(dt);
     try { avatars.update(dt); } catch (err) {} /* 形象呼吸/浮动/表情推进（需求 4.4） */
+    /* 位姿同步：0.5s 上报自己的、0.5s 拉别人的增量（页面隐藏时 rAF 停发，自然暂停） */
+    presenceSendAcc += dt;
+    presencePollAcc += dt;
+    if (presenceSendAcc >= PRESENCE_SEND_MS / 1000) { presenceSendAcc = 0; presenceSend(); }
+    if (presencePollAcc >= PRESENCE_POLL_MS / 1000) { presencePollAcc = 0; presencePoll(); }
     updateSpatialVoices(); /* 语音声源跟随站位/面板位 + 口型推进（任务 9） */
     try { files.tick(); } catch (err) {}
     /* 接近已加载的最旧一端 → 向前分页回填（一次性拉全，需求 2.7） */
@@ -1583,6 +1712,9 @@ export async function createXR(ctx) {
   /* 初始：从 2D 已渲染的 #log 收集当前窗口消息，并按需后台回填全史 */
   rebuildFromLog();
   if (strip.length && !historyEnd) backfill();
+  /* 位姿同步起手：先报一次自己的，再拉一次全量（不必等第一个 0.5s 节拍） */
+  presenceSend();
+  presencePoll();
 
   /* 桌面调试句柄（验证/排查用；退出 3D 时移除） */
   window.__xrDebug = {
@@ -1611,6 +1743,11 @@ export async function createXR(ctx) {
     dragState: () => (dragInfo ? { mode: dragInfo.mode, moved: +dragInfo.moved.toFixed(1) } : (xrDrag ? { mode: xrDrag.mode } : null)),
     sbActive: () => sbActive,      /* 滚行条拇指是否高亮（指着/拖动中） */
     hoverLog: () => hoverLog,      /* 桌面：鼠标是否指着记录/滚行条 */
+    /* 位姿同步（验证用：手动触发一次上报/拉取，或查看当前游标与自己的位姿） */
+    presence: () => ({ off: presenceOff, cursor: presenceCursor, busy: presenceBusy, pose: localPosePayload() }),
+    presenceSend: () => presenceSend(),
+    presencePoll: () => presencePoll(),
+    presenceLeave: () => presenceLeave(),
     nativeGroup: () => native.group,
     avatarGroup: () => avatars.group,
     avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */
@@ -1660,6 +1797,7 @@ export async function createXR(ctx) {
     stopAsr(); /* 语音识别随退出终止，避免麦克风指示灯残留 */
     killVRRec(); /* VR 侧握键录音同理 */
     xrDrag = null; /* 丢弃未完成的拖动 */
+    presenceLeave(); /* 通知房间：我已离开 3D（别人立即移除我的形象） */
     if (resizeTimer) clearTimeout(resizeTimer);
     focus = null;
     for (const id of Array.from(spatialVoices.keys())) dropSpatialVoice(id); /* 空间音频摘除（需求 7.4） */
