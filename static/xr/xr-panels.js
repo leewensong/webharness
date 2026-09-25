@@ -26,6 +26,13 @@ export function createPanelSystem(opts) {
   const pxPerM = panelWidth / refCss;      /* 所有面板共用：字号随内容一致，宽度随气泡真实宽度 */
   const maxTextures = opts.maxTextures || 24;
   const t = opts.t || ((k) => k);
+  /* 视口裁剪面（xr-main 传入的 scroll panel 矩形）：面板只在该矩形内可见，
+     超出部分被切掉——像真正的滚动视口。聚焦/特写中的面板用 setNoClip 临时豁免。 */
+  const clipPlanes = opts.clipPlanes || null;
+  function clipMat(mat, noClip) {
+    if (clipPlanes && !noClip) mat.clippingPlanes = clipPlanes;
+    return mat;
+  }
 
   const group = new THREE.Group();
   const sharedGeo = new THREE.PlaneGeometry(1, 1);
@@ -258,7 +265,7 @@ export function createPanelSystem(opts) {
       for (const dx of [-22, 0, 22]) { g.arc(64 + dx, 64, 5, 0, Math.PI * 2); g.fill(); }
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
-      placeholderMat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
+      placeholderMat = clipMat(new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
     }
     return placeholderMat;
   }
@@ -302,7 +309,7 @@ export function createPanelSystem(opts) {
     }
     hit.last = ++texClock;
     if (rec.material) { rec.material.dispose(); }
-    rec.material = new THREE.MeshBasicMaterial({ map: hit.tex, toneMapped: false });
+    rec.material = clipMat(new THREE.MeshBasicMaterial({ map: hit.tex, toneMapped: false }), rec.noClip);
     rec.mesh.material = rec.material;
     evictLRU();
   }
@@ -443,6 +450,17 @@ export function createPanelSystem(opts) {
   function widthOf(id) {
     const rec = records.get(id);
     return rec && rec.mesh ? rec.mesh.scale.x : null;
+  }
+
+  /* 临时豁免某个面板的视口裁剪（聚焦/特写时面板移到视点前，必须完整可见） */
+  function setNoClip(id, on) {
+    const rec = records.get(String(id));
+    if (!rec) return;
+    rec.noClip = !!on;
+    if (rec.material) {
+      rec.material.clippingPlanes = on || !clipPlanes ? null : clipPlanes;
+      rec.material.needsUpdate = true;
+    }
   }
 
   function evictLRU() {
@@ -588,5 +606,5 @@ export function createPanelSystem(opts) {
     };
   }
 
-  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, heightOf, widthOf, rasterizeDom, dispose, stats, debugRec };
+  return { group, sync, invalidate, invalidateAll, remove, removeAll, cycleSegment, raycast, positionOf, heightOf, widthOf, setNoClip, rasterizeDom, dispose, stats, debugRec };
 }

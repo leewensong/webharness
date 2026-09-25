@@ -52,6 +52,7 @@ export async function createXR(ctx) {
      inset:0 不会拉伸它） */
   renderer.domElement.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;";
   renderer.xr.enabled = true; /* 沉浸式会话接入（任务 10）；无会话时为普通桌面渲染 */
+  renderer.localClippingEnabled = true; /* scroll panel 视口裁剪（面板材质用 clippingPlanes） */
   ctx.root.classList.remove("hidden");
   ctx.root.appendChild(renderer.domElement);
 
@@ -113,6 +114,15 @@ export async function createXR(ctx) {
 
   /* ---------- 面板系统 ---------- */
 
+  /* scroll panel 视口裁剪：4 个裁剪面把面板裁到面板框内——x 为框的左右外缘，
+     y 为可视带上下缘（像真正的滚动视口，超出的部分被切掉而不是飘在面板外）。
+     常量每帧在 updateScrollBar 里按当前框宽刷新；聚焦的面板例外（setNoClip）。 */
+  const clipL = new THREE.Plane(new THREE.Vector3(1, 0, 0), -(LOG_L - LOG_PAD));
+  const clipR = new THREE.Plane(new THREE.Vector3(-1, 0, 0), LOG_L + LOG_W + LOG_PAD * 2);
+  const clipB = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_Y);
+  const clipT = new THREE.Plane(new THREE.Vector3(0, -1, 0), BAND_HI);
+  const panelClip = [clipL, clipR, clipB, clipT];
+
   const panels = createPanelSystem({
     t,
     panelWidth: PANEL_W,
@@ -120,6 +130,7 @@ export async function createXR(ctx) {
     maxW: LOG_W, /* 记录区宽即面板宽上限：再宽的面板也不会伸到右侧滚行条底下 */
     maxH: 2.35,
     maxTextures: 24,
+    clipPlanes: panelClip,
   });
   scene.add(panels.group);
 
@@ -227,9 +238,13 @@ export async function createXR(ctx) {
   let lastClick = { id: null, t: 0 }; /* 双击检测（面板聚焦入口） */
 
   function enterFocus(id, kind) {
+    if (focus && focus.kind === "panel") panels.setNoClip(focus.id, false);
     focus = { id: String(id), kind };
+    /* 聚焦的面板移到视点前（在面板框之外），必须退出视口裁剪才看得全 */
+    if (kind === "panel") panels.setNoClip(focus.id, true);
   }
   function exitFocus() {
+    if (focus && focus.kind === "panel") panels.setNoClip(focus.id, false);
     focus = null;
     native.setOverride(null);
     native.setFocused(null);
@@ -883,7 +898,7 @@ export async function createXR(ctx) {
 
   /* 滚行条几何：macOS 式浮层——细胶囊拇指嵌在 scroll panel 内缘（不占面板之外空间），
      轨道极淡；指着/拖动时拇指变亮变实。x 由记录区右缘每帧推出（见 updateScrollBar）。 */
-  const SB_INSET = 0.24;        /* 面板内为滚行条预留的右侧空间 */
+  const SB_INSET = 0.34;        /* 面板内为滚行条预留的右侧空间（内容与条之间留出明显间隙） */
   const SB_Z = -R + 0.3;        /* 浮在面板前：便于拾取，也不与面板同面闪烁 */
   const SB_TRACK_W = 0.11, SB_THUMB_W = 0.085;
   const SB_BOT = FLOOR_Y + 0.12, SB_TOP = BAND_HI - 0.12;
@@ -958,17 +973,17 @@ export async function createXR(ctx) {
     const H = Math.min(2048, Math.round(W * (LOG_FRAME_H / worldW)));
     return sbTexture(W, H, (g) => {
       const r = Math.round(W * 0.05);
-      sbRoundRect(g, 3, 3, W - 6, H - 6, r);
-      g.fillStyle = "rgba(9,13,21,0.62)";
+      sbRoundRect(g, 4, 4, W - 8, H - 8, r);
+      g.fillStyle = "rgba(10,15,25,0.80)";
       g.fill();
-      g.lineWidth = 3;
-      g.strokeStyle = "rgba(120,160,220,0.38)";
+      g.lineWidth = 4;
+      g.strokeStyle = "rgba(140,180,240,0.60)";
       g.stroke();
       const grd = g.createLinearGradient(0, 0, 0, H);
-      grd.addColorStop(0, "rgba(150,180,230,0.10)");
-      grd.addColorStop(0.25, "rgba(150,180,230,0.02)");
-      grd.addColorStop(1, "rgba(0,0,0,0.20)");
-      sbRoundRect(g, 3, 3, W - 6, H - 6, r);
+      grd.addColorStop(0, "rgba(160,190,235,0.16)");
+      grd.addColorStop(0.25, "rgba(160,190,235,0.04)");
+      grd.addColorStop(1, "rgba(0,0,0,0.24)");
+      sbRoundRect(g, 4, 4, W - 8, H - 8, r);
       g.fillStyle = grd;
       g.fill();
     });
@@ -1024,14 +1039,22 @@ export async function createXR(ctx) {
   }
 
   function updateScrollBar() {
-    /* scroll panel：宽度贴着内容（面板最宽 + 滚行条内缘 + 内边距），平滑跟随 */
+    /* scroll panel：宽度贴着内容（面板最宽 + 滚行条内缘 + 内边距） */
     const targetW = Math.max(0.9, logContentW) + SB_INSET + LOG_PAD * 2;
-    logW += (targetW - logW) * 0.25;
+    /* 内容变宽**立即**跟上（避免滚动中更宽的消息进来时瞬间露在框外）；变窄才平滑收起 */
+    if (targetW > logW) logW = targetW;
+    else logW += (targetW - logW) * 0.25;
     const frameLeft = LOG_L - LOG_PAD;
     logFrame.scale.set(logW, LOG_FRAME_H, 1);
     logFrame.position.x = frameLeft + logW / 2;
+    /* 视口裁剪面跟随框宽（y 面固定为可视带上下缘，面板不会伸出面板外） */
+    clipL.constant = -frameLeft;
+    clipR.constant = frameLeft + logW;
     drawLogFrame();
-    vrBar.position.x = logFrame.position.x; /* 脚边控制条与面板居中 */
+    /* 脚边控制条随面板收窄：不伸出面板之外 */
+    const barK = THREE.MathUtils.clamp((logW - 0.2) / 1.7, 0.55, 1);
+    vrBar.scale.setScalar(barK);
+    vrBar.position.x = logFrame.position.x;
     /* 滚行条嵌在面板内缘（macOS 式浮层），随记录区右缘移动 */
     sbX = frameLeft + logW - LOG_PAD - SB_THUMB_W / 2 - 0.02;
     sbTrack.position.set(sbX, (SB_BOT + SB_TOP) / 2, 0);
