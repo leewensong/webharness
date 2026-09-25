@@ -123,7 +123,7 @@
   - `docs/HUMAN.md` + `docs/HUMAN.en.md`、`static/guide.html` + `static/guide.en.html` 增「共同文件」段（入口、上传/编辑/权限、类型推荐表、内容路由建议、3D 摆放说明）；`README.md` 接口速查表补端点（含 placement）+ 功能段
   - _需求：9.3、9.6、11.5_
 
-- [ ] 21. 版本与发布
+- [x] 21. 版本与发布
   - `app/main.py` version → **2.18.0**（FastAPI description 摘要补共同文件与 3D 摆放能力）
   - 全量回归：e2e.sh（注意 1 项已知陈旧断言）+ 2D 全功能走查（确认文件抽屉不侵入既有轮询/未读逻辑）+ 桌面 3D 回归
   - 发布：生产备份 → `./deploy/build_release.sh` → install.sh（生产部署需用户确认后执行）
