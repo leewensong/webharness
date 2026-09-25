@@ -856,6 +856,17 @@
     </div>
   </dialog>
 
+  <dialog id="voiceTextDlg">
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="voiceTextEditTitle">补写语音文字</h2>
+    <p class="msg-status" data-i18n="voiceTextEditHint" style="margin:0 0 8px">为这条语音补写识别文本（发送端没识别出来时用）</p>
+    <textarea id="voiceTextContent" rows="3" maxlength="64000" style="resize:vertical"></textarea>
+    <p class="msg-status" id="voiceTextStatus"></p>
+    <div class="dialog-actions">
+      <button class="btn ghost" onclick="document.getElementById('voiceTextDlg').close()" data-i18n="cancel">取消</button>
+      <button class="btn" onclick="saveVoiceText()" data-i18n="voiceTextEditSave">保存文本</button>
+    </div>
+  </dialog>
+
   <dialog id="newRoom">
     <h2 style="margin:0 0 16px;font-size:18px" data-i18n="newRoomTitle">创建房间</h2>
     <label for="nrName" data-i18n="roomNameLabel">房间名称</label>
@@ -1181,6 +1192,11 @@
         recallDone: "已撤回",
         voicePlayTitle: "播放语音",
         voiceEmpty: "[语音]",
+        voiceTextEdit: "补写语音文字",
+        voiceTextEditTitle: "补写语音文字",
+        voiceTextEditHint: "为这条语音补写识别文本（发送端没识别出来时用）",
+        voiceTextEditSave: "保存文本",
+        voiceTextEditDone: "已补写语音文本",
         recording: "录音中",
         cancel: "取消",
         recCancelled: "已取消录音",
@@ -1413,6 +1429,11 @@
         recallDone: "Message recalled",
         voicePlayTitle: "Play voice message",
         voiceEmpty: "[voice]",
+        voiceTextEdit: "Add voice text",
+        voiceTextEditTitle: "Add voice text",
+        voiceTextEditHint: "Type the recognized text for this voice message (sender-side ASR was empty)",
+        voiceTextEditSave: "Save text",
+        voiceTextEditDone: "Voice text updated",
         recording: "Recording",
         cancel: "Cancel",
         recCancelled: "Recording cancelled",
@@ -1644,6 +1665,7 @@
     let replyTarget = null;         // 引用目标 {id, username, avatarUrl, excerpt}
     const msgIndex = new Map();     // id -> 消息对象（消息菜单）
     const msgArrival = new Map();   // id -> 本地到达时间（streamIds 新鲜度）
+    const pendingVoiceIds = new Set(); // 空文本语音待补写：常驻 streamIds 直到文本到位（补写可能晚于 35s 新鲜窗）
     const MAX_CLIENT_STREAM_IDS = 50;
 
     /* ---- v2.10 WebXR：2D→3D 桥（3D 只订阅消息/房间状态，不写共享状态；轮询仍归 2D） ---- */
@@ -2168,6 +2190,7 @@
       lastUpdatedAt = "";
       msgIndex.clear();
       msgArrival.clear();
+      pendingVoiceIds.clear();
       stopSpeaking();
       abortRec(true);
       clearWhisper();
@@ -2647,6 +2670,7 @@
       lastUpdatedAt = "";
       msgIndex.clear();
       msgArrival.clear();
+      pendingVoiceIds.clear();
       abortRec(true);
       clearWhisper();
       clearReply();
@@ -2676,6 +2700,7 @@
         lastUpdatedAt = "";
         msgIndex.clear();
         msgArrival.clear();
+        pendingVoiceIds.clear();
         abortRec(true);
         clearWhisper();
         clearReply();
@@ -2718,11 +2743,13 @@
 
     function messageQuery() {
       /* streamIds：本房间最后一条（v2.14 起撤回不限时长，tail id 常驻才能在任何
-         时刻拉到撤回墓碑）+ 流式气泡（Agent 逐字回复）+ 近 35 秒内到达的消息 */
+         时刻拉到撤回墓碑）+ 流式气泡（Agent 逐字回复）+ 近 35 秒内到达的消息
+         + 待补写的空文本语音（补写可能远晚于 35s，常驻直到文本到位） */
       const ids = new Set(lastId ? [String(lastId)] : []);
       for (const el of document.querySelectorAll("#log .bubble.streaming")) {
         if (el.dataset.msgId) ids.add(el.dataset.msgId);
       }
+      pendingVoiceIds.forEach((id) => ids.add(id));
       const freshCutoff = Date.now() - 35000;
       for (const [id, ts] of msgArrival) if (ts >= freshCutoff) ids.add(String(id));
       const parts = lastId ? [`afterId=${lastId}`, "wait=25"] : ["limit=80"];
@@ -2766,7 +2793,7 @@
       stopVoicePlay();
       store.roomName = ""; store.isOwner = false; store.canArchive = false;
       store.viewingArchive = false; store.archiveId = null; lastId = 0; lastUpdatedAt = "";
-      msgIndex.clear(); msgArrival.clear();
+      msgIndex.clear(); msgArrival.clear(); pendingVoiceIds.clear();
       saveSession();
       $("roomTitle").textContent = t("chooseRoom");
       $("manageBtn").classList.add("hidden");
@@ -3315,6 +3342,7 @@
           if (m.recalled) {          // 撤回：所有端移除该气泡（服务端已清空内容，只留墓碑行）
             msgIndex.delete(key);
             msgArrival.delete(key);
+            pendingVoiceIds.delete(key);
             removeBubble(m.id);
             msgEvents.emit("remove", m);
             continue;
@@ -3322,6 +3350,11 @@
           if (isBlankRow(m)) { msgIndex.delete(key); msgEvents.emit("remove", m); continue; }
           msgIndex.set(key, m);
           if (!msgArrival.has(key)) msgArrival.set(key, Date.now());
+          if (m.msgType === "voice") {
+            /* 空文本语音常驻 watch，补写（可能由 Agent 延迟很久）能推到本端；文本到位即解除 */
+            if (displayContent(m)) pendingVoiceIds.delete(key);
+            else pendingVoiceIds.add(key);
+          }
         }
         const existing = !replace && m.id && log.querySelector(`[data-msg-id="${CSS.escape(String(m.id))}"]`);
         if (existing) {
@@ -3335,6 +3368,14 @@
                 renderBody(body, raw, !!m.streaming);
                 applyFold(existing, m);
               }
+            }
+          } else if (m.msgType === "voice") {
+            /* 语音识别文本被补写（Agent 或作者本人）：就地更新文字 */
+            const txt = existing.querySelector(".voice-text");
+            if (txt) {
+              const raw = displayContent(m);
+              txt.textContent = raw || t("voiceEmpty");
+              txt.classList.toggle("muted", !raw);
             }
           }
           /* 流式回复（Agent）结束后朗读一次 */
@@ -4633,6 +4674,7 @@
         removeBubble(id);
         msgIndex.delete(String(id));
         msgArrival.delete(String(id));
+        pendingVoiceIds.delete(String(id));
         voiceToast(t("recallDone"));
       } catch (err) {
         if (err.status !== 401) voiceToast(err.message);
@@ -4647,8 +4689,39 @@
     function openMessageMenu(msg, x, y) {
       if (!msg || !msg.id) return;
       const items = [{ label: t("replyAdd"), action: () => setReplyTarget(msg) }];
+      /* v2.21：自己发出的空文本语音 → 补写识别文字（服务端同一接口也供作者名下 Agent 调用） */
+      if (msg.msgType === "voice" && msg.username === store.username
+          && !store.viewingArchive && !displayContent(msg)) {
+        items.push({ label: t("voiceTextEdit"), action: () => openVoiceTextEdit(msg) });
+      }
       if (canRecall(msg)) items.push({ label: t("recall"), action: () => recallMessage(msg.id) });
       showPopMenu(items, x, y);
+    }
+
+    /* ---------- v2.21：补写语音识别文本（人类入口） ---------- */
+    let voiceTextTarget = null;
+    function openVoiceTextEdit(msg) {
+      voiceTextTarget = msg;
+      $("voiceTextContent").value = "";
+      $("voiceTextStatus").textContent = "";
+      $("voiceTextDlg").showModal();
+      $("voiceTextContent").focus();
+    }
+    async function saveVoiceText() {
+      if (!voiceTextTarget || !store.roomName || store.viewingArchive) return;
+      const text = $("voiceTextContent").value.trim();
+      if (!text) { $("voiceTextStatus").textContent = t("suggestEmpty"); return; }
+      try {
+        const item = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/voice/${voiceTextTarget.id}/text`, {
+          method: "PATCH", body: JSON.stringify({ text }),
+        });
+        $("voiceTextDlg").close();
+        voiceTextTarget = null;
+        renderMessages([item], false, true);
+        voiceToast(t("voiceTextEditDone"));
+      } catch (err) {
+        if (err.status !== 401) $("voiceTextStatus").textContent = err.message;
+      }
     }
 
     /* 点击消息气泡空白处 → 消息菜单（引用 / 撤回）；交互元素与选中文本不触发 */

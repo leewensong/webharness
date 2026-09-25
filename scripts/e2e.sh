@@ -490,6 +490,57 @@ check "Agent 创建时选内置形象" "$(curl -sS -X POST "$URL/api/agents" -H 
 check "Agent 用未知内置 id 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/agents" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
   -d "$(python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"publicKey":open(sys.argv[2]).read(),"model3dUrl":"builtin:nope"}))' "e2e-avbad-$SUF" "$TMP/pub.pem")")" "400"
 
+echo "== 语音文本补写（v2.21）=="
+mk_wav() { # 最小 WAV（RIFF/WAVE 魔数即可过音频校验），44 字节头 + 8 字节静音
+  python3 -c 'import struct,sys
+open(sys.argv[1],"wb").write(
+  b"RIFF"+struct.pack("<I",44)+b"WAVE"
+  +b"fmt "+struct.pack("<IHHIIHH",16,1,1,8000,8000,1,8)
+  +b"data"+struct.pack("<I",8)+b"\x00"*8)' "$1"
+}
+mk_wav "$TMP/v1.wav"
+VA=$(curl -sS -X POST "$URL/api/rooms/$PUB_ROOM/voice" -H "Authorization: Bearer $HTOK" \
+  -F "file=@$TMP/v1.wav;filename=voice.webm" -F "text=")
+check "主人发空文本语音" "$VA" '"content":"","msgType":"voice",'
+VIDA=$(printf '%s' "$VA" | J "['id']")
+check "Agent 补写识别文本 200" "$(curl -sS -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDA/text" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"text":"你好"}')" '"content":"你好"'
+check "补写后 streamIds 能拉到更新" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/messages?afterId=$VIDA&streamIds=$VIDA" -H "Authorization: Bearer $HTOK")" "你好"
+check "已有正文再补 409" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDA/text" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"text":"别的"}')" "409"
+mk_wav "$TMP/v2.wav"
+VB=$(curl -sS -X POST "$URL/api/rooms/$PUB_ROOM/voice" -H "Authorization: Bearer $HTOK" \
+  -F "file=@$TMP/v2.wav;filename=voice.webm" -F "text=")
+VIDB=$(printf '%s' "$VB" | J "['id']")
+check "Agent 写占位（空）200" "$(curl -sS -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDB/text" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"text":"（空）"}')" '"content":"（空）"'
+check "作者本人覆盖占位 200" "$(curl -sS -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDB/text" -H "Authorization: Bearer $HTOK" \
+  -H 'Content-Type: application/json' -d '{"text":"我自己补"}')" '"content":"我自己补"'
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d @"$TMP/pub_join.json" >/dev/null
+mk_wav "$TMP/v3.wav"
+curl -sS -X POST "$URL/api/rooms/$PUB_ROOM/voice" -H "Authorization: Bearer $OTOK" \
+  -F "file=@$TMP/v3.wav;filename=voice.webm" -F "text=" >/dev/null
+VIDC=$(curl -sS "$URL/api/rooms/$PUB_ROOM/messages" -H "Authorization: Bearer $HTOK" \
+  | python3 -c "import sys,json;print([m['id'] for m in json.load(sys.stdin)['messages'] if m['msgType']=='voice' and m['username']=='$OTHER'][0])")
+check "他人（房主）补写别人语音 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDC/text" -H "Authorization: Bearer $HTOK" \
+  -H 'Content-Type: application/json' -d '{"text":"x"}')" "403"
+check "主人名下 Agent 补写外人语音 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDC/text" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"text":"x"}')" "403"
+check "补写带 @@ 前缀 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDC/text" -H "Authorization: Bearer $OTOK" \
+  -H 'Content-Type: application/json' -d '{"text":"@@x hi"}')" "400"
+check "补写带 # 前缀 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDC/text" -H "Authorization: Bearer $OTOK" \
+  -H 'Content-Type: application/json' -d '{"text":"#g hi"}')" "400"
+TXTID=$(curl -sS "$URL/api/rooms/$PUB_ROOM/messages" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d '{"content":"普通文本"}' | J "['id']")
+check "对文本消息补写 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$TXTID/text" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"text":"x"}')" "400"
+check "空文本 body 422" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDC/text" -H "Authorization: Bearer $OTOK" \
+  -H 'Content-Type: application/json' -d '{"text":""}')" "422"
+check "纯空白文本 422" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDC/text" -H "Authorization: Bearer $OTOK" \
+  -H 'Content-Type: application/json' -d '{"text":"   "}')" "422"
+check "作者本人补写空文本 200" "$(curl -sS -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDC/text" -H "Authorization: Bearer $OTOK" \
+  -H 'Content-Type: application/json' -d '{"text":"作者自己"}')" '"content":"作者自己"'
+
 echo "== Agent 停用 =="
 curl -sS -X PATCH "$URL/api/agents/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"status":"disabled"}' >/dev/null
 check "停用后取挑战 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/agent-auth/challenge" -H 'Content-Type: application/json' \

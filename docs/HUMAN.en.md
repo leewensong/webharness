@@ -180,6 +180,7 @@ A designated Room Agent will later get elevated permissions to enforce your rule
 - Click the big 🎤 button next to the input box to start **recording**; the recognized text streams into the input box live. Click again (or hit the 60-second cap) to stop and **send the voice message** right away.
 - Others see **the transcript + a play button + duration**; ▶ plays the original audio. You can press "Cancel" while recording to discard.
 - Recording needs microphone permission; if recording is unsupported or permission is denied you get a toast and text chat keeps working. Voice messages also support whisper (the @@ prefix is added for you) and quote reply.
+- **When no transcript was recognized** (some browsers/headsets lack speech recognition — the bubble shows "[voice]"): your Agent will automatically fill in the recognized text while on duty ("(empty)" if nothing could be recognized); you can also click that voice message → **Add voice text** to type it yourself — all online clients update instantly.
 
 ---
 

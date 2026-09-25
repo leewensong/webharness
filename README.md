@@ -136,6 +136,7 @@ flowchart LR
 - **语音消息（v2.5）**：输入框旁的大 🎤 按钮改为**录音发送**——点一下开始录音（同时浏览器 ASR 把识别文字实时显示在输入框），再点一下结束并发送；音频与识别文本一起上传（`POST /api/rooms/{name}/voice`，≤10MB，音频类型白名单）。渲染端显示**识别文字 + ▶ 播放按钮 + 时长**；60 秒上限自动发送，录音期间可取消（`<1s` 视为误触丢弃）。识别文本按当前私聊模式自动拼接 `@@` 前缀。建议最新版 Chrome / Edge / Safari；微信内置浏览器不支持录音，会提示改用默认浏览器。
 - **语音朗读（v2.0）**：每条文本消息旁有 🔊 按钮（再点一次停止）；chat-top 可开关「自动朗读」（自动朗读**他人**的新消息，Agent 流式回复结束后朗读一次，单条超过 400 字只读前 400 字）。
 - **语音设置**：chat-top「🎙 语音设置」——自动朗读开关、发音人（默认自动选中文发音人）、语速（0.5–2.0）、识别/朗读语言；设置保存在本机 `localStorage`。「识别完自动发送」在 v2.5 语义为：语音消息**说完即发**（识别自然结束时自动停止并发送）。
+- **语音文本补写（v2.21）**：发送端浏览器没有语音识别（终端浏览器、头显等）时，语音消息文字为空，各端显示「[语音]」占位。`PATCH /api/rooms/{room}/voice/{id}/text` 让**语音作者本人或其名下 Agent** 补写识别文本——Agent（本地 ASR 转写）在值班时检查最新 3 条，为主人的空文本语音补文字，确实识别不出写「（空）」；人类作者也可点自己语音消息的菜单「补写语音文字」手动输入。已有正文不可覆盖（409，占位「（空）」除外），补写不改变消息可见性（拒绝 `@@`/`#` 前缀）；文本更新会经 `streamIds`+`sinceUpdatedAt` 就地推到各端（2D 气泡原地变文字，3D 面板同步）。
 - 朗读与识别在浏览器本地完成（Web Speech API）；录音音频存服务器 `data/uploads`；不支持的浏览器自动降级，文字聊天不受影响。
 
 ## 双语 UI（v2.1）
@@ -211,6 +212,7 @@ sqlite3 data/webharness.db "SELECT id, kind, username, contact, substr(content,1
 | `POST` | `/api/rooms/{roomName}/messages/{id}/stream` | 追加 delta / 替换 / `done` 结束 |
 | `POST` | `/api/rooms/{roomName}/attachments` | 上传附件（≤20MB） |
 | `POST` | `/api/rooms/{roomName}/voice` | 语音消息：multipart `file`（音频 ≤10MB）+ `text?`（识别文本，可带 @@ 前缀）+ `replyTo?` + `durationMs?` |
+| `PATCH` | `/api/rooms/{roomName}/voice/{id}/text` | 补写语音识别文本（作者本人或其名下 Agent；仅空文本或占位「（空）」可写） |
 | `GET` / `POST` | `/api/rooms/{roomName}/files` | 共同文件列表（`sinceRevision`+`wait` 长轮询）/ 新建（JSON 文本类或 multipart） |
 | `GET` / `PUT` / `PATCH` / `DELETE` | `/api/rooms/{roomName}/files/{id}` | 元数据 / 整体替换（`baseUpdatedAt` 乐观锁）/ 改名描述 / 删除 |
 | `GET` | `/api/rooms/{roomName}/files/{id}/content` | 下载内容（`?download=1` 强制 attachment） |
