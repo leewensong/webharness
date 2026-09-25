@@ -169,6 +169,33 @@ export function createAvatarSystem(opts) {
     root.position.y -= box.min.y;
   }
 
+  /* 摘掉已套用的模型（换装/重建时用）：VRM 走 deepDispose，其余按材质遍历释放 */
+  function removeAppliedModel(rec) {
+    if (!rec.appliedModel) return;
+    if (rec.vrm && VRMUtils.deepDispose) {
+      VRMUtils.deepDispose(rec.appliedModel);
+    } else {
+      rec.appliedModel.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const mt of mats) {
+            if (mt.map && mt.map.dispose) mt.map.dispose();
+            mt.dispose();
+          }
+        }
+      });
+    }
+    rec.root.remove(rec.appliedModel);
+    rec.appliedModel = null;
+    rec.vrm = null;
+    rec.arkitMorphs = null;
+    rec.humanoidOn = false;
+    rec.breathBone = rec.armBone = rec.foreArm = null;
+    rec.waveT = null;
+    rec.plate.position.y = CAP_H + 0.32;
+  }
+
   async function loadOne(job) {
     const rec = avatars.get(job.username);
     if (!rec || rec.disposed || rec.modelApplied) return;
@@ -190,6 +217,7 @@ export function createAvatarSystem(opts) {
       }
       const gltf = await gltfLoader.loadAsync(src);
       if (rec.disposed) return;
+      if (rec.modelUrl !== job.url) return; /* 加载期间又换了形象：这份过期，丢弃 */
       const vrm = gltf.userData && gltf.userData.vrm;
       const model = (vrm && vrm.scene) || gltf.scene || (gltf.scenes && gltf.scenes[0]);
       if (!model) throw new Error("empty scene");
@@ -202,6 +230,7 @@ export function createAvatarSystem(opts) {
         rec.capMesh = null;
       }
       rec.root.add(model);
+      rec.appliedModel = model;
       rec.modelApplied = true;
       rec.plate.position.y = AVATAR_H + 0.32;
       /* 能力捕获（需求 4.3/4.4）：VRM 表情管理器 + Humanoid 待机动画骨骼；
@@ -300,6 +329,7 @@ export function createAvatarSystem(opts) {
         const root = new THREE.Group();
         rec = {
           root, plate: null, capMesh: null, baseY: 0, disposed: false, modelApplied: false,
+          modelUrl: u.model3dUrl || null, appliedModel: null,
           isOwner: !!u.isRoomOwner, humanoidFlag: !!u.model3dHumanoid, arkitFlag: !!u.model3dArkit,
           vrm: null, arkitMorphs: null, humanoidOn: false, breathBone: null, armBone: null,
           foreArm: null, waveT: null,
@@ -329,6 +359,14 @@ export function createAvatarSystem(opts) {
         rec.humanoidOn = !!(rec.vrm && rec.vrm.humanoid && rec.humanoidFlag);
       }
       rec.arkitFlag = !!u.model3dArkit;
+      /* 形象文件中途变更（需求 4.1 增量同步）：摘掉旧模型并重新排队加载，
+         不在场的重进 3D 才会重建，这里保证在场的也能即时换装 */
+      if (rec.modelUrl !== (u.model3dUrl || null)) {
+        rec.modelUrl = u.model3dUrl || null;
+        removeAppliedModel(rec);
+        rec.modelApplied = false;
+        if (rec.modelUrl) { queue.push({ username: u.username, url: rec.modelUrl }); pump(); }
+      }
     }
     for (const [name, rec] of Array.from(avatars)) {
       if (!seen.has(name)) { disposeRec(rec); avatars.delete(name); }
