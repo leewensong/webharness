@@ -1569,6 +1569,32 @@ export async function createXR(ctx) {
     else if (drag.kind === "xrfile-panel" && (drag.moved || 0) < LOG_DRAG_MIN) handlePick(rayFromStored(drag));
   }
 
+  /* ---------- 右摇杆吸附转身（每次 45°）----------
+     边缘触发：摇杆推过死区时转一步，回中（带 0.10 迟滞）后才能再转一步——不再是按住
+     连续转。转身用 ~180ms 缓出补间，避免瞬跳眩晕；方向与旧的连续旋转一致（推右＝向右转）。 */
+  const SNAP_TURN = Math.PI / 4;     /* 每次 45° */
+  const SNAP_TURN_SEC = 0.18;        /* 补间时长（秒） */
+  let snapArmed = true;              /* 已回中，可触发下一次 */
+  let snapFrom = 0, snapTo = 0, snapT = 1;
+
+  function xrSnapTurn(ax) {
+    if (Math.abs(ax) > 0.15) {
+      if (!snapArmed) return;
+      snapArmed = false;
+      snapFrom = rig.rotation.y;
+      snapTo = rig.rotation.y - Math.sign(ax) * SNAP_TURN;
+      snapT = 0;
+    } else if (Math.abs(ax) < 0.1) {
+      snapArmed = true;
+    }
+  }
+  function stepSnapTurn(dt) {
+    if (snapT >= 1) return;
+    snapT = Math.min(1, snapT + dt / SNAP_TURN_SEC);
+    const e = 1 - Math.pow(1 - snapT, 3); /* ease-out cubic */
+    rig.rotation.y = snapFrom + (snapTo - snapFrom) * e;
+  }
+
   /* 移动/旋转（手柄摇杆，xr-standard：axes[2]=X axes[3]=Y，死区 0.15） */
   function updateXRInput(dt) {
     const session = renderer.xr.getSession();
@@ -1581,7 +1607,7 @@ export async function createXR(ctx) {
       /* 调整共同文件模型时摇杆被文件系统接管（左手柄平移 / 右手柄旋转缩放） */
       try { if (files.xrJoystick(src.handedness, ax, ay, dt)) continue; } catch (err) {}
       if (src.handedness === "right") {
-        if (Math.abs(ax) > 0.15) rig.rotation.y -= ax * dt * 2.4; /* 旋转动作 */
+        xrSnapTurn(ax); /* 左右 = 每次 45° 吸附转身（边缘触发，不是连续旋转） */
         /* 右摇杆 Y = 翻历史：**只在射线指着记录/滚行条时生效**，避免与全局摇杆动作
            （如传送）冲突；推上 = 看更早，与桌面 ←/↑ 同向 */
         if (Math.abs(ay) > 0.15 && xrPointingAtLog()) scrollBy(-ay * dt * 2.2);
@@ -1660,7 +1686,8 @@ export async function createXR(ctx) {
        沉浸式下 setAnimationLoop 由 XR 帧驱动（同一路径，任务 10）。 */
     const dt = Math.min(0.05, (tNow - lastT) / 1000 || 0.016);
     lastT = tNow;
-    updateXRInput(dt);  /* 手柄摇杆平移/转向/翻历史（无会话 no-op） */
+    updateXRInput(dt);  /* 手柄摇杆平移/转身/翻历史（无会话 no-op） */
+    stepSnapTurn(dt);   /* 吸附转身的补间推进（松杆后也要走完） */
     if (xrDrag) dragMove(xrDrag, xrRayFrom(xrDrag.c)); /* 按住拖动记录/滚行条：跟手滚动 */
     refreshSbActive();  /* 指着记录/滚行条时拇指高亮（手柄射线每帧移动） */
     updateControls(dt);
@@ -1748,6 +1775,9 @@ export async function createXR(ctx) {
     presenceSend: () => presenceSend(),
     presencePoll: () => presencePoll(),
     presenceLeave: () => presenceLeave(),
+    /* 吸附转身（无头显时验证用：手动喂摇杆 X 值，同一套边缘触发逻辑） */
+    snapTurn: (ax) => { xrSnapTurn(ax); return { armed: snapArmed, t: +snapT.toFixed(2), yaw: +rig.rotation.y.toFixed(3) }; },
+    snapState: () => ({ armed: snapArmed, t: +snapT.toFixed(2), yaw: +rig.rotation.y.toFixed(3), deg: +(rig.rotation.y * 180 / Math.PI).toFixed(1) }),
     nativeGroup: () => native.group,
     avatarGroup: () => avatars.group,
     avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */
