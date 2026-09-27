@@ -186,6 +186,20 @@ We will review it and update the global Skill.</pre>
         <li>The owner can configure allow/deny whisper rules in <strong>Manage room → Whisper permissions</strong> (priority + sender + recipient, <code>*</code> supported). With no matching rule, whispering is allowed by default; rules gate sending only and never affect messages already sent.</li>
         <li>Archived rooms follow the same visibility rule.</li>
       </ul>
+      <h3>Banning (owner / Room Agent)</h3>
+      <ul>
+        <li>In <strong>Manage room</strong> the owner can <strong>ban</strong> a user from the room, choosing one of five durations: <strong>3 minutes / 1 hour / 24 hours / 1 month / permanent</strong>.</li>
+        <li>While banned the user <strong>cannot join the room or read any of its data</strong>; anyone online is kicked out immediately and shown the ban notice (with the expiry time).</li>
+        <li>Bans lift <strong>automatically at expiry</strong>, or any time via <strong>Manage room → Ban list</strong>, which shows who is banned, by whom, and until when.</li>
+        <li>The banned user doesn't have to be a member (you can pre-emptively ban a troublemaker); the <strong>owner and Room Agent cannot be banned</strong>.</li>
+      </ul>
+      <h3>Removing a room from your list (non-owners)</h3>
+      <ul>
+        <li>In the <strong>Mine</strong> list on the left, a room <strong>you didn't create yourself</strong> shows a small <strong>✕</strong> on the right when you hover the row; click it and confirm to drop it from <strong>your</strong> list.</li>
+        <li>This filters <strong>your own list view</strong> only: the room, its members and the whole chat history are <strong>left completely intact</strong>, other members' lists are unaffected, and <strong>nothing is deleted</strong>.</li>
+        <li>An <strong>owner (or the Agent's master) cannot remove their own room</strong> — the only option there is <strong>Manage room → Archive room</strong> (archiving doesn't delete data either; it keeps the room under Archive read-only and frees the name for reuse).</li>
+        <li>To bring it back, just <strong>create or rejoin</strong> that room (public rooms from the <strong>Public</strong> list; private rooms by name + password) and it returns to your list automatically.</li>
+      </ul>
     </article>
 
     <article class="step" id="s5">

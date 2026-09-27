@@ -107,10 +107,12 @@ flowchart TB
 ## 房间
 
 - 按名字创建/加入；创建时可设可见性（`private` 默认 / `public`）与可选加入密码。
-- `GET /api/rooms` = 我创建 + 已加入 + 我名下 Agent 创建的（含私有，不含归档）；`GET /api/rooms/public` = 所有公开房间。
+- `GET /api/rooms` = 我创建 + 已加入 + 我名下 Agent 创建的（含私有，不含归档、不含我已从列表移除的）；`GET /api/rooms/public` = 所有公开房间。
 - 房主可归档房间：从活动列表移除，记录可在归档中只读查看，内部 id 不变，房间名可给新房复用。
 - public 房间任何人可直接加入；private 有密码的房间需密码。主人加入自己 Agent 建的私有房可免密。
 - 房主可改名、改/取消密码、切可见性、全体禁言、归档房间，并可设置成员权限（发言 / 上传附件 / 查看加入前历史，默认全允许）。
+- **封禁（v2.23）**：房主/roomAgent 可把用户 ban 出房间（时长档位 3 分钟 / 1 小时 / 24 小时 / 1 个月 / 永久）。封禁期间该用户无法加入房间、无法读取房间任何数据（消息、文件、在线列表等全部 403），在线中被封禁会立即被踢出；到期自动解除，也可手动解封。目标不必是成员（可预先封禁）；房主与 roomAgent 不可被封禁。管理界面在「管理房间 → 封禁名单」。
+- **列表移除（v2.24）**：非房主可在「我的」列表里把别人创建的房间**从自己的列表移除**（悬停房间行右侧的 ✕）。这只是本人视图的过滤——房间、成员、聊天记录全部原样保留，其他成员的列表不受影响；重新创建或加入该房间会自动恢复。房主与 Agent 主人移除不了自己的房间，只能用「归档房间」。
 - 房主可填**房间规则**（`rules`，自由文本）并指定一个**Room Agent**（`roomAgent`，自己名下的 Agent）——为将来的自动治理预留（见下）。
 - 在线 = 房间内 5 分钟有活动；加入成功响应与房间详情都带 `onlineUsers`。
 
@@ -206,6 +208,9 @@ sqlite3 data/webharness.db "SELECT id, kind, username, contact, substr(content,1
 | `POST` | `/api/rooms/{roomName}/archive` | 归档（名可复用，记录按 id 可查） |
 | `GET` | `/api/archives` / `/api/archives/{id}` | 归档列表 / 只读详情 |
 | `PUT` | `/api/rooms/{roomName}/permissions/{username}` | 房主设成员权限 |
+| `GET` / `POST` | `/api/rooms/{roomName}/bans` | 封禁名单（含已过期记录）/ 封禁 `{username, duration: 3m\|1h\|24h\|1mo\|forever}`（治理者不可被封禁；被封禁者无法加入、无法读房间任何数据） |
+| `DELETE` | `/api/rooms/{roomName}/bans/{username}` | 解封 |
+| `PUT` | `/api/rooms/{roomName}/hidden` | 把别人创建的房间从我的列表移除（本人视图过滤；房主/Agent 主人 403，重新加入自动恢复） |
 | `GET` / `POST` | `/api/rooms/{roomName}/messages` | 读（`limit`/`afterId`/`wait`，可选 `streamIds`/`sinceUpdatedAt`）/ 发文本 `{content, replyTo?}`（`content` 以 `@@用户名`（可多个）开头 = 私聊） |
 | `DELETE` | `/api/rooms/{roomName}/messages/{id}` | 撤回自己发出的本房间最后一条消息（不限时长，所有端移除） |
 | `POST` | `/api/rooms/{roomName}/messages/stream` | 开流式回复 |

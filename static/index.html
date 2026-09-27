@@ -96,6 +96,15 @@
       line-height: 1; flex-shrink: 0;
     }
     .count { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+    /* v2.24 房间列表管理：悬停时右侧出现「从我的列表移除」✕ */
+    .room-meta { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .room-remove {
+      display: none; align-items: center; justify-content: center;
+      width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+      color: var(--muted); font-size: 12px; line-height: 1;
+    }
+    .room:hover .room-remove { display: inline-flex; }
+    .room-remove:hover { background: rgba(255, 120, 120, .18); color: #ff8a8a; }
     .join-box { padding: 12px; border-top: 1px solid var(--line); }
     .join-box input, .join-box select { margin: 0 0 8px; }
     .person { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; }
@@ -737,6 +746,9 @@
     <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="roomAgentHint">选中的 Agent 未来可按上面的规则执行房间治理。</p>
     <h3 style="margin:8px 0 4px;font-size:14px" data-i18n="memberPerms">成员权限</h3>
     <div id="membersBox" class="hint" data-i18n="loading">加载中…</div>
+    <h3 style="margin:12px 0 4px;font-size:14px" data-i18n="bansTitle">封禁名单</h3>
+    <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="bansHint">被封禁的用户无法进入房间、无法读取房间任何数据；到期自动解封，也可手动解封。房主与 Room Agent 不会被封禁。</p>
+    <div id="bansBox" class="hint" data-i18n="loading">加载中…</div>
     <h3 style="margin:12px 0 4px;font-size:14px" data-i18n="whisperRulesTitle">私聊权限</h3>
     <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="whisperRulesHint">规则按优先级从高到低生效，同优先级「禁止」优先；没有规则命中时默认允许（即允许所有人互相私聊）。发送者/接受者填用户名或 *（所有人）。规则只限制发送，不影响已发出的消息。</p>
     <div id="whisperRulesBox" class="hint" data-i18n="loading">加载中…</div>
@@ -1120,8 +1132,17 @@
         membersReadOnly: "仅房主可改成员权限；你可以归档该房间。", noMembers: "暂无成员",
         memberCol: "成员", speakCol: "发言", attachCol: "附件", historyCol: "历史",
         kindAgent: "Agent", kindHuman: "人类", permUpdated: "已更新 {{name}} 的权限",
+        banBtn: "封禁", banUnban: "解封", banPick: "选择封禁时长",
+        ban3m: "3 分钟", ban1h: "1 小时", ban24h: "24 小时", ban1mo: "1 个月", banForever: "永久",
+        banActive: "封禁中", banExpired: "已过期", banUntil: "至", banBy: "由 {{name}}",
+        bansTitle: "封禁名单", bansEmpty: "暂无封禁记录",
+        bansHint: "被封禁的用户无法进入房间、无法读取房间任何数据；到期自动解封，也可手动解封。房主与 Room Agent 不会被封禁。",
+        bannedDone: "已封禁 {{name}}", unbannedDone: "已解封 {{name}}",
         archiveConfirm: "确定归档这个房间？它会从列表中消失，聊天记录可在「归档」里查看，房间名可以再给新房间用。",
         archivedInList: "房间已归档，可在左侧「归档」中查看记录",
+        removeFromList: "从我的列表移除",
+        removeRoomConfirm: "从「我的」列表移除「{{name}}」？房间本身和聊天记录都还在，重新加入即可恢复。",
+        removedFromList: "已从你的列表移除，重新加入该房间即可恢复",
         noAgents: "还没有 Agent", agentActive: "启用中", agentDisabled: "已停用",
         rename: "改名", rekey: "换公钥", disable: "停用", enable: "启用", del: "删除",
         pasteKey: "请粘贴公钥", keyUpdated: "公钥已更新", fillAgentName: "请填写 Agent 用户名",
@@ -1359,8 +1380,17 @@
         membersReadOnly: "Only the owner can change permissions; you can archive this room.", noMembers: "No members",
         memberCol: "Member", speakCol: "Speak", attachCol: "Files", historyCol: "History",
         kindAgent: "Agent", kindHuman: "Human", permUpdated: "Permissions updated for {{name}}",
+        banBtn: "Ban", banUnban: "Unban", banPick: "Choose a ban duration",
+        ban3m: "3 minutes", ban1h: "1 hour", ban24h: "24 hours", ban1mo: "1 month", banForever: "Permanent",
+        banActive: "Banned", banExpired: "Expired", banUntil: "until", banBy: "by {{name}}",
+        bansTitle: "Ban list", bansEmpty: "No bans",
+        bansHint: "Banned users cannot enter the room or read any of its data; bans expire on their own and can also be lifted manually. The owner and Room Agent cannot be banned.",
+        bannedDone: "Banned {{name}}", unbannedDone: "Unbanned {{name}}",
         archiveConfirm: "Archive this room? It will disappear from the list (history stays under Archive) and the name can be reused.",
         archivedInList: "Room archived — view history under Archive on the left",
+        removeFromList: "Remove from my list",
+        removeRoomConfirm: "Remove “{{name}}” from your list? The room and its history stay intact — rejoin to restore it.",
+        removedFromList: "Removed from your list — rejoin the room to restore it",
         noAgents: "No Agents yet", agentActive: "Active", agentDisabled: "Disabled",
         rename: "Rename", rekey: "Rekey", disable: "Disable", enable: "Enable", del: "Delete",
         pasteKey: "Please paste the public key", keyUpdated: "Public key updated", fillAgentName: "Please enter an Agent username",
@@ -1583,6 +1613,11 @@
         [/^(.+) 不是你名下的 Agent$/, "$1 is not one of your Agents"],
         [/只能撤回自己发送的消息/, "You can only recall your own messages"],
         [/后面已有新消息，只能撤回本房间最后一条消息/, "A newer message exists — only the room's last message can be recalled"],
+        [/你已被本房间封禁（永久）/, "You are banned from this room (permanent)"],
+        [/你已被本房间封禁，至 ([^（]+)（UTC）/, "You are banned from this room until $1 (UTC)"],
+        [/房主与房间管理 Agent 不可被封禁/, "The room owner and room agent cannot be banned"],
+        [/该用户未被封禁/, "That user is not banned"],
+        [/用户不存在/, "User does not exist"],
         [/引用的消息不存在/, "The quoted message does not exist"],
         [/引用的消息已撤回，不能引用/, "The quoted message was recalled"],
         [/引用的消息对你不可见/, "The quoted message is not visible to you"],
@@ -2273,10 +2308,14 @@
         const badge = unread
           ? `<span class="unread" aria-label="${tf("unreadAria", { n: unread })}">${unread}</span>`
           : "";
+        // v2.24：只有「我的」列表里别人创建的房间可移除（房主/Agent 主人只能归档）。
+        const remove = (store.tab === "mine" && !room.canArchive)
+          ? `<span class="room-remove" title="${escapeHtml(t("removeFromList"))}" aria-label="${escapeHtml(t("removeFromList"))}">✕</span>`
+          : "";
         return `
         <button class="room ${active ? "active" : ""}" data-name="${escapeHtml(room.roomName)}" data-id="${room.roomId}">
           <span class="room-name"><span class="room-title">${roomBadges(room)}# ${escapeHtml(room.roomName)}${extra}</span>${badge}</span>
-          <span class="count">${count}</span>
+          <span class="room-meta"><span class="count">${count}</span>${remove}</span>
         </button>`;
       }).join("");
       if (box.dataset.sig === html) return;
@@ -2287,7 +2326,21 @@
           if (store.tab === "archive") openArchive(Number(btn.dataset.id));
           else openRoom(btn.dataset.name);
         });
+        const rm = btn.querySelector(".room-remove");
+        if (rm) rm.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          removeRoomFromList(btn.dataset.name);
+        });
       });
+    }
+
+    async function removeRoomFromList(roomName) {
+      if (!confirm(tf("removeRoomConfirm", { name: roomName }))) return;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(roomName)}/hidden`, { method: "PUT" });
+        if (store.roomName === roomName && !store.viewingArchive) leaveEndedRoom(t("removedFromList"));
+        else await refreshRooms();
+      } catch (err) { setHint(err.message); }
     }
 
     function startRoomsPoll() {
@@ -2810,6 +2863,11 @@
       } catch (err) {
         if (err.name === "AbortError" || signal.aborted) return;
         if (err.status === 410 || err.status === 404) { leaveEndedRoom(err.message || t("roomArchived")); return; }
+        /* v2.23：被封禁时被服务端逐出房间——立即退出房间视图并显示封禁信息 */
+        if (err.status === 403 && /你已被本房间封禁|banned from this room/.test(err.message)) {
+          leaveEndedRoom(err.message);
+          return;
+        }
         if (err.status !== 401) setHint(err.message);
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
@@ -3677,12 +3735,17 @@
       $("settings").showModal();
       if (!store.isOwner) {
         $("membersBox").textContent = t("membersReadOnly");
+        $("bansBox").textContent = t("membersReadOnly");
         return;
       }
       try {
         const data = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/members`);
         renderMembers(data.members);
       } catch (err) { $("membersBox").textContent = err.message; }
+      try {
+        const bans = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/bans`);
+        renderBans(bans.bans);
+      } catch (err) { $("bansBox").textContent = err.message; }
       try {
         const rules = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/whisper-rules`);
         renderWhisperRules(rules.rules);
@@ -3755,12 +3818,25 @@
       } catch (err) { setSettingsStatus(err.message); }
     }
 
+    function memberBanCell(m) {
+      /* 治理者（房主/roomAgent）不可被封禁；已封禁显示到期与解封，未封禁给时长菜单 */
+      if (m.isOwner || m.isRoomAgent) return "";
+      if (m.banned) {
+        const until = m.banExpiresAt
+          ? `${t("banUntil")} ${m.banExpiresAt.slice(0, 16)} UTC`
+          : t("banForever");
+        return `<span class="badge">${t("banActive")}</span> <span class="hint">${escapeHtml(until)}</span>
+          <button class="btn ghost small" data-unban="${escapeHtml(m.username)}">${t("banUnban")}</button>`;
+      }
+      return `<button class="btn ghost small" data-ban="${escapeHtml(m.username)}">${t("banBtn")}</button>`;
+    }
+
     function renderMembers(members) {
       const box = $("membersBox");
       if (!members.length) { box.textContent = t("noMembers"); return; }
       box.innerHTML = `
         <table class="perm-table">
-          <tr><th>${t("memberCol")}</th><th>${t("speakCol")}</th><th>${t("attachCol")}</th><th>${t("filesCol")}</th><th>${t("historyCol")}</th><th></th></tr>
+          <tr><th>${t("memberCol")}</th><th>${t("speakCol")}</th><th>${t("attachCol")}</th><th>${t("filesCol")}</th><th>${t("historyCol")}</th><th></th><th></th></tr>
           ${members.map((m) => `
             <tr data-name="${escapeHtml(m.username)}">
               <td><span class="who-cell"><img class="avatar" data-src="${escapeHtml(m.avatarUrl || "")}" alt="" />${escapeHtml(m.username)} ${m.online ? "🟢" : ""} <span class="badge">${m.kind === "agent" ? t("kindAgent") : t("kindHuman")}</span></span></td>
@@ -3769,12 +3845,87 @@
               <td><input type="checkbox" data-p="canEditFiles" ${m.canEditFiles !== false ? "checked" : ""} /></td>
               <td><input type="checkbox" data-p="canViewHistory" ${m.canViewHistory ? "checked" : ""} /></td>
               <td><button class="btn ghost small" data-save="${escapeHtml(m.username)}">${t("save")}</button></td>
+              <td>${memberBanCell(m)}</td>
             </tr>`).join("")}
         </table>`;
       box.querySelectorAll("[data-save]").forEach((btn) => {
         btn.addEventListener("click", () => savePermissions(btn.dataset.save));
       });
+      box.querySelectorAll("[data-unban]").forEach((btn) => {
+        btn.addEventListener("click", () => unbanMember(btn.dataset.unban));
+      });
+      box.querySelectorAll("[data-ban]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const rect = btn.getBoundingClientRect();
+          const durations = [
+            ["3m", "ban3m"], ["1h", "ban1h"], ["24h", "ban24h"],
+            ["1mo", "ban1mo"], ["forever", "banForever"],
+          ];
+          showPopMenu(
+            durations.map(([dur, key]) => ({
+              label: t(key),
+              action: () => banMember(btn.dataset.ban, dur),
+            })),
+            rect.left,
+            rect.bottom,
+          );
+        });
+      });
       hydrateImages(box);
+    }
+
+    // ---------- 房间封禁（v2.23）----------
+
+    async function banMember(username, duration) {
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/bans`, {
+          method: "POST", body: JSON.stringify({ username, duration }),
+        });
+        setSettingsStatus(tf("bannedDone", { name: username }));
+        await refreshMembersAndBans();
+      } catch (err) { setSettingsStatus(err.message); }
+    }
+
+    async function unbanMember(username) {
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/bans/${encodeURIComponent(username)}`, { method: "DELETE" });
+        setSettingsStatus(tf("unbannedDone", { name: username }));
+        await refreshMembersAndBans();
+      } catch (err) { setSettingsStatus(err.message); }
+    }
+
+    async function refreshMembersAndBans() {
+      try {
+        const data = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/members`);
+        renderMembers(data.members);
+      } catch (err) { $("membersBox").textContent = err.message; }
+      try {
+        const data = await api(`/api/rooms/${encodeURIComponent(store.roomName)}/bans`);
+        renderBans(data.bans);
+      } catch (err) { $("bansBox").textContent = err.message; }
+    }
+
+    function renderBans(bans) {
+      const box = $("bansBox");
+      if (!bans.length) { box.textContent = t("bansEmpty"); return; }
+      box.innerHTML = `
+        <table class="perm-table">
+          <tr><th>${t("memberCol")}</th><th></th></tr>
+          ${bans.map((b) => `
+            <tr>
+              <td>${escapeHtml(b.username)} <span class="badge">${b.kind === "agent" ? t("kindAgent") : t("kindHuman")}</span>
+                <span class="hint">${escapeHtml(tf("banBy", { name: b.bannedBy }))}</span></td>
+              <td>${b.active
+                ? `<span class="badge">${t("banActive")}</span> <span class="hint">${b.expiresAt
+                    ? escapeHtml(`${t("banUntil")} ${b.expiresAt.slice(0, 16)} UTC`)
+                    : escapeHtml(t("banForever"))}</span>
+                   <button class="btn ghost small" data-unban2="${escapeHtml(b.username)}">${t("banUnban")}</button>`
+                : `<span class="hint">${t("banExpired")}</span>`}</td>
+            </tr>`).join("")}
+        </table>`;
+      box.querySelectorAll("[data-unban2]").forEach((btn) => {
+        btn.addEventListener("click", () => unbanMember(btn.dataset.unban2));
+      });
     }
 
     async function savePermissions(username) {

@@ -225,6 +225,52 @@ check "全体禁言下普通人 403" "$(curl -sS -o /dev/null -w '%{http_code}' 
 check "全体禁言下私聊也 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "{\"content\":\"@@$HUMAN 悄悄话\"}")" "403"
 check "全体禁言下 roomAgent 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"content":"主持"}')" "200"
 curl -sS -X PATCH "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"muted":false}' >/dev/null
+
+echo "== 房间封禁（v2.23） =="
+# 注意：这些 check 的命令替换位于函数参数上下文，内部不要用 \" 转义——
+# body 一律经 python json.dumps 单引号构造，解析 python 也用单引号脚本。
+ban_body() { python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"duration":sys.argv[2]}))' "$1" "$2"; }
+check "普通人封禁 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "$(ban_body "$OTHER" 1h)")" "403"
+check "非法时长 422" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(ban_body "$OTHER" 99y)")" "422"
+check "封不存在用户 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(ban_body nobody-ban 1h)")" "404"
+check "roomAgent 封禁成员" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(ban_body "$OTHER" 3m)" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["username"], d["duration"], d["expiresAt"] is not None)')" "$OTHER 3m True"
+check "被封禁者读消息 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages?limit=5" -H "Authorization: Bearer $OTOK")" "403"
+check "被封禁文案" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/messages?limit=5" -H "Authorization: Bearer $OTOK")" "你已被本房间封禁"
+check "被封禁者读房间详情 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $OTOK")" "403"
+check "被封禁者重新加入 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1]}))' "$GOV_ROOM")")" "403"
+check "封禁不挡在线列表" "$(curl -sS "$URL/api/rooms/$GOV_ROOM" -H "Authorization: Bearer $ATOK" | python3 -c 'import sys,json;print(sys.argv[1] in [u["username"] for u in json.load(sys.stdin)["onlineUsers"]])' "$OTHER")" "False"
+check "封禁房主 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(ban_body "$HUMAN" 1h)")" "403"
+check "封禁 roomAgent 自己 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d "$(ban_body "$AGENT" 1h)")" "403"
+check "重复封禁覆盖时长" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(ban_body "$OTHER" forever)" | python3 -c 'import sys,json;print(json.load(sys.stdin)["expiresAt"])')" "None"
+check "封禁名单含 active 永久行" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/bans" -H "Authorization: Bearer $ATOK" | python3 -c 'import sys,json;b=json.load(sys.stdin)["bans"][0];print(b["username"], b["active"], b["expiresAt"], b["bannedBy"])' )" "$OTHER True None $AGENT"
+check "普通人看封禁名单 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans" -H "Authorization: Bearer $OTOK")" "403"
+check "解封" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans/$OTHER" -X DELETE -H "Authorization: Bearer $ATOK")" "200"
+check "解封后加入 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1]}))' "$GOV_ROOM")")" "200"
+check "解封后读消息 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages?limit=5" -H "Authorization: Bearer $OTOK")" "200"
+check "解封未封禁者 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans/$OTHER" -X DELETE -H "Authorization: Bearer $ATOK")" "404"
+EXTRA="e2e-extra-$SUF"
+python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":"pass123"}))' "$EXTRA" > "$TMP/extra.json"
+curl -sS "$URL/api/users" -H 'Content-Type: application/json' -d @"$TMP/extra.json" >/dev/null
+ETOK=$(curl -sS "$URL/api/login" -H 'Content-Type: application/json' -d @"$TMP/extra.json" | J "['token']")
+check "预先封禁未入房者" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(ban_body "$EXTRA" 24h)")" "200"
+check "被预封者加入 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -H "Authorization: Bearer $ETOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1]}))' "$GOV_ROOM")")" "403"
+check "解封预封者" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans/$EXTRA" -X DELETE -H "Authorization: Bearer $ATOK")" "200"
+check "预封者解封后加入 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -H "Authorization: Bearer $ETOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1]}))' "$GOV_ROOM")")" "200"
+
+echo "== 从我的列表移除房间（v2.24） =="
+HIDE_ROOM="e2e-hide-$SUF"
+python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"visibility":"public"}))' "$HIDE_ROOM" > "$TMP/hide_room.json"
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d @"$TMP/hide_room.json" >/dev/null
+check "房主移除自己房间 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$HIDE_ROOM/hidden" -X PUT -H "Authorization: Bearer $HTOK")" "403"
+check "非成员移除 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$HIDE_ROOM/hidden" -X PUT -H "Authorization: Bearer $OTOK")" "403"
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d @"$TMP/hide_room.json" >/dev/null
+check "加入后我的列表含该房" "$(curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK")" "$HIDE_ROOM"
+check "移除返回 hidden:true" "$(curl -sS "$URL/api/rooms/$HIDE_ROOM/hidden" -X PUT -H "Authorization: Bearer $OTOK")" '"hidden":true'
+check "移除后我的列表不含该房" "$(curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK" | python3 -c "import sys,json;print('$HIDE_ROOM' in [r['roomName'] for r in json.load(sys.stdin)['rooms']])")" "False"
+check "移除后房主列表不受影响" "$(curl -sS "$URL/api/rooms" -H "Authorization: Bearer $HTOK")" "$HIDE_ROOM"
+check "移除后房间与记录仍在（非删除）" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$HIDE_ROOM/messages?limit=1" -H "Authorization: Bearer $OTOK")" "200"
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d @"$TMP/hide_room.json" >/dev/null
+check "重新加入自动恢复" "$(curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK")" "$HIDE_ROOM"
 check "roomAgent 加 deny */*" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/whisper-rules" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d '{"listType":"deny","priority":0,"sender":"*","receiver":"*"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['listType'])")" "deny"
 curl -sS "$URL/api/rooms/$GOV_ROOM/whisper-rules" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \

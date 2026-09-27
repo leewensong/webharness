@@ -44,6 +44,16 @@ MAX_RULES_CHARS = 32000
 MAX_LONG_POLL_SECONDS = 30
 MAX_VOICE_BYTES = 10 * 1024 * 1024
 MAX_STREAM_IDS = 60
+# ---------- 房间封禁（v2.23）----------
+# 管理员（房主/roomAgent）可把用户 ban 出房间；封禁期间无法加入、无法读取任何
+# 房间数据。值为 SQLite datetime 修饰符，None = 永久；重复封禁覆盖时长。
+BAN_DURATION_MODIFIERS: dict[str, str | None] = {
+    "3m": "+3 minutes",
+    "1h": "+1 hours",
+    "24h": "+24 hours",
+    "1mo": "+1 month",
+    "forever": None,
+}
 # ---------- 共同文件（room_files）----------
 # 文本类（markdown/text/svg）与二进制两档大小上限；文本类可走 JSON 直写，二进制必须 multipart
 MAX_FILE_TEXT_BYTES = 2 * 1024 * 1024
@@ -232,8 +242,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.22.0",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单，并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。",
+    version="2.24.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。",
     lifespan=lifespan,
 )
 
@@ -332,6 +342,12 @@ class PermissionUpdate(BaseModel):
     canUpload: bool | None = None
     canViewHistory: bool | None = None
     canEditFiles: bool | None = None
+
+
+class BanCreate(BaseModel):
+    """封禁用户：时长只能从固定档位里选（服务端白名单，杜绝任意时长）。"""
+    username: str = Field(min_length=1, max_length=32)
+    duration: Literal["3m", "1h", "24h", "1mo", "forever"]
 
 
 class FileCreate(BaseModel):
@@ -762,6 +778,12 @@ def _online_users(conn, room) -> list[dict]:
         FROM room_members m
         JOIN users u ON u.id = m.user_id
         WHERE m.room_id = ? AND m.last_seen_at > datetime('now', ?)
+          -- 被封禁者立即从在线列表消失，不等 last_seen_at 自然过期
+          AND NOT EXISTS (
+              SELECT 1 FROM room_bans b
+              WHERE b.room_id = m.room_id AND b.user_id = m.user_id
+                AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+          )
         ORDER BY m.last_seen_at DESC
         """,
         (room["id"], ONLINE_WINDOW),
@@ -788,8 +810,29 @@ def _require_active_room(conn, room_name: str):
     return room
 
 
+def _reject_if_banned(conn, room, user_id: int) -> None:
+    """有效封禁（未到期或永久）期间：无法加入房间、无法读取任何房间数据。
+    过期行保留在封禁名单里作记录，但不再拦截。放在 _require_membership 与
+    入房流程的最前面，优先于「尚未加入」「需要密码」等提示。"""
+    row = conn.execute(
+        """
+        SELECT expires_at FROM room_bans
+        WHERE room_id = ? AND user_id = ?
+        """,
+        (room["id"], user_id),
+    ).fetchone()
+    if not row:
+        return
+    if row["expires_at"] is not None and row["expires_at"] <= _db_now(conn):
+        return
+    if row["expires_at"] is None:
+        raise HTTPException(status_code=403, detail="你已被本房间封禁（永久）")
+    raise HTTPException(status_code=403, detail=f"你已被本房间封禁，至 {row['expires_at']}（UTC）")
+
+
 def _require_membership(conn, room_name: str, user_id: int):
     room = _require_active_room(conn, room_name)
+    _reject_if_banned(conn, room, user_id)
     member = _member(conn, room["id"], user_id)
     if not member:
         raise HTTPException(status_code=403, detail="尚未加入该房间")
@@ -1703,6 +1746,9 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
         created = False
         if room and _is_ended(room):
             raise HTTPException(status_code=410, detail="房间已结束")
+        if room:
+            # 封禁检查在密码检查之前：被 ban 的用户不该看到「需要房间密码」
+            _reject_if_banned(conn, room, user["id"])
         if not room:
             visibility = body.visibility or "private"
             room_agent_id = _resolve_room_agent(conn, user, body.roomAgent)
@@ -1765,6 +1811,11 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
             )
         else:
             _touch(conn, room["id"], user["id"])
+        # 主动创建/加入 = 明确想看到这个房间，撤销之前的「从我的列表移除」（v2.24）
+        conn.execute(
+            "DELETE FROM room_hidden WHERE room_id = ? AND user_id = ?",
+            (room["id"], user["id"]),
+        )
         online = _online_users(conn, room)
         data = {**_room_dict(room, user["id"], online), "created": created, "joined": True}
         _attach_template_fields(conn, room, data)
@@ -1777,10 +1828,35 @@ def list_my_rooms(user: CurrentUser):
         rows = conn.execute(
             ROOM_LIST_SQL
             + " WHERE r.ended_at IS NULL AND r.archived_at IS NULL AND (r.created_by = ? OR m.user_id IS NOT NULL OR u.owner_id = ?)"
+            + " AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.room_id = r.id AND h.user_id = ?)"
             + " ORDER BY r.created_at DESC",
-            (ONLINE_WINDOW, user["id"], user["id"], user["id"]),
+            (ONLINE_WINDOW, user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
     return {"rooms": [_room_list_dict(row, user["id"]) for row in rows]}
+
+
+@app.put("/api/rooms/{room_name}/hidden")
+def hide_room_from_list(room_name: str, user: CurrentUser):
+    """把别人创建的房间从「我的」列表里移除（本人视图过滤，房间与记录原样保留）。
+
+    房主与 Agent 主人无权移除——他们只能「归档房间」；非成员本就看不到该房，
+    这里也一并拒绝，避免留下无意义的隐藏行。重新加入房间会自动恢复。
+    """
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        if _can_archive(user, room):
+            raise HTTPException(status_code=403, detail="房主不能移除自己的房间，请改用「归档房间」")
+        if not _member(conn, room["id"], user["id"]):
+            raise HTTPException(status_code=403, detail="只有房间成员可以把该房间从自己的列表移除")
+        conn.execute(
+            """
+            INSERT INTO room_hidden (room_id, user_id, hidden_at)
+            VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
+            ON CONFLICT (room_id, user_id) DO UPDATE SET hidden_at = excluded.hidden_at
+            """,
+            (room["id"], user["id"]),
+        )
+    return {"hidden": True, "roomName": room["name"]}
 
 
 @app.get("/api/rooms/public")
@@ -2109,6 +2185,9 @@ def _member_dict(row, online_cutoff: str = ONLINE_WINDOW) -> dict:
         "canEditFiles": bool(row["can_edit_files"]),
         "online": bool(row["online"]),
         "avatarUrl": _avatar_url(row["username"], _row_get(row, "avatarV")),
+        # v2.23 封禁状态（仅 /members 查询带出；缺列时按未封禁处理）
+        "banned": bool(_row_get(row, "banned", 0)),
+        "banExpiresAt": _row_get(row, "ban_expires"),
     }
 
 
@@ -2120,15 +2199,26 @@ def list_members(room_name: str, user: CurrentUser):
         rows = conn.execute(
             """
             SELECT m.*, u.username, u.kind, u.avatar_updated_at AS avatarV,
-                   CASE WHEN m.last_seen_at > datetime('now', ?) THEN 1 ELSE 0 END AS online
+                   CASE WHEN m.last_seen_at > datetime('now', ?) THEN 1 ELSE 0 END AS online,
+                   CASE WHEN b.id IS NOT NULL AND (b.expires_at IS NULL
+                        OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                       THEN 1 ELSE 0 END AS banned,
+                   b.expires_at AS ban_expires
             FROM room_members m
             JOIN users u ON u.id = m.user_id
+            LEFT JOIN room_bans b ON b.room_id = m.room_id AND b.user_id = m.user_id
             WHERE m.room_id = ?
             ORDER BY m.joined_at ASC
             """,
             (ONLINE_WINDOW, room["id"]),
         ).fetchall()
-    return {"roomName": room["name"], "members": [_member_dict(row) for row in rows]}
+        members = []
+        for row in rows:
+            item = _member_dict(row)
+            item["isOwner"] = row["user_id"] == room["created_by"]
+            item["isRoomAgent"] = row["user_id"] == room["room_agent_id"]
+            members.append(item)
+    return {"roomName": room["name"], "members": members}
 
 
 @app.put("/api/rooms/{room_name}/permissions/{username}")
@@ -2175,6 +2265,103 @@ def set_permissions(room_name: str, username: str, body: PermissionUpdate, user:
         "canViewHistory": bool(member["can_view_history"]),
         "canEditFiles": bool(member["can_edit_files"]),
     }
+
+
+# ---------- 房间封禁（v2.23）：管理员把用户 ban 出房间 ----------
+
+@app.get("/api/rooms/{room_name}/bans")
+def list_bans(room_name: str, user: CurrentUser):
+    """封禁名单（含已过期的记录行，标 active=false），仅房主/roomAgent 可见。"""
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        _require_owner(room, user["id"])
+        now = _db_now(conn)
+        rows = conn.execute(
+            """
+            SELECT b.expires_at, b.created_at, u.username, u.kind,
+                   ban_by.username AS banned_by_name
+            FROM room_bans b
+            JOIN users u ON u.id = b.user_id
+            JOIN users ban_by ON ban_by.id = b.banned_by
+            WHERE b.room_id = ?
+            ORDER BY b.created_at DESC
+            """,
+            (room["id"],),
+        ).fetchall()
+    return {
+        "roomName": room["name"],
+        "bans": [
+            {
+                "username": row["username"],
+                "kind": row["kind"],
+                "bannedBy": row["banned_by_name"],
+                "bannedAt": row["created_at"],
+                "expiresAt": row["expires_at"],
+                "active": row["expires_at"] is None or row["expires_at"] > now,
+            }
+            for row in rows
+        ],
+    }
+
+
+@app.post("/api/rooms/{room_name}/bans")
+def ban_member(room_name: str, body: BanCreate, user: CurrentUser):
+    """封禁用户：封禁期间无法加入房间、无法读取任何房间数据（消息/文件/在线
+    列表等全部 403），被封禁时在线的长轮询立即被唤醒踢出。重复封禁覆盖时长。
+    目标不必是成员（可预先 ban 掉捣乱者），但房主与 roomAgent 不可被封禁。"""
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        _require_owner(room, user["id"])
+        target = _get_user(conn, body.username)
+        if not target:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        if target["id"] == room["created_by"] or target["id"] == room["room_agent_id"]:
+            raise HTTPException(status_code=403, detail="房主与房间管理 Agent 不可被封禁")
+        modifier = BAN_DURATION_MODIFIERS[body.duration]
+        expires = (
+            None
+            if modifier is None
+            else conn.execute(
+                "SELECT strftime('%Y-%m-%d %H:%M:%f', 'now', ?) AS t", (modifier,)
+            ).fetchone()["t"]
+        )
+        conn.execute(
+            """
+            INSERT INTO room_bans (room_id, user_id, banned_by, expires_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (room_id, user_id) DO UPDATE SET
+                banned_by = excluded.banned_by,
+                created_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),
+                expires_at = excluded.expires_at
+            """,
+            (room["id"], target["id"], user["id"], expires),
+        )
+        room_id = room["id"]
+    notify_room(room_id)
+    return {
+        "roomName": room["name"],
+        "username": target["username"],
+        "duration": body.duration,
+        "expiresAt": expires,
+    }
+
+
+@app.delete("/api/rooms/{room_name}/bans/{username}")
+def unban_member(room_name: str, username: str, user: CurrentUser):
+    """解除封禁（删除封禁行，含已过期的记录行）。"""
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name)
+        _require_owner(room, user["id"])
+        target = _get_user(conn, username)
+        if not target:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        cur = conn.execute(
+            "DELETE FROM room_bans WHERE room_id = ? AND user_id = ?",
+            (room["id"], target["id"]),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="该用户未被封禁")
+    return {"roomName": room["name"], "username": target["username"], "unbanned": True}
 
 
 # ---------- 私聊权限（白名单 / 黑名单，仅房主管理） ----------
@@ -3814,6 +4001,12 @@ def presence_snapshot(room_name: str, user: CurrentUser):
             JOIN users u ON u.id = p.user_id
             JOIN room_members m ON m.room_id = p.room_id AND m.user_id = p.user_id
             WHERE p.room_id = ? AND m.last_seen_at > datetime('now', ?)
+              -- 被封禁者立即从 3D 在场快照消失（与在线列表同一过滤）
+              AND NOT EXISTS (
+                  SELECT 1 FROM room_bans b
+                  WHERE b.room_id = p.room_id AND b.user_id = p.user_id
+                    AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+              )
             ORDER BY u.username
             """,
             (room["id"], ONLINE_WINDOW),
@@ -3854,6 +4047,12 @@ def presence_delta(room_name: str, user: CurrentUser, since: str | None = Query(
                 FROM room_presence_log l
                 JOIN users u ON u.id = l.user_id
                 WHERE l.room_id = ? AND l.created_at > ?
+                  -- 被封禁者的增量事件也不下发（否则 XR 端会凭事件重建其化身）
+                  AND NOT EXISTS (
+                      SELECT 1 FROM room_bans b
+                      WHERE b.room_id = l.room_id AND b.user_id = l.user_id
+                        AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                  )
                 ORDER BY l.id ASC
                 LIMIT ?
                 """,

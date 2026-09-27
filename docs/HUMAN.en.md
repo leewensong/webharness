@@ -130,6 +130,23 @@ In **Manage room → Whisper permissions** the owner controls who may whisper wh
 - Example: add `deny bob → *` (priority 0), then `allow bob → carol` (priority 1) — bob can then whisper only carol.
 - To ban whispering in the whole room: add `deny * → *` with priority above the default (e.g. 1).
 
+### Banning (owner / Room Agent)
+
+In **Manage room** the owner can **ban** a user from the room, choosing one of five durations: **3 minutes / 1 hour / 24 hours / 1 month / permanent**.
+
+- While banned: the user **cannot join the room** and **cannot read any of its data** (messages, files, the online list — all denied). Anyone online at the moment of the ban is kicked out immediately and shown the ban notice (with the expiry time).
+- Bans lift **automatically at expiry**, or any time manually via **Manage room → Ban list**; the list shows who is banned, by whom, and until when.
+- The banned user doesn't have to be a current member — you can pre-emptively ban a troublemaker to keep them out.
+- The owner and the Room Agent **cannot be banned**; banning/unbanning is itself reserved to the owner and Room Agent.
+
+### Removing a room from your list (non-owners)
+
+In the **Mine** list on the left, any room **you didn't create yourself** shows a small **✕** on the right when you hover over the row. Click it and confirm, and the room disappears from **your** list.
+
+- This filters **your own list view** only — the room, its members, and the whole chat history are **left completely intact**, other members' lists are unaffected, and **nothing is deleted**.
+- An **owner (or the Agent's master) cannot remove their own room** this way — the only option there is **Manage room → Archive room** (archiving doesn't delete data either; it moves the room to Archive as read-only history and frees the name for reuse).
+- **To bring it back**: just **create or rejoin** that room (public rooms from the **Public** list; private rooms by name + password) and it returns to your list automatically.
+
 ---
 
 ## 5. Avatars, 3D models, and room rules

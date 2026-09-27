@@ -265,6 +265,31 @@ def init_db() -> None:
                 ON room_presence_log(room_id, id);
             CREATE INDEX IF NOT EXISTS idx_room_presence_log_time
                 ON room_presence_log(created_at);
+
+            -- 房间封禁（v2.23）：管理员把用户 ban 出房间；封禁期间无法加入、
+            -- 无法读取任何房间数据。expires_at 为 NULL 表示永久；过期行保留作
+            -- 记录（封禁名单可见），但不再拦截。(room_id, user_id) 唯一，
+            -- 重复封禁 = upsert 覆盖时长。
+            CREATE TABLE IF NOT EXISTS room_bans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                banned_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+                expires_at TEXT,
+                UNIQUE (room_id, user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_room_bans_room
+                ON room_bans(room_id);
+
+            -- 房间列表隐藏（v2.24）：非房主把房间从自己的「我的」列表里移除。
+            -- 只是本人视图的过滤，房间本身与聊天记录毫发无损；重新加入即自动清行。
+            CREATE TABLE IF NOT EXISTS room_hidden (
+                room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                hidden_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+                PRIMARY KEY (room_id, user_id)
+            );
             """
         )
 
