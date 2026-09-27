@@ -126,7 +126,10 @@
     .avatar-pick { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
     .avatar-pick-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
     /* 内置缺省 3D 形象的缩略图卡片（我的资料 / Agent / 注册三处共用） */
-    .av-model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; margin: 4px 0 10px; }
+    /* 内置缺省 3D 形象的缩略图卡片（我的资料 / Agent / 注册三处共用）。
+       100 个形象必须限高滚动，否则弹窗会被撑得极长。 */
+    .av-model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px;
+      margin: 4px 0 10px; max-height: 232px; overflow-y: auto; padding-right: 2px; }
     .av-model-card { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px;
       background: var(--panel, #1b2230); border: 1px solid var(--border, #2b3446); border-radius: 10px;
       cursor: pointer; color: var(--text, #e6ecf5); font-size: 11px; line-height: 1.2; }
@@ -649,6 +652,7 @@
       <input type="checkbox" id="regHumanoid" style="width:auto;margin:0" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
     </label>
     <label data-i18n="model3dBuiltinLabel">或选一个内置形象（可选）</label>
+    <input id="regModelSearch" oninput="filterAvatarModels('regModelGrid')" data-i18n-placeholder="avatarSearchPlaceholder" placeholder="搜索形象…" />
     <div class="av-model-grid" id="regModelGrid"></div>
     <p class="msg-status" id="regStatus"></p>
     <div class="dialog-actions">
@@ -670,6 +674,7 @@
     </div>
     <label data-i18n="myModelLabel">3D 形象</label>
     <p class="hint" id="myModelState" style="white-space:normal;margin:0 0 6px"></p>
+    <input id="myModelSearch" oninput="filterAvatarModels('myModelGrid')" data-i18n-placeholder="avatarSearchPlaceholder" placeholder="搜索形象…" />
     <div class="av-model-grid" id="myModelGrid"></div>
     <p class="hint" style="white-space:normal;margin:0 0 6px" data-i18n="myModelOwnHint">也可以用自己的模型：选文件或填外链地址；上传后即替换上面的内置选择。</p>
     <div class="avatar-pick">
@@ -798,6 +803,7 @@
     <input type="file" id="aeAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onAeAvatarPick(event)" />
     <label data-i18n="agentModelLabel">3D 形象（可选）</label>
     <p class="hint" id="aeModelState" style="white-space:normal;margin:0 0 6px"></p>
+    <input id="aeModelSearch" oninput="filterAvatarModels('aeModelGrid')" data-i18n-placeholder="avatarSearchPlaceholder" placeholder="搜索形象…" />
     <div class="av-model-grid" id="aeModelGrid"></div>
     <div class="avatar-pick">
       <div id="aeModelPh" class="file-ph">未选择</div>
@@ -1080,6 +1086,8 @@
         model3dBuiltinLabel: "或选一个内置形象（可选）",
         model3dStateBuiltin: "内置形象：{{name}}",
         avatarModelPicked: "已选用「{{name}}」",
+        avatarSearchPlaceholder: "搜索形象（中文名 / 原名）…",
+        avatarNoMatch: "没有匹配的形象",
         myProfileTitle: "我的资料",
         myModelLabel: "3D 形象",
         myModelOwnHint: "也可以用自己的模型：选文件或填外链地址；上传后会替换掉上面的内置选择。",
@@ -1317,6 +1325,8 @@
         model3dBuiltinLabel: "Or pick a built-in avatar (optional)",
         model3dStateBuiltin: "Built-in avatar: {{name}}",
         avatarModelPicked: "Now using “{{name}}”",
+        avatarSearchPlaceholder: "Search avatars (name)…",
+        avatarNoMatch: "No matching avatar",
         myProfileTitle: "My profile",
         myModelLabel: "3D avatar",
         myModelOwnHint: "You can also use your own model: pick a file or paste a URL; uploading replaces the built-in choice above.",
@@ -1950,13 +1960,21 @@
     }
 
     /* 渲染卡片；onPick(id) 由调用方决定怎么落地（人类直接 PUT / Agent 待创建 / 注册暂存） */
-    async function renderAvatarModelPicker(boxId, currentUrl, onPick) {
+    /* 内置形象最多 100 个：卡片区限高滚动，并在上方给一个搜索框过滤（见 filterAvatarModels） */
+    const avatarPickerState = {};   // boxId → { currentUrl, onPick, searchId }
+
+    async function renderAvatarModelPicker(boxId, currentUrl, onPick, searchId) {
+      avatarPickerState[boxId] = { currentUrl, onPick, searchId };
       const box = $(boxId);
       if (!box) return;
       const list = await loadAvatarModels();
+      const query = (searchId && $(searchId) ? $(searchId).value : "").trim().toLowerCase();
       const picked = builtinAvatarIdOf(currentUrl);
       box.innerHTML = "";
+      let shown = 0;
       for (const a of list) {
+        if (query && !`${a.name} ${a.nameEn} ${a.id}`.toLowerCase().includes(query)) continue;
+        shown++;
         const card = document.createElement("button");
         card.type = "button";
         card.className = "av-model-card" + (a.id === picked ? " on" : "");
@@ -1972,6 +1990,18 @@
         card.addEventListener("click", () => onPick(a.id));
         box.appendChild(card);
       }
+      if (!shown) {
+        const none = document.createElement("span");
+        none.className = "hint";
+        none.textContent = t("avatarNoMatch");
+        box.appendChild(none);
+      }
+    }
+
+    /* 搜索框 oninput 调这个：用上次的参数按新关键字重渲染 */
+    function filterAvatarModels(boxId) {
+      const st = avatarPickerState[boxId];
+      if (st) renderAvatarModelPicker(boxId, st.currentUrl, st.onPick, st.searchId);
     }
 
     function markAvatarModelPicked(boxId, currentUrl) {
@@ -2013,7 +2043,7 @@
         $("myHumanoid").checked = !!data.model3dHumanoid;
         $("myModelUrl").value = /^https?:/i.test(url) ? url : "";
       }
-      await renderAvatarModelPicker("myModelGrid", url, pickMyBuiltin);
+      await renderAvatarModelPicker("myModelGrid", url, pickMyBuiltin, "myModelSearch");
       $("myModelState").textContent = tf("model3dCurrentFmt", { v: describeModel3d(url) });
       const img = $("myAvatarImg");
       const ph = $("myAvatarPh");
@@ -2109,7 +2139,7 @@
         regBuiltinId = id;
         markAvatarModelPicked("regModelGrid", BUILTIN_AVATAR_PREFIX + id);
         setRegStatus("");
-      });
+      }, "regModelSearch");
       setRegStatus("");
       $("register").showModal();
       setTimeout(() => ($("regUsername").value ? $("regPassword").focus() : $("regUsername").focus()), 0);
@@ -4301,7 +4331,7 @@
       $("aeHumanoid").checked = ae.loaded.humanoid;
       const curModelUrl = target ? (target.model3dUrl || "") : "";
       $("aeModelState").textContent = target ? tf("model3dCurrentFmt", { v: describeModel3d(curModelUrl) }) : "";
-      await renderAvatarModelPicker("aeModelGrid", curModelUrl, onAeBuiltinPick);
+      await renderAvatarModelPicker("aeModelGrid", curModelUrl, onAeBuiltinPick, "aeModelSearch");
       $("aeToggleBtn").classList.toggle("hidden", !target);
       $("aeToggleBtn").textContent = target && target.status === "active" ? t("disable") : t("enable");
       $("aeDeleteBtn").classList.toggle("hidden", !target);

@@ -114,31 +114,81 @@ BUILTIN_ROOM_SCENES: tuple[dict[str, Any], ...] = (
 BUILTIN_SCENE_IDS = {scene["id"] for scene in BUILTIN_ROOM_SCENES}
 
 # 内置缺省 3D 形象：账号可选的默认形象，替代「纯色胶囊」。素材是 Open Source Avatars
-# 注册表 100Avatars R1 合集的 **CC0** 模型（可自由分发、无需署名），来源与许可证见
-# static/avatars/CREDITS.md。**这里的 id 集合是权威**：账号用 `builtin:<id>` 引用
-# （存进既有的 model3d_url 列），渲染端按约定把它映射成 `/static/avatars/<id>.vrm`，
-# 遇到不认识的 id 回退胶囊、绝不影响 2D。file/thumbnail 给 2D 选择器用。
-BUILTIN_AVATARS: tuple[dict[str, Any], ...] = (
-    {"id": "robert", "name": "罗伯特", "nameEn": "Robert",
-     "description": "便装男子", "descriptionEn": "Casual guy"},
-    {"id": "erika", "name": "艾莉卡", "nameEn": "Erika",
-     "description": "浅蓝女子", "descriptionEn": "Woman in light blue"},
-    {"id": "david", "name": "大卫", "nameEn": "David",
-     "description": "牛仔裤青年", "descriptionEn": "Young man in jeans"},
-    {"id": "astronaut", "name": "宇航员", "nameEn": "Astronaut",
-     "description": "全套宇航服", "descriptionEn": "Full spacesuit"},
-    {"id": "polybot", "name": "小机器人", "nameEn": "Polybot",
-     "description": "低多边形机器人", "descriptionEn": "Low-poly robot"},
-    {"id": "ghost", "name": "幽灵", "nameEn": "Ghost",
-     "description": "白色小幽灵", "descriptionEn": "Little white ghost"},
+# 注册表 **100Avatars R1 合集的全部 100 个 CC0 模型**（可自由分发、无需署名），来源与
+# 许可证见 static/avatars/CREDITS.md。**这里的 id 集合是权威**：账号用 `builtin:<id>`
+# 引用（存进既有的 model3d_url 列），渲染端按约定映射成 `/static/avatars/<id>.vrm`；
+# 遇到不认识的 id 回退胶囊，绝不影响 2D。file/thumbnail 给 2D 选择器用。
+#
+# (id, 显示名, 官方原名)：id 即 static/avatars/<id>.vrm 的文件名（取自注册表 slug）。
+# 中文名只在能自然对应时给，语感特殊/玩梗的一律保留官方原名（显示名与原名相同）。
+_BUILTIN_AVATAR_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("devil", "恶魔", "Devil"), ("polydancer", "波浪舞者", "Polydancer"),
+    ("rose", "罗丝", "Rose"), ("robert", "罗伯特", "Robert"),
+    ("bloody", "血面", "Bloody"), ("rabbit", "兔子", "Rabbit"),
+    ("eggplant", "茄子", "Eggplant"), ("bullidan", "布利丹", "Bullidan"),
+    ("mikel", "米克尔", "Mikel"), ("coolbanana", "酷香蕉", "CoolBanana"),
+    ("skull", "骷髅", "Skull"), ("observer", "观察者", "Observer"),
+    ("nightmare", "梦魇", "Nightmare"), ("amazonas", "亚马逊", "Amazonas"),
+    ("cookieman", "饼干人", "Cookieman"), ("dinokid", "小恐龙", "DinoKid"),
+    ("chad", "查德", "Chad"), ("clown", "小丑", "Clown"),
+    ("chill", "凉仔", "Chill"), ("olivia", "奥莉薇亚", "Olivia"),
+    ("sticker", "贴纸", "Sticker"), ("zombie", "僵尸", "Zombie"),
+    ("astrodisco", "迪斯科宇航", "Astrodisco"), ("udom", "乌多姆", "Udom"),
+    ("fungus", "蘑菇精", "Fungus"), ("coolchoco", "酷巧克力", "CoolChoco"),
+    ("polybot", "小机器人", "Polybot"), ("ferk", "叉子", "Ferk"),
+    ("erika", "艾莉卡", "Erika"), ("mummy", "木乃伊", "Mummy"),
+    ("carrot", "胡萝卜", "Carrot"), ("lydia", "莉迪亚", "Lydia"),
+    ("retroman", "复古人", "Retroman"), ("snowy", "雪人", "Snowy"),
+    ("coffee", "咖啡杯", "Coffee"), ("ro", "罗", "Ro"),
+    ("samuela", "萨缪拉", "Samuela"), ("anchor", "主播", "Anchor"),
+    ("teddy", "泰迪", "Teddy"), ("saintclaus", "圣诞老人", "SaintClaus"),
+    ("milk", "牛奶盒", "Milk"), ("cucumber", "黄瓜", "Cucumber"),
+    ("astronaut", "宇航员", "Astronaut"), ("oldmoustache", "大胡子", "OldMoustache"),
+    ("expol", "埃克斯波", "Expol"), ("ghost", "幽灵", "Ghost"),
+    ("witch", "女巫", "Witch"), ("mafiossini", "黑手党", "Mafiossini"),
+    ("watermelon", "西瓜", "Watermelon"), ("kate", "凯特", "Kate"),
+    ("coolalien", "酷外星人", "CoolAlien"), ("chilli", "小辣椒", "Chilli"),
+    ("toiletpaper", "卷纸", "ToiletPaper"), ("goodtomato", "好番茄", "GoodTomato"),
+    ("xmastree", "圣诞树", "XmasTree"), ("wizzir", "巫师", "Wizzir"),
+    ("skelly", "骨头人", "Skelly"), ("hotdog", "热狗", "Hotdog"),
+    ("eyelids", "眼睑怪", "Eyelids"), ("froggy", "青蛙", "Froggy"),
+    ("baldman", "光头佬", "Baldman"), ("dracula", "德古拉", "Dracula"),
+    ("shiro", "小白", "Shiro"), ("pipe", "烟斗", "Pipe"),
+    ("alwayswatching", "一直在看", "AlwaysWatching"), ("wolfman", "狼人", "Wolfman"),
+    ("angry", "气鼓鼓", "Angry"), ("jennifer", "珍妮弗", "Jennifer"),
+    ("muscary", "肌肉怪", "Muscary"), ("captainlobster", "龙虾船长", "CaptainLobster"),
+    ("icecream", "冰淇淋", "IceCream"), ("cappy", "帽子客", "Cappy"),
+    ("disturbingeyes", "惊悚之眼", "DisturbingEyes"), ("aesthetica", "美学君", "Aesthetica"),
+    ("lilbro", "小兄弟", "LilBro"), ("present", "礼物盒", "Present"),
+    ("jimmy", "吉米", "Jimmy"), ("kyle", "凯尔", "Kyle"),
+    ("pepo", "佩波", "Pepo"), ("hugo", "雨果", "Hugo"),
+    ("butter", "黄油块", "Butter"), ("horrornurse", "恐怖护士", "HorrorNurse"),
+    ("scarecrow", "稻草人", "Scarecrow"), ("mushy", "蘑菇君", "Mushy"),
+    ("bacondude", "培根哥", "Bacondude"), ("bigbro", "大兄弟", "BigBro"),
+    ("avocado", "牛油果", "Avocado"), ("cactusboy", "仙人掌小子", "CactusBoy"),
+    ("david", "大卫", "David"), ("candycane", "拐杖糖", "CandyCane"),
+    ("franky", "弗兰奇", "Franky"), ("wirefriend", "电线朋友", "WireFriend"),
+    ("crimsom", "克霖森", "Crimsom"), ("confirmed", "确认君", "Confirmed"),
+    ("wambo", "万博", "Wambo"), ("toothpaste", "牙膏", "Toothpaste"),
+    ("weirdflexbutok", "奇怪炫耀", "WeirdFlexButOk"), ("cubiq", "立方体", "Cubiq"),
+    ("mint", "薄荷", "Mint"), ("pumpkin", "南瓜", "Pumpkin"),
 )
-for _avatar in BUILTIN_AVATARS:
-    # 6 个模型实测均为 VRM0，含 6 个表情预设与人形骨骼（polybot 为 31 根，其余 52 根）
-    _avatar["file"] = f"/static/avatars/{_avatar['id']}.vrm"
-    _avatar["thumbnail"] = f"/static/avatars/{_avatar['id']}.webp"
-    _avatar["arkit"] = True
-    _avatar["humanoid"] = True
-    _avatar["source"] = "100Avatars R1 (CC0)"
+BUILTIN_AVATARS: tuple[dict[str, Any], ...] = tuple(
+    {
+        "id": _id,
+        "name": _zh,
+        "nameEn": _en,
+        "description": _en,          # 卡片 tooltip 显示官方原名
+        "descriptionEn": _en,
+        "file": f"/static/avatars/{_id}.vrm",
+        "thumbnail": f"/static/avatars/{_id}.webp",
+        # 100 个实测均为 VRM0，含 6 个表情预设与人形骨骼 → 表情与骨骼动画都可用
+        "arkit": True,
+        "humanoid": True,
+        "source": "100Avatars R1 (CC0)",
+    }
+    for _id, _zh, _en in _BUILTIN_AVATAR_SPECS
+)
 BUILTIN_AVATAR_BY_ID = {avatar["id"]: avatar for avatar in BUILTIN_AVATARS}
 # 账号 model3d_url 里内置形象引用的前缀：`builtin:<id>`
 BUILTIN_AVATAR_PREFIX = "builtin:"
@@ -182,8 +232,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.21.1",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单，并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13）：`GET /api/avatar-models` 列出内置形象（6 个 CC0 VRM，含缩略图与表情/骨骼能力位）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源与许可证见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。",
+    version="2.22.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单，并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。",
     lifespan=lifespan,
 )
 

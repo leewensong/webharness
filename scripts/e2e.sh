@@ -473,7 +473,12 @@ check "外人读归档文件 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$U
 
 echo "== 内置缺省 3D 形象 =="
 check "内置形象目录含 robert" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK")" '"id":"robert"'
-check "内置形象 6 个" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["avatars"]))')" "6"
+check "内置形象共 100 个" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["avatars"]))')" "100"
+check "内置形象目录含新增项 fungus" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK")" '"id":"fungus"'
+check "内置形象目录含末位 pumpkin" "$(curl -sS "$URL/api/avatar-models" -H "Authorization: Bearer $HTOK")" '"id":"pumpkin"'
+check "新增形象的静态 VRM 可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/fungus.vrm")" "200"
+check "新增形象的缩略图可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/pumpkin.webp")" "200"
+check "选用新增的内置形象" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"builtin:fungus"}')" '"model3dUrl":"builtin:fungus"'
 check "未登录拿形象目录 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/avatar-models")" "401"
 check "内置静态 VRM 可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/astronaut.vrm")" "200"
 check "内置缩略图可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/astronaut.webp")" "200"
