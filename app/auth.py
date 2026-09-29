@@ -64,11 +64,12 @@ def _b64decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + padding)
 
 
-def create_token(user_id: int, username: str, kind: str = "human") -> str:
+def create_token(user_id: int, username: str, kind: str = "human", token_epoch: int = 0) -> str:
     payload = {
         "uid": user_id,
         "username": username,
         "kind": kind,
+        "epoch": int(token_epoch),
         "exp": int(time.time()) + TOKEN_TTL_SECONDS,
     }
     body = _b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
@@ -96,6 +97,7 @@ def parse_token(token: str) -> dict | None:
         "id": int(payload["uid"]),
         "username": str(payload["username"]),
         "kind": payload.get("kind", "human"),
+        "epoch": int(payload.get("epoch", 0)),
     }
 
 

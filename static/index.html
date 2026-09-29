@@ -61,9 +61,32 @@
     .btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .auth-actions { display: flex; gap: 8px; margin-top: 4px; }
     .msg-status { min-height: 20px; font-size: 13px; color: var(--danger); margin: 8px 0 0; }
+    .msg-status.ok { color: var(--accent); }
     .suggest-link { text-align: center; margin-top: 16px; font-size: 12px; color: var(--muted); }
     .suggest-link a { color: var(--muted); text-decoration: none; opacity: 0.7; }
     .suggest-link a:hover { opacity: 1; color: var(--text); }
+
+    /* v2.25：手机/邮箱验证码（登录页签、注册联系方式、账号设置） */
+    .auth-tabs { display: flex; gap: 6px; margin: 0 0 16px; }
+    .auth-tab {
+      flex: 1; border: 1px solid var(--line); background: transparent; color: var(--muted);
+      padding: 8px 10px; border-radius: 10px; font-size: 13px; cursor: pointer;
+    }
+    .auth-tab.active { background: #243044; color: var(--text); border-color: var(--accent); }
+    .code-row { display: flex; gap: 8px; align-items: flex-start; }
+    .code-row input { flex: 1; min-width: 0; }
+    .code-row .btn { white-space: nowrap; margin-bottom: 12px; }
+    .forgot-link { text-align: right; margin: 0 0 4px; font-size: 12px; }
+    .forgot-link a { color: var(--muted); text-decoration: none; }
+    .forgot-link a:hover { color: var(--text); }
+    .contact-block { border: 1px solid var(--line); border-radius: 12px; padding: 12px 12px 0; margin-bottom: 16px; }
+    .acct-block { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+    .acct-block h3 { margin: 0 0 10px; font-size: 14px; }
+    .acct-block h4 { margin: 14px 0 8px; font-size: 13px; color: var(--muted); font-weight: 500; }
+    .acct-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .acct-row .acct-name { font-size: 13px; color: var(--muted); min-width: 52px; }
+    .acct-row .acct-val { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .acct-row .btn { margin: 0; }
 
     #app { height: 100%; min-height: 0; overflow: hidden; display: grid; grid-template-columns: 260px 1fr 220px; }
     .sidebar, .presence { background: var(--sidebar); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
@@ -137,6 +160,12 @@
     /* 内置缺省 3D 形象的缩略图卡片（我的资料 / Agent / 注册三处共用） */
     /* 内置缺省 3D 形象的缩略图卡片（我的资料 / Agent / 注册三处共用）。
        100 个形象必须限高滚动，否则弹窗会被撑得极长。 */
+    /* 3D 替身的紧凑入口：父弹窗里只占一行（当前替身名 + 设置按钮），
+       真正的选择/上传在共用的 #avatarDlg 里（见 openAvatarPicker） */
+    .av-row { display: flex; align-items: center; gap: 8px; margin: 4px 0 12px; }
+    .av-row .av-row-label { flex: none; }
+    .av-row .hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
+    .av-row .btn { flex: none; }
     .av-model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px;
       margin: 4px 0 10px; max-height: 232px; overflow-y: auto; padding-right: 2px; }
     .av-model-card { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px;
@@ -530,14 +559,30 @@
     <div class="auth-card">
       <div class="brand"><div class="logo"></div><h1>WebHarness.Chat @FXG</h1></div>
       <p class="sub" data-i18n-html="authSub"></p>
-      <label for="username" data-i18n="usernameLabel">用户名</label>
-      <input id="username" autocomplete="username" placeholder="alice" />
-      <label for="password" data-i18n="passwordLabel">密码</label>
-      <input id="password" type="password" autocomplete="current-password" data-i18n-placeholder="passwordPlaceholder" placeholder="至少 4 位" />
+      <div class="auth-tabs" id="authTabs">
+        <button type="button" class="auth-tab active" id="authTabPwd" onclick="switchAuthTab('pwd')" data-i18n="loginByPassword">密码登录</button>
+        <button type="button" class="auth-tab hidden" id="authTabCode" onclick="switchAuthTab('code')" data-i18n="loginByCode">验证码登录</button>
+      </div>
+      <div id="authPwdForm">
+        <label for="username" data-i18n="usernameLabel">用户名</label>
+        <input id="username" autocomplete="username" placeholder="alice" />
+        <label for="password" data-i18n="passwordLabel">密码</label>
+        <input id="password" type="password" autocomplete="current-password" data-i18n-placeholder="passwordPlaceholder" placeholder="至少 4 位" />
+      </div>
+      <div id="authCodeForm" class="hidden">
+        <label for="loginIdentifier" data-i18n="identifierLabel">手机号或邮箱</label>
+        <input id="loginIdentifier" autocomplete="username" data-i18n-placeholder="identifierPlaceholder" placeholder="13800138000 或 you@example.com" />
+        <label for="loginCode" data-i18n="codeLabel">验证码</label>
+        <div class="code-row">
+          <input id="loginCode" inputmode="numeric" maxlength="8" data-i18n-placeholder="codePlaceholder" placeholder="6 位数字" />
+          <button type="button" class="btn ghost small" id="loginCodeBtn" onclick="sendLoginCode()" data-i18n="getCode">获取验证码</button>
+        </div>
+      </div>
       <div class="auth-actions">
-        <button class="btn full" onclick="login()" data-i18n="login">登录</button>
+        <button class="btn full" id="authSubmit" onclick="submitAuth()" data-i18n="login">登录</button>
         <button class="btn ghost full" onclick="openRegister()" data-i18n="register">创建账号</button>
       </div>
+      <p class="forgot-link hidden" id="forgotLink"><a href="javascript:void(0)" onclick="openReset()" data-i18n="forgotPassword">忘记密码？</a></p>
       <p class="msg-status" id="authStatus"></p>
       <p class="suggest-link"><a href="javascript:void(0)" onclick="openSuggestion()" data-i18n="suggest">建议反馈</a></p>
     </div>
@@ -633,6 +678,22 @@
     <input id="regPassword" type="password" autocomplete="new-password" data-i18n-placeholder="passwordPlaceholder" placeholder="至少 4 位" />
     <label for="regPassword2" data-i18n="confirmPasswordLabel">确认密码</label>
     <input id="regPassword2" type="password" autocomplete="new-password" data-i18n-placeholder="confirmPasswordPlaceholder" placeholder="再输入一遍" />
+    <div id="regContacts" class="hidden">
+      <label data-i18n="contactLabel">手机号或邮箱（任选其一，需验证码验证）</label>
+      <div class="contact-block">
+        <div class="code-row">
+          <input id="regPhone" inputmode="numeric" autocomplete="tel" data-i18n-placeholder="phonePlaceholder" placeholder="11 位手机号" />
+          <button type="button" class="btn ghost small" id="regPhoneBtn" onclick="sendRegCode('phone')" data-i18n="getCode">获取验证码</button>
+        </div>
+        <input id="regPhoneCode" inputmode="numeric" maxlength="8" data-i18n-placeholder="phoneCodePlaceholder" placeholder="手机验证码" />
+        <div class="code-row">
+          <input id="regEmail" type="email" autocomplete="email" data-i18n-placeholder="emailPlaceholder" placeholder="you@example.com" />
+          <button type="button" class="btn ghost small" id="regEmailBtn" onclick="sendRegCode('email')" data-i18n="getCode">获取验证码</button>
+        </div>
+        <input id="regEmailCode" inputmode="numeric" maxlength="8" data-i18n-placeholder="emailCodePlaceholder" placeholder="邮箱验证码" />
+        <p class="hint" id="regCodeHint" style="white-space:normal;margin:0 0 10px"></p>
+      </div>
+    </div>
     <label data-i18n="avatarLabel">头像（创建账号时可选）</label>
     <div class="avatar-pick">
       <img id="regAvatarImg" class="avatar lg hidden" alt="" />
@@ -644,29 +705,57 @@
       </div>
     </div>
     <input type="file" id="regAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onRegAvatarPick(event)" />
-    <label data-i18n="model3dFileLabel">3D 形象文件（可选）</label>
-    <div class="avatar-pick">
-      <div id="regModel3dPh" class="file-ph">未选择</div>
-      <div class="avatar-pick-actions">
-        <button type="button" class="btn ghost small" onclick="document.getElementById('regModel3dFile').click()" data-i18n="filePick">选择文件</button>
-        <button type="button" class="btn ghost small hidden" id="regModel3dClear" onclick="clearRegModel3d()" data-i18n="avatarReset">清除</button>
-        <span class="hint" data-i18n="model3dFileHint">GLB / GLTF，≤20MB；不选则不设 3D 形象</span>
-      </div>
+    <div class="av-row">
+      <span class="av-row-label" data-i18n="model3dFileLabel">3D 形象</span>
+      <span class="hint" id="regModelState"></span>
+      <button type="button" class="btn ghost small" onclick="openRegisterAvatarPicker()" data-i18n="avatarSetBtn">设置</button>
     </div>
-    <input type="file" id="regModel3dFile" class="hidden" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onchange="onRegModel3dPick(event)" />
-    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
-      <input type="checkbox" id="regArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
-      <input type="checkbox" id="regHumanoid" style="width:auto;margin:0" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
-    </label>
-    <label data-i18n="model3dBuiltinLabel">或选一个内置形象（可选）</label>
-    <input id="regModelSearch" oninput="filterAvatarModels('regModelGrid')" data-i18n-placeholder="avatarSearchPlaceholder" placeholder="搜索形象…" />
-    <div class="av-model-grid" id="regModelGrid"></div>
     <p class="msg-status" id="regStatus"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="closeRegister()" data-i18n="cancel">取消</button>
       <button type="button" class="btn" id="regSubmit" onclick="registerUser()" data-i18n="register">创建账号</button>
+    </div>
+  </dialog>
+
+  <dialog id="resetPwd" onkeydown="if (event.key === 'Enter' && event.target.tagName === 'INPUT') { event.preventDefault(); submitReset(); }">
+    <h2 style="margin:0 0 4px;font-size:18px" data-i18n="resetTitle">重置密码</h2>
+    <p class="hint" style="white-space:normal;margin:0 0 14px" data-i18n="resetIntro">用已绑定的手机号或邮箱收验证码，验证通过即可设置新密码；重置后所有设备都需要重新登录。</p>
+    <label for="resetIdentifier" data-i18n="identifierLabel">手机号或邮箱</label>
+    <input id="resetIdentifier" autocomplete="username" data-i18n-placeholder="identifierPlaceholder" placeholder="13800138000 或 you@example.com" />
+    <label for="resetCode" data-i18n="codeLabel">验证码</label>
+    <div class="code-row">
+      <input id="resetCode" inputmode="numeric" maxlength="8" data-i18n-placeholder="codePlaceholder" placeholder="6 位数字" />
+      <button type="button" class="btn ghost small" id="resetCodeBtn" onclick="sendResetCode()" data-i18n="getCode">获取验证码</button>
+    </div>
+    <label for="resetPassword" data-i18n="newPasswordLabel">新密码</label>
+    <input id="resetPassword" type="password" autocomplete="new-password" data-i18n-placeholder="passwordPlaceholder" placeholder="至少 4 位" />
+    <label for="resetPassword2" data-i18n="confirmPasswordLabel">确认新密码</label>
+    <input id="resetPassword2" type="password" autocomplete="new-password" data-i18n-placeholder="confirmPasswordPlaceholder" placeholder="再输入一遍" />
+    <p class="msg-status" id="resetStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="closeReset()" data-i18n="cancel">取消</button>
+      <button type="button" class="btn" id="resetSubmit" onclick="submitReset()" data-i18n="resetSubmit">重置密码</button>
+    </div>
+  </dialog>
+
+  <dialog id="bindContact">
+    <h2 id="bindTitle" style="margin:0 0 4px;font-size:18px" data-i18n="bindTitle">绑定手机号</h2>
+    <p class="hint" id="bindIntro" style="white-space:normal;margin:0 0 14px"></p>
+    <div id="bindTargetWrap">
+      <label for="bindTarget" id="bindTargetLabel" data-i18n="phoneLabel">手机号</label>
+      <div class="code-row">
+        <input id="bindTarget" />
+        <button type="button" class="btn ghost small" id="bindCodeBtn" onclick="sendBindCode()" data-i18n="getCode">获取验证码</button>
+      </div>
+      <label for="bindCode" data-i18n="codeLabel">验证码</label>
+      <input id="bindCode" inputmode="numeric" maxlength="8" data-i18n-placeholder="codePlaceholder" placeholder="6 位数字" />
+    </div>
+    <label for="bindPwd" data-i18n="currentPasswordLabel">当前密码</label>
+    <input id="bindPwd" type="password" autocomplete="current-password" data-i18n-placeholder="currentPasswordPlaceholder" placeholder="输入当前密码以确认身份" />
+    <p class="msg-status" id="bindStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="closeBind()" data-i18n="cancel">取消</button>
+      <button type="button" class="btn" id="bindSubmit" onclick="submitBind()" data-i18n="save">保存</button>
     </div>
   </dialog>
 
@@ -681,32 +770,70 @@
         <span class="hint" data-i18n="avatarHint">JPG/PNG，≤1MB；不选则自动生成</span>
       </div>
     </div>
-    <label data-i18n="myModelLabel">3D 形象</label>
-    <p class="hint" id="myModelState" style="white-space:normal;margin:0 0 6px"></p>
-    <input id="myModelSearch" oninput="filterAvatarModels('myModelGrid')" data-i18n-placeholder="avatarSearchPlaceholder" placeholder="搜索形象…" />
-    <div class="av-model-grid" id="myModelGrid"></div>
-    <p class="hint" style="white-space:normal;margin:0 0 6px" data-i18n="myModelOwnHint">也可以用自己的模型：选文件或填外链地址；上传后即替换上面的内置选择。</p>
-    <div class="avatar-pick">
-      <div id="myModelPh" class="file-ph">未选择</div>
-      <div class="avatar-pick-actions">
-        <button type="button" class="btn ghost small" onclick="document.getElementById('myModelFile').click()" data-i18n="filePick">选择文件</button>
-        <button type="button" class="btn ghost small" onclick="clearMyModel()" data-i18n="avatarReset">清除</button>
-        <span class="hint" data-i18n="model3dFileHint">GLB / GLTF，≤20MB；不选则不设 3D 形象</span>
-      </div>
+    <div class="av-row">
+      <span class="av-row-label" data-i18n="myModelLabel">3D 形象</span>
+      <span class="hint" id="myModelState"></span>
+      <button type="button" class="btn ghost small" onclick="openMyAvatarPicker()" data-i18n="avatarSetBtn">设置</button>
     </div>
-    <input type="file" id="myModelFile" class="hidden" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onchange="onMyModelPick(event)" />
-    <label for="myModelUrl" data-i18n="model3dUrlLabelShort">或外链地址</label>
-    <input id="myModelUrl" placeholder="https://…/avatar.vrm" />
-    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
-      <input type="checkbox" id="myArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
-      <input type="checkbox" id="myHumanoid" style="width:auto;margin:0" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
-    </label>
+    <div class="acct-block" id="acctBlock" style="display:none">
+      <h3 data-i18n="acctTitle">账号设置</h3>
+      <div class="acct-row">
+        <span class="acct-name" data-i18n="phoneLabel">手机号</span>
+        <span class="acct-val" id="acctPhone">—</span>
+        <button type="button" class="btn ghost small" id="acctPhoneBind" onclick="openBind('phone')" data-i18n="bind">绑定</button>
+        <button type="button" class="btn ghost small hidden" id="acctPhoneUnbind" onclick="openUnbind('phone')" data-i18n="unbind">解绑</button>
+      </div>
+      <div class="acct-row">
+        <span class="acct-name" data-i18n="emailLabel">邮箱</span>
+        <span class="acct-val" id="acctEmail">—</span>
+        <button type="button" class="btn ghost small" id="acctEmailBind" onclick="openBind('email')" data-i18n="bind">绑定</button>
+        <button type="button" class="btn ghost small hidden" id="acctEmailUnbind" onclick="openUnbind('email')" data-i18n="unbind">解绑</button>
+      </div>
+      <p class="hint" id="acctHint" style="white-space:normal"></p>
+      <h4 data-i18n="changePwdTitle">修改密码</h4>
+      <input id="acctOldPwd" type="password" autocomplete="current-password" data-i18n-placeholder="currentPasswordPlaceholder" placeholder="输入当前密码以确认身份" />
+      <input id="acctNewPwd" type="password" autocomplete="new-password" data-i18n-placeholder="newPasswordPlaceholder" placeholder="新密码（至少 4 位）" />
+      <input id="acctNewPwd2" type="password" autocomplete="new-password" data-i18n-placeholder="confirmPasswordPlaceholder" placeholder="再输入一遍" />
+      <button type="button" class="btn small" onclick="submitChangePassword()" data-i18n="savePassword">保存新密码</button>
+      <p class="msg-status" id="acctStatus"></p>
+    </div>
     <p class="msg-status" id="myProfileStatus"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="document.getElementById('myProfile').close()" data-i18n="close">关闭</button>
-      <button type="button" class="btn" id="myModelSave" onclick="saveMyModelUrl()" data-i18n="save">保存</button>
+    </div>
+  </dialog>
+
+  <!-- 3D 替身的共用设置弹窗：注册 / 我的资料 / Agent 编辑三处都从这里进，
+       父弹窗只留一行「当前替身 + 设置」。行为按 openAvatarPicker 的 mode 分流：
+       self=即时生效，agent/register=暂存到父弹窗保存时一起写。 -->
+  <dialog id="avatarDlg">
+    <h2 style="margin:0 0 8px;font-size:18px" data-i18n="avatarDlgTitle">设置 3D 替身</h2>
+    <p class="hint" id="avModelState" style="white-space:normal;margin:0 0 8px"></p>
+    <label data-i18n="model3dBuiltinLabel">选一个内置形象</label>
+    <input id="avModelSearch" oninput="filterAvatarModels('avModelGrid')" data-i18n-placeholder="avatarSearchPlaceholder" placeholder="搜索形象…" />
+    <div class="av-model-grid" id="avModelGrid"></div>
+    <p class="hint" style="white-space:normal;margin:0 0 6px" data-i18n="myModelOwnHint">也可以用自己的模型：选文件或填外链地址；上传后即替换上面的内置选择。</p>
+    <div class="avatar-pick">
+      <div id="avModelPh" class="file-ph">未选择</div>
+      <div class="avatar-pick-actions">
+        <button type="button" class="btn ghost small" onclick="document.getElementById('avModelFile').click()" data-i18n="filePick">选择文件</button>
+        <button type="button" class="btn ghost small" id="avModelClear" onclick="avClearOwn()" data-i18n="avatarReset">清除</button>
+        <span class="hint" data-i18n="model3dFileHint">GLB / GLTF，≤20MB；不选则不设 3D 形象</span>
+      </div>
+    </div>
+    <input type="file" id="avModelFile" class="hidden" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onchange="onAvModelPick(event)" />
+    <label for="avModelUrl" data-i18n="model3dUrlLabelShort">或外链地址</label>
+    <input id="avModelUrl" placeholder="https://…/avatar.vrm" />
+    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
+      <input type="checkbox" id="avArkit" style="width:auto;margin:0" onchange="avFlagChanged()" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+      <input type="checkbox" id="avHumanoid" style="width:auto;margin:0" onchange="avFlagChanged()" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
+    </label>
+    <p class="msg-status" id="avStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="closeAvatarPicker()" data-i18n="close">关闭</button>
+      <button type="button" class="btn" id="avSaveBtn" onclick="avSaveOwn()" data-i18n="save">保存</button>
     </div>
   </dialog>
 
@@ -813,27 +940,11 @@
       </div>
     </div>
     <input type="file" id="aeAvatarFile" class="hidden" accept="image/jpeg,image/png" onchange="onAeAvatarPick(event)" />
-    <label data-i18n="agentModelLabel">3D 形象（可选）</label>
-    <p class="hint" id="aeModelState" style="white-space:normal;margin:0 0 6px"></p>
-    <input id="aeModelSearch" oninput="filterAvatarModels('aeModelGrid')" data-i18n-placeholder="avatarSearchPlaceholder" placeholder="搜索形象…" />
-    <div class="av-model-grid" id="aeModelGrid"></div>
-    <div class="avatar-pick">
-      <div id="aeModelPh" class="file-ph">未选择</div>
-      <div class="avatar-pick-actions">
-        <button type="button" class="btn ghost small" onclick="document.getElementById('aeModelFile').click()" data-i18n="filePick">选择文件</button>
-        <button type="button" class="btn ghost small hidden" id="aeModelClear" onclick="clearAeModel()" data-i18n="avatarReset">清除</button>
-        <span class="hint" data-i18n="model3dFileHint">GLB / GLTF，≤20MB；不选则不设 3D 形象</span>
-      </div>
+    <div class="av-row">
+      <span class="av-row-label" data-i18n="agentModelLabel">3D 形象</span>
+      <span class="hint" id="aeModelState"></span>
+      <button type="button" class="btn ghost small" onclick="openAgentAvatarPicker()" data-i18n="avatarSetBtn">设置</button>
     </div>
-    <input type="file" id="aeModelFile" class="hidden" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onchange="onAeModelPick(event)" />
-    <label for="aeModelUrl" data-i18n="model3dUrlLabelShort">或外链 URL（可选）</label>
-    <input id="aeModelUrl" data-i18n-placeholder="model3dPlaceholder" placeholder="https://…/model.glb" />
-    <label style="display:flex;align-items:center;gap:8px;margin:0 0 6px">
-      <input type="checkbox" id="aeArkit" style="width:auto;margin:0" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
-      <input type="checkbox" id="aeHumanoid" style="width:auto;margin:0" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
-    </label>
     <p class="msg-status" id="agentEditStatus"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost small" id="aeToggleBtn" onclick="aeToggleStatus()" data-i18n="disable">停用</button>
@@ -1100,6 +1211,9 @@
         avatarModelPicked: "已选用「{{name}}」",
         avatarSearchPlaceholder: "搜索形象（中文名 / 原名）…",
         avatarNoMatch: "没有匹配的形象",
+        avatarDlgTitle: "设置 3D 替身",
+        avatarSetBtn: "设置",
+        avatarPendingHint: "已选择，保存后生效",
         myProfileTitle: "我的资料",
         myModelLabel: "3D 形象",
         myModelOwnHint: "也可以用自己的模型：选文件或填外链地址；上传后会替换掉上面的内置选择。",
@@ -1250,6 +1364,59 @@
         regUsernameBad: "用户名只能用字母、数字、下划线、点、连字符（2–32 位）",
         regPasswordShort: "密码至少 4 位",
         regPwdMismatch: "两次输入的密码不一致",
+        /* v2.25 手机短信 / 邮箱验证码 */
+        loginByPassword: "密码登录",
+        loginByCode: "验证码登录",
+        identifierLabel: "手机号或邮箱",
+        identifierPlaceholder: "13800138000 或 you@example.com",
+        codeLabel: "验证码",
+        codePlaceholder: "6 位数字",
+        getCode: "获取验证码",
+        resendIn: "{{s}} 秒后重发",
+        forgotPassword: "忘记密码？",
+        resetTitle: "重置密码",
+        resetIntro: "用已绑定的手机号或邮箱收验证码，验证通过即可设置新密码；重置后所有设备都需要重新登录。",
+        resetSubmit: "重置密码",
+        newPasswordLabel: "新密码",
+        newPasswordPlaceholder: "新密码（至少 4 位）",
+        contactLabel: "手机号或邮箱（任选其一，需验证码验证）",
+        phoneLabel: "手机号",
+        emailLabel: "邮箱",
+        phonePlaceholder: "11 位手机号",
+        phoneCodePlaceholder: "手机验证码",
+        emailPlaceholder: "you@example.com",
+        emailCodePlaceholder: "邮箱验证码",
+        bind: "绑定",
+        rebind: "换绑",
+        unbind: "解绑",
+        bindTitle: "绑定手机号",
+        bindTitleEmail: "绑定邮箱",
+        unbindTitle: "解绑手机号",
+        unbindTitleEmail: "解绑邮箱",
+        bindIntro: "手机号与邮箱任选其一即可用验证码登录；需要新号码的验证码 + 当前密码确认身份。",
+        unbindIntro: "解绑后无法再用它登录或找回密码，可以用密码登录后随时重新绑定。",
+        currentPasswordLabel: "当前密码",
+        currentPasswordPlaceholder: "输入当前密码以确认身份",
+        savePassword: "保存新密码",
+        acctTitle: "账号设置",
+        changePwdTitle: "修改密码",
+        acctHintContacts: "绑定手机号或邮箱后，可用验证码登录，忘记密码时也能重置。",
+        acctHintBound: "已绑定，可用于验证码登录和找回密码。",
+        contactNone: "未绑定",
+        contactVerified: "已验证",
+        codeSentFmt: "验证码已发送到 {{target}}",
+        smsDisabled: "短信通道未启用",
+        emailDisabled: "邮箱通道未启用",
+        debugCodeHint: "调试模式：验证码固定为 {{code}}",
+        pwdChanged: "密码已修改，其他设备已退出登录",
+        pwdResetDone: "密码已重置，请用新密码登录",
+        boundFmt: "已绑定 {{target}}",
+        unboundFmt: "已解绑 {{target}}",
+        identifierEmpty: "请填写手机号或邮箱",
+        codeEmpty: "请填写验证码",
+        needContact: "请填写手机号或邮箱，并完成验证码验证",
+        needPhoneCode: "请先获取手机验证码",
+        needEmailCode: "请先获取邮箱验证码",
         view3d: "3D",
         view3dTitle: "3D 房间视图",
         xrExit: "返回 2D",
@@ -1348,6 +1515,9 @@
         avatarModelPicked: "Now using “{{name}}”",
         avatarSearchPlaceholder: "Search avatars (name)…",
         avatarNoMatch: "No matching avatar",
+        avatarDlgTitle: "Set 3D avatar",
+        avatarSetBtn: "Set",
+        avatarPendingHint: "Chosen — applies when you save",
         myProfileTitle: "My profile",
         myModelLabel: "3D avatar",
         myModelOwnHint: "You can also use your own model: pick a file or paste a URL; uploading replaces the built-in choice above.",
@@ -1498,6 +1668,59 @@
         regUsernameBad: "Username may only contain letters, digits, _ . - (2–32 chars)",
         regPasswordShort: "Password must be at least 4 characters",
         regPwdMismatch: "The two passwords do not match",
+        /* v2.25 phone SMS / email verification codes */
+        loginByPassword: "Password",
+        loginByCode: "Code",
+        identifierLabel: "Phone or email",
+        identifierPlaceholder: "13800138000 or you@example.com",
+        codeLabel: "Verification code",
+        codePlaceholder: "6-digit code",
+        getCode: "Send code",
+        resendIn: "Resend in {{s}}s",
+        forgotPassword: "Forgot password?",
+        resetTitle: "Reset password",
+        resetIntro: "Send a code to your bound phone or email, then set a new password. All devices will be signed out.",
+        resetSubmit: "Reset password",
+        newPasswordLabel: "New password",
+        newPasswordPlaceholder: "New password (at least 4 chars)",
+        contactLabel: "Phone or email (either one, verified by code)",
+        phoneLabel: "Phone",
+        emailLabel: "Email",
+        phonePlaceholder: "11-digit phone number",
+        phoneCodePlaceholder: "Phone code",
+        emailPlaceholder: "you@example.com",
+        emailCodePlaceholder: "Email code",
+        bind: "Bind",
+        rebind: "Re-bind",
+        unbind: "Unbind",
+        bindTitle: "Bind phone number",
+        bindTitleEmail: "Bind email",
+        unbindTitle: "Unbind phone number",
+        unbindTitleEmail: "Unbind email",
+        bindIntro: "Either a phone number or an email is enough for code login. Needs the new target's code plus your current password.",
+        unbindIntro: "After unbinding you can no longer log in or recover your password with it. You can log in with your password and bind again anytime.",
+        currentPasswordLabel: "Current password",
+        currentPasswordPlaceholder: "Enter your current password to confirm",
+        savePassword: "Save new password",
+        acctTitle: "Account settings",
+        changePwdTitle: "Change password",
+        acctHintContacts: "Bind a phone number or email to log in with a code and to reset a forgotten password.",
+        acctHintBound: "Bound — usable for code login and password recovery.",
+        contactNone: "Not bound",
+        contactVerified: "Verified",
+        codeSentFmt: "Code sent to {{target}}",
+        smsDisabled: "SMS is not enabled",
+        emailDisabled: "Email is not enabled",
+        debugCodeHint: "Debug mode: the code is always {{code}}",
+        pwdChanged: "Password changed — other devices were signed out",
+        pwdResetDone: "Password reset — please log in with the new password",
+        boundFmt: "Bound {{target}}",
+        unboundFmt: "Unbound {{target}}",
+        identifierEmpty: "Please enter a phone number or email",
+        codeEmpty: "Please enter the verification code",
+        needContact: "Add a phone number or email and verify it with a code",
+        needPhoneCode: "Request a phone code first",
+        needEmailCode: "Request an email code first",
         view3d: "3D",
         view3dTitle: "3D room view",
         xrExit: "Back to 2D",
@@ -1636,6 +1859,40 @@
         [/文件不存在|文件内容缺失/, "File not found"],
         [/文件内容为空/, "The file content is empty"],
         [/缺少文件名/, "Missing file name"],
+        /* v2.25 手机短信 / 邮箱验证码 */
+        [/手机号格式不正确/, "Invalid phone number"],
+        [/邮箱格式不正确/, "Invalid email address"],
+        [/请填写正确的手机号或邮箱/, "Enter a valid phone number or email"],
+        [/请填写手机号或邮箱，并完成验证码验证/, "Add a phone number or email and verify it with a code"],
+        [/请先获取手机验证码/, "Request a phone code first"],
+        [/请先获取邮箱验证码/, "Request an email code first"],
+        [/该手机号已被使用/, "This phone number is already in use"],
+        [/该邮箱已被使用/, "This email is already in use"],
+        [/该号码与已有用户名重复，请换一个/, "That number is already someone's username"],
+        [/该手机号或邮箱已被占用/, "That phone number or email is already taken"],
+        [/该手机号或邮箱尚未绑定账号/, "No account is bound to that phone number or email"],
+        [/验证码不存在或已失效，请重新获取/, "That code is missing or expired — request a new one"],
+        [/验证码不正确，还可尝试 (\d+) 次/, "Wrong code — $1 attempts left"],
+        [/验证码错误次数过多，请重新获取/, "Too many wrong attempts — request a new code"],
+        [/发送太频繁，请 (\d+) 秒后再试/, "Too many requests — try again in $1s"],
+        [/操作太频繁，请 (\d+) 秒后再试/, "Too many requests — try again in $1s"],
+        [/今日验证码发送次数已达上限，请明天再试/, "Daily code limit reached for this number — try tomorrow"],
+        [/今日验证码发送总量已达上限，请明天再试/, "Site-wide daily code limit reached — try tomorrow"],
+        [/短信通道未启用/, "SMS is not enabled on this server"],
+        [/邮箱通道未启用/, "Email is not enabled on this server"],
+        [/短信服务未配置/, "SMS is not configured on this server"],
+        [/邮箱服务未配置/, "Email is not configured on this server"],
+        [/短信发送失败/, "Failed to send the SMS — please try again later"],
+        [/邮件发送失败/, "Failed to send the email — please try again later"],
+        [/验证码登录未启用/, "Code login is not enabled"],
+        [/密码重置未启用/, "Password reset is not enabled"],
+        [/当前密码不正确/, "Your current password is incorrect"],
+        [/^密码不正确$/, "Incorrect password"],
+        [/新密码不能与当前密码相同/, "The new password must differ from the current one"],
+        [/尚未绑定手机号/, "No phone number is bound yet"],
+        [/尚未绑定邮箱/, "No email is bound yet"],
+        [/登录状态已失效，请重新登录/, "Your session is no longer valid — please log in again"],
+        [/账号不可用/, "This account is unavailable"],
       ];
       for (const [re, en] of m) {
         const hit = msg.match(re);
@@ -1702,8 +1959,6 @@
     let lastUpdatedAt = "";
     let lastRoomInfo = null;     // 最近一次房间在线成员快照（3D 进入时取初始成员）
     let regAvatarData = null;
-    let regModel3dFile = null;   // 注册弹窗里选的 3D 模型文件（注册成功后上传）
-    let regBuiltinId = null;     // 注册弹窗里选的内置形象（注册成功后落地）
 
     /* ---- v2.5 状态：私聊模式 / 引用 / 撤回 ---- */
     let whisperTo = [];             // 私聊模式选中的成员 [{username, avatarUrl}]
@@ -1826,7 +2081,13 @@
 
     const $ = (id) => document.getElementById(id);
 
-    function setAuthStatus(text) { $("authStatus").textContent = text || ""; }
+    function setStatusText(id, text, ok) {
+      const el = $(id);
+      if (!el) return;
+      el.textContent = text || "";
+      el.classList.toggle("ok", !!ok);
+    }
+    function setAuthStatus(text, ok) { setStatusText("authStatus", text, ok); }
     function setHint(text) { $("pollHint").textContent = text || ""; }
 
     function errorText(data, fallback) {
@@ -1916,11 +2177,6 @@
 
     function refreshAvatarPreviews() {
       setAvatarPreview("regAvatarImg", "regAvatarPh", "regAvatarClear", regAvatarData);
-      const ph = $("regModel3dPh");
-      if (ph) {
-        ph.textContent = regModel3dFile ? regModel3dFile.name : t("avatarEmpty");
-        $("regModel3dClear").classList.toggle("hidden", !regModel3dFile);
-      }
     }
 
     function onRegAvatarPick() {
@@ -1931,20 +2187,7 @@
     }
     function clearRegAvatar() { regAvatarData = null; refreshAvatarPreviews(); }
 
-    function setRegStatus(text) { $("regStatus").textContent = text || ""; }
-
-    function onRegModel3dPick(event) {
-      const input = event.target;
-      const file = input.files[0];
-      input.value = "";
-      if (!file) return;
-      if (file.size > 20 * 1024 * 1024) return setRegStatus(t("model3dTooBig"));
-      if (!/\.(glb|gltf)$/i.test(file.name || "")) return setRegStatus(t("model3dBadType"));
-      regModel3dFile = file;
-      refreshAvatarPreviews();
-      setRegStatus("");
-    }
-    function clearRegModel3d() { regModel3dFile = null; refreshAvatarPreviews(); }
+    function setRegStatus(text, ok) { setStatusText("regStatus", text, ok); }
 
 
     async function renderWhoAvatar() {
@@ -2061,9 +2304,8 @@
 
     async function openProfile() {
       $("myProfileStatus").textContent = "";
-      $("myModelPh").textContent = t("avatarEmpty");
-      $("myModelFile").value = "";
-      $("myModelUrl").value = "";
+      setAcctStatus("");
+      ["acctOldPwd", "acctNewPwd", "acctNewPwd2"].forEach((id) => { $(id).value = ""; });
       $("myProfile").showModal();
       await refreshMyProfile();
     }
@@ -2074,12 +2316,13 @@
       const url = data ? (data.model3dUrl || "") : "";
       if (data) {
         store.avatarUrl = data.avatarUrl || "";
-        $("myArkit").checked = !!data.model3dArkit;
-        $("myHumanoid").checked = !!data.model3dHumanoid;
-        $("myModelUrl").value = /^https?:/i.test(url) ? url : "";
+        store.model3dUrl = url;
+        /* 账号设置仅人类账号可见（联系方式只由 /api/me 回显，且是掩码） */
+        const isHuman = (data.kind || "human") === "human";
+        $("acctBlock").style.display = isHuman ? "" : "none";
+        if (isHuman) applyContacts(data);
       }
-      await renderAvatarModelPicker("myModelGrid", url, pickMyBuiltin, "myModelSearch");
-      $("myModelState").textContent = tf("model3dCurrentFmt", { v: describeModel3d(url) });
+      avSetRow("myModelState", avStateText(url));
       const img = $("myAvatarImg");
       const ph = $("myAvatarPh");
       if (store.avatarUrl) {
@@ -2091,54 +2334,224 @@
       } else { img.classList.add("hidden"); ph.classList.remove("hidden"); }
     }
 
-    async function pickMyBuiltin(id) {
-      try {
-        await putBuiltinAvatar(id);
-        await refreshMyProfile();
-        voiceToast(tf("avatarModelPicked", { name: builtinAvatarName(id) }));
-      } catch (err) { $("myProfileStatus").textContent = err.message; }
+    // ---------- 3D 替身：三处共用同一个设置弹窗 ----------
+    /* 父弹窗只留一行「当前替身 + 设置」。按 mode 分流：
+       self     我的资料 —— 即时生效（PUT/POST/DELETE 立刻写）
+       agent    Agent 编辑 —— 编辑态即时 PUT ?as=；创建态暂存
+       register 注册 —— 一律暂存，注册成功后落地
+       暂存都进 avPending，父弹窗保存时读它。 */
+    const avPending = { file: null, url: "", arkit: false, humanoid: false, builtinId: null, clear: false };
+    const avDlg = { mode: null, currentUrl: "" };
+
+    function avResetPending(seed) {
+      avPending.file = null; avPending.url = ""; avPending.arkit = false;
+      avPending.humanoid = false; avPending.builtinId = null; avPending.clear = false;
+      if (seed) Object.assign(avPending, seed);
     }
 
-    async function onMyModelPick(event) {
+    function avStateText(url) {
+      return tf("model3dCurrentFmt", { v: describeModel3d(url) });
+    }
+
+    /* 紧凑行只有一个 span，长了会被省略号截断——同时写 title 让悬停能看全 */
+    function avSetRow(id, text) {
+      const el = $(id);
+      if (!el) return;
+      el.textContent = text;
+      el.title = text;
+    }
+
+    function avSyncState() {
+      $("avModelState").textContent = avStateText(avDlg.currentUrl);
+      markAvatarModelPicked("avModelGrid", avDlg.currentUrl);
+    }
+
+    /* 暂存模式回到父弹窗时，那一行要显示的文字 */
+    function avPendingStateText() {
+      if (avPending.clear) return t("model3dStateNone");
+      if (avPending.builtinId) return avStateText(BUILTIN_AVATAR_PREFIX + avPending.builtinId);
+      if (avPending.file) return avPending.file.name;
+      if (avPending.url) return avStateText(avPending.url);
+      return t("model3dStateNone");
+    }
+
+    async function openAvatarPicker(mode, opts) {
+      const o = opts || {};
+      avDlg.mode = mode;
+      avDlg.currentUrl = o.currentUrl || "";
+      $("avStatus").textContent = "";
+      $("avModelFile").value = "";
+      $("avModelPh").textContent = o.fileName || t("avatarEmpty");
+      $("avModelUrl").value = /^https?:/i.test(avDlg.currentUrl) ? avDlg.currentUrl : "";
+      $("avArkit").checked = !!o.arkit;
+      $("avHumanoid").checked = !!o.humanoid;
+      $("avModelSearch").value = "";
+      $("avModelClear").classList.toggle("hidden", mode !== "self");
+      $("avatarDlg").showModal();
+      await renderAvatarModelPicker("avModelGrid", avDlg.currentUrl, avPick, "avModelSearch");
+      avSyncState();
+    }
+
+    function closeAvatarPicker() {
+      $("avatarDlg").close();
+      if (avDlg.mode === "register") avSetRow("regModelState", avPendingStateText());
+      if (avDlg.mode === "agent") avSetRow("aeModelState", avPendingStateText());
+    }
+
+    async function openMyAvatarPicker() {
+      let data = null;
+      try { data = await api("/api/me"); } catch { /* 拿不到就按未知处理 */ }
+      store.model3dUrl = data ? (data.model3dUrl || "") : (store.model3dUrl || "");
+      await openAvatarPicker("self", {
+        currentUrl: store.model3dUrl,
+        arkit: data ? !!data.model3dArkit : false,
+        humanoid: data ? !!data.model3dHumanoid : false,
+      });
+    }
+
+    function openRegisterAvatarPicker() {
+      openAvatarPicker("register", {
+        currentUrl: avPending.builtinId ? BUILTIN_AVATAR_PREFIX + avPending.builtinId : avPending.url,
+        arkit: avPending.arkit,
+        humanoid: avPending.humanoid,
+        fileName: avPending.file ? avPending.file.name : "",
+      });
+    }
+
+    function openAgentAvatarPicker() {
+      openAvatarPicker("agent", {
+        currentUrl: avPending.builtinId ? BUILTIN_AVATAR_PREFIX + avPending.builtinId : avPending.url,
+        arkit: avPending.arkit,
+        humanoid: avPending.humanoid,
+        fileName: avPending.file ? avPending.file.name : "",
+      });
+    }
+
+    function avFlagChanged() {
+      if (avDlg.mode === "self") return;   // self 模式在提交时直接读控件值
+      avPending.arkit = $("avArkit").checked;
+      avPending.humanoid = $("avHumanoid").checked;
+    }
+
+    async function avPick(id) {
+      const url = BUILTIN_AVATAR_PREFIX + id;
+      if (avDlg.mode === "self") {
+        try {
+          await putBuiltinAvatar(id);
+          avDlg.currentUrl = url;
+          await refreshMyProfile();
+          avSyncState();
+          voiceToast(tf("avatarModelPicked", { name: builtinAvatarName(id) }));
+        } catch (err) { $("avStatus").textContent = err.message; }
+        return;
+      }
+      if (avDlg.mode === "agent" && ae.mode === "edit" && ae.username) {
+        try {
+          await putBuiltinAvatar(id, ae.username);
+          /* 即时 PUT 之后必须同步刷新暂存与 ae.loaded.modelUrl：
+             否则点「保存」会拿旧值再写一次（把刚选的覆盖回去），
+             或把「URL 变了」判成 clear 而删掉形象。 */
+          avPending.builtinId = id;
+          avPending.url = "";
+          avPending.file = null;
+          avPending.clear = false;
+          ae.loaded.modelUrl = "";
+          avDlg.currentUrl = url;
+          avSyncState();
+          avSetRow("aeModelState", avStateText(url));
+          setAeStatus(tf("avatarModelPicked", { name: builtinAvatarName(id) }));
+          refreshAgents();
+        } catch (err) { $("avStatus").textContent = err.message; }
+        return;
+      }
+      avPending.builtinId = id;
+      avPending.url = "";
+      avPending.file = null;
+      avPending.clear = false;
+      avDlg.currentUrl = url;
+      avSyncState();
+      $("avStatus").textContent = t("avatarPendingHint");
+    }
+
+    async function onAvModelPick(event) {
       const input = event.target;
       const file = input.files[0];
       input.value = "";
       if (!file) return;
       const err = validateModelFile(file);
-      if (err) return $("myProfileStatus").textContent = err;
-      const q = new URLSearchParams();
-      if ($("myArkit").checked) q.set("arkit", "true");
-      if ($("myHumanoid").checked) q.set("humanoid", "true");
-      try {
-        const form = new FormData();
-        form.append("file", file);
-        await api(`/api/me/model3d${q.toString() ? "?" + q.toString() : ""}`, { method: "POST", body: form });
-        $("myModelPh").textContent = file.name;
-        $("myProfileStatus").textContent = t("model3dUploaded");
-        await refreshMyProfile();
-      } catch (e) { $("myProfileStatus").textContent = e.message; }
+      if (err) return $("avStatus").textContent = err;
+      if (avDlg.mode === "self") {
+        const q = new URLSearchParams();
+        if ($("avArkit").checked) q.set("arkit", "true");
+        if ($("avHumanoid").checked) q.set("humanoid", "true");
+        try {
+          const form = new FormData();
+          form.append("file", file);
+          await api(`/api/me/model3d${q.toString() ? "?" + q.toString() : ""}`, { method: "POST", body: form });
+          $("avModelPh").textContent = file.name;
+          $("avStatus").textContent = t("model3dUploaded");
+          await refreshMyProfile();
+          avDlg.currentUrl = store.model3dUrl || "";
+          avSyncState();
+        } catch (e) { $("avStatus").textContent = e.message; }
+        return;
+      }
+      avPending.file = file;
+      avPending.builtinId = null;
+      avPending.url = "";
+      avPending.clear = false;
+      avPending.arkit = $("avArkit").checked;
+      avPending.humanoid = $("avHumanoid").checked;
+      $("avModelPh").textContent = file.name;
+      $("avStatus").textContent = t("avatarPendingHint");
     }
 
-    async function saveMyModelUrl() {
-      const url = $("myModelUrl").value.trim();
-      try {
-        await api("/api/me/model3d", {
-          method: "PUT",
-          body: JSON.stringify({ url, arkit: $("myArkit").checked, humanoid: $("myHumanoid").checked }),
-        });
-        await refreshMyProfile();
-        $("myProfileStatus").textContent = t("model3dUploaded");
-      } catch (err) { $("myProfileStatus").textContent = err.message; }
+    async function avSaveOwn() {
+      const url = $("avModelUrl").value.trim();
+      if (avDlg.mode === "self") {
+        try {
+          await api("/api/me/model3d", {
+            method: "PUT",
+            body: JSON.stringify({ url, arkit: $("avArkit").checked, humanoid: $("avHumanoid").checked }),
+          });
+          await refreshMyProfile();
+          avDlg.currentUrl = store.model3dUrl || "";
+          avSyncState();
+          $("avStatus").textContent = t("model3dUploaded");
+        } catch (err) { $("avStatus").textContent = err.message; }
+        return;
+      }
+      avPending.url = url;
+      avPending.builtinId = null;
+      avPending.file = null;
+      avPending.clear = !url;
+      avPending.arkit = $("avArkit").checked;
+      avPending.humanoid = $("avHumanoid").checked;
+      avDlg.currentUrl = url;
+      avSyncState();
+      $("avStatus").textContent = t("avatarPendingHint");
     }
 
-    async function clearMyModel() {
-      try {
-        await api("/api/me/model3d", { method: "DELETE" });
-        $("myModelUrl").value = "";
-        $("myModelPh").textContent = t("avatarEmpty");
-        await refreshMyProfile();
-        $("myProfileStatus").textContent = t("model3dStateNone");
-      } catch (err) { $("myProfileStatus").textContent = err.message; }
+    async function avClearOwn() {
+      if (avDlg.mode === "self") {
+        try {
+          await api("/api/me/model3d", { method: "DELETE" });
+          $("avModelUrl").value = "";
+          $("avModelPh").textContent = t("avatarEmpty");
+          avDlg.currentUrl = "";
+          await refreshMyProfile();
+          avSyncState();
+          $("avStatus").textContent = t("model3dStateNone");
+        } catch (err) { $("avStatus").textContent = err.message; }
+        return;
+      }
+      avPending.clear = true;
+      avPending.builtinId = null;
+      avPending.file = null;
+      avPending.url = "";
+      avDlg.currentUrl = "";
+      avSyncState();
+      $("avStatus").textContent = t("avatarPendingHint");
     }
 
     async function onProfileAvatarPick(event) {
@@ -2164,17 +2577,11 @@
       $("regUsername").value = $("username").value.trim();
       $("regPassword").value = "";
       $("regPassword2").value = "";
+      ["regPhone", "regPhoneCode", "regEmail", "regEmailCode"].forEach((id) => { $(id).value = ""; });
       regAvatarData = null;
-      regModel3dFile = null;
-      regBuiltinId = null;
-      $("regArkit").checked = false;
-      $("regHumanoid").checked = false;
+      avResetPending();
+      avSetRow("regModelState", "");
       refreshAvatarPreviews();
-      renderAvatarModelPicker("regModelGrid", "", (id) => {
-        regBuiltinId = id;
-        markAvatarModelPicked("regModelGrid", BUILTIN_AVATAR_PREFIX + id);
-        setRegStatus("");
-      }, "regModelSearch");
       setRegStatus("");
       $("register").showModal();
       setTimeout(() => ($("regUsername").value ? $("regPassword").focus() : $("regUsername").focus()), 0);
@@ -2191,22 +2598,34 @@
       if (username.length < 2 || !/^[\p{L}\p{N}_.\-]+$/u.test(username)) return setRegStatus(t("regUsernameBad"));
       if (password.length < 4) return setRegStatus(t("regPasswordShort"));
       if (password !== password2) return setRegStatus(t("regPwdMismatch"));
-      const modelFile = regModel3dFile;
-      const builtinId = regModel3dFile ? null : regBuiltinId;   // 选了文件就以文件为准
-      const arkit = $("regArkit").checked;
-      const humanoid = $("regHumanoid").checked;
+      /* 手机 / 邮箱：强制验证时必须有一种；填了哪种就必须有哪种的验证码 */
+      const phone = $("regPhone").value.trim();
+      const email = $("regEmail").value.trim();
+      const phoneCode = $("regPhoneCode").value.trim();
+      const emailCode = $("regEmailCode").value.trim();
+      /* 只有服务端说「强制」时才要求联系方式（与 config.verify_required() 一致），
+         这样 VERIFY_MODE=off 真的能让注册退回用户名 + 密码 */
+      if (authChannels.required && !phone && !email) return setRegStatus(t("needContact"));
+      if (phone && !phoneCode) return setRegStatus(t("needPhoneCode"));
+      if (email && !emailCode) return setRegStatus(t("needEmailCode"));
+      const modelFile = avPending.file;
+      const builtinId = avPending.file ? null : avPending.builtinId;   // 选了文件就以文件为准
+      const arkit = avPending.arkit;
+      const humanoid = avPending.humanoid;
       $("regSubmit").disabled = true;
       try {
         const body = { username, password };
         if (regAvatarData) body.avatar = regAvatarData;
+        if (phone) { body.phone = phone; body.phoneCode = phoneCode; }
+        if (email) { body.email = email; body.emailCode = emailCode; }
         await api("/api/users", { method: "POST", body: JSON.stringify(body) });
         regAvatarData = null;
-        regModel3dFile = null;
-        regBuiltinId = null;
+        avResetPending();
         /* 注册成功 → 自动登录（登录表单填上刚注册的凭据） */
         $("username").value = username;
         $("password").value = password;
         closeRegister();
+        switchAuthTab("pwd");
         await login();
         if (modelFile && store.token) await uploadRegModel3d(modelFile, arkit, humanoid);
         else if (builtinId && store.token) await putBuiltinAvatar(builtinId);
@@ -2233,17 +2652,291 @@
       }
     }
 
+    async function afterLogin(data) {
+      store.token = data.token;
+      store.username = data.username;
+      saveSession();
+      setAuthStatus("");
+      showApp();
+      await refreshRooms();
+      if (store.roomName) await openRoom(store.roomName);
+    }
+
     async function login() {
       try {
         const data = await api("/api/login", { method: "POST", body: JSON.stringify(creds()) });
-        store.token = data.token;
-        store.username = data.username;
-        saveSession();
-        setAuthStatus("");
-        showApp();
-        await refreshRooms();
-        if (store.roomName) await openRoom(store.roomName);
+        await afterLogin(data);
       } catch (err) { setAuthStatus(err.message); }
+    }
+
+    /* ---------- v2.25：手机短信 / 邮箱验证码 ---------- */
+
+    let authChannels = { phone: false, email: false, required: false, debugCode: null };
+    let authTab = "pwd";
+    let bindChannel = "phone";
+    let bindMode = "bind";
+    const codeTimers = {};
+
+    async function loadAuthChannels() {
+      try { authChannels = await api("/api/auth/channels"); } catch { /* 保持降级默认 */ }
+      const anyChannel = !!(authChannels.phone || authChannels.email);
+      /* 只有一条通道时整行页签都藏掉：否则会剩一个撑满整行的「密码登录」按钮，很怪 */
+      $("authTabs").classList.toggle("hidden", !anyChannel);
+      $("authTabCode").classList.toggle("hidden", !anyChannel);
+      $("forgotLink").classList.toggle("hidden", !anyChannel);
+      if (!anyChannel && authTab === "code") switchAuthTab("pwd");
+      /* 注册：需要强制验证时露出联系方式区；只配了一条通道就只留那一条 */
+      $("regContacts").classList.toggle("hidden", !authChannels.required && !anyChannel);
+      $("regPhone").parentElement.classList.toggle("hidden", !authChannels.phone);
+      $("regPhoneCode").classList.toggle("hidden", !authChannels.phone);
+      $("regEmail").parentElement.classList.toggle("hidden", !authChannels.email);
+      $("regEmailCode").classList.toggle("hidden", !authChannels.email);
+      if (authChannels.debugCode) {
+        $("regCodeHint").textContent = tf("debugCodeHint", { code: authChannels.debugCode });
+      } else if (authChannels.required && !anyChannel) {
+        $("regCodeHint").textContent = `${t("smsDisabled")} / ${t("emailDisabled")}`;
+      } else {
+        $("regCodeHint").textContent = authChannels.required ? t("contactLabel") : "";
+      }
+      if (authChannels.debugCode) {
+        $("loginCode").placeholder = authChannels.debugCode;
+        $("resetCode").placeholder = authChannels.debugCode;
+      }
+    }
+
+    function switchAuthTab(which) {
+      authTab = which === "code" ? "code" : "pwd";
+      $("authTabPwd").classList.toggle("active", authTab === "pwd");
+      $("authTabCode").classList.toggle("active", authTab === "code");
+      $("authPwdForm").classList.toggle("hidden", authTab !== "pwd");
+      $("authCodeForm").classList.toggle("hidden", authTab !== "code");
+      setAuthStatus("");
+    }
+
+    function submitAuth() {
+      return authTab === "code" ? loginWithCode() : login();
+    }
+
+    /* 前端只用于挑「发到哪个通道」，真正的归一化与校验在服务端 */
+    function guessChannel(value) {
+      return /^\+?[\d][\d\s-]{5,}$/.test(String(value || "").trim()) ? "phone" : "email";
+    }
+
+    function startCooldown(btnId, seconds) {
+      const btn = $(btnId);
+      if (!btn) return;
+      clearInterval(codeTimers[btnId]);
+      let left = Math.max(1, Math.floor(seconds || 60));
+      btn.disabled = true;
+      btn.textContent = tf("resendIn", { s: left });
+      codeTimers[btnId] = setInterval(() => {
+        left -= 1;
+        if (left <= 0) {
+          clearInterval(codeTimers[btnId]);
+          btn.disabled = false;
+          btn.textContent = t("getCode");
+        } else {
+          btn.textContent = tf("resendIn", { s: left });
+        }
+      }, 1000);
+    }
+
+    async function requestCode(channel, target, purpose, btnId, setStatus) {
+      const value = String(target || "").trim();
+      if (!value) return setStatus(t("identifierEmpty"));
+      $(btnId).disabled = true;
+      try {
+        const res = await api("/api/auth/send-code", {
+          method: "POST",
+          body: JSON.stringify({ channel, target: value, purpose }),
+        });
+        setStatus(tf("codeSentFmt", { target: value }), true);
+        startCooldown(btnId, res.interval || 60);
+      } catch (err) {
+        setStatus(err.message);
+        $(btnId).disabled = false;
+      }
+    }
+
+    function sendLoginCode() {
+      const value = $("loginIdentifier").value.trim();
+      if (!value) return setAuthStatus(t("identifierEmpty"));
+      return requestCode(guessChannel(value), value, "login", "loginCodeBtn", setAuthStatus);
+    }
+
+    function sendRegCode(channel) {
+      const target = channel === "phone" ? $("regPhone").value : $("regEmail").value;
+      const btnId = channel === "phone" ? "regPhoneBtn" : "regEmailBtn";
+      return requestCode(channel, target, "register", btnId, setRegStatus);
+    }
+
+    function sendResetCode() {
+      const value = $("resetIdentifier").value.trim();
+      if (!value) return setResetStatus(t("identifierEmpty"));
+      return requestCode(guessChannel(value), value, "reset", "resetCodeBtn", setResetStatus);
+    }
+
+    function sendBindCode() {
+      return requestCode(bindChannel, $("bindTarget").value, "bind", "bindCodeBtn", setBindStatus);
+    }
+
+    async function loginWithCode() {
+      const identifier = $("loginIdentifier").value.trim();
+      const code = $("loginCode").value.trim();
+      if (!identifier) return setAuthStatus(t("identifierEmpty"));
+      if (!code) return setAuthStatus(t("codeEmpty"));
+      try {
+        const data = await api("/api/login", { method: "POST", body: JSON.stringify({ identifier, code }) });
+        $("loginCode").value = "";
+        await afterLogin(data);
+      } catch (err) { setAuthStatus(err.message); }
+    }
+
+    /* ---- 忘记密码 ---- */
+    function setResetStatus(text, ok) { setStatusText("resetStatus", text, ok); }
+
+    function openReset() {
+      /* 只从「验证码登录」页签的输入框带过来：重置必须用手机号或邮箱，用户名无效 */
+      $("resetIdentifier").value = $("loginIdentifier").value.trim();
+      $("resetCode").value = "";
+      $("resetPassword").value = "";
+      $("resetPassword2").value = "";
+      setResetStatus("");
+      $("resetPwd").showModal();
+      setTimeout(() => ($("resetIdentifier").value ? $("resetCode").focus() : $("resetIdentifier").focus()), 0);
+    }
+
+    function closeReset() { $("resetPwd").close(); }
+
+    async function submitReset() {
+      const identifier = $("resetIdentifier").value.trim();
+      const code = $("resetCode").value.trim();
+      const password = $("resetPassword").value;
+      const password2 = $("resetPassword2").value;
+      if (!identifier) return setResetStatus(t("identifierEmpty"));
+      if (!code) return setResetStatus(t("codeEmpty"));
+      if (password.length < 4) return setResetStatus(t("regPasswordShort"));
+      if (password !== password2) return setResetStatus(t("regPwdMismatch"));
+      $("resetSubmit").disabled = true;
+      try {
+        const data = await api("/api/auth/reset-password", {
+          method: "POST",
+          body: JSON.stringify({ identifier, code, newPassword: password }),
+        });
+        closeReset();
+        /* 顺手把登录表单填成新密码，省得再输一遍 */
+        $("username").value = data.username || "";
+        $("password").value = password;
+        switchAuthTab("pwd");
+        setAuthStatus(t("pwdResetDone"), true);
+      } catch (err) { setResetStatus(err.message); }
+      finally { $("resetSubmit").disabled = false; }
+    }
+
+    /* ---- 账号设置：绑定 / 换绑 / 解绑 ---- */
+    function setBindStatus(text, ok) { setStatusText("bindStatus", text, ok); }
+    function setAcctStatus(text, ok) { setStatusText("acctStatus", text, ok); }
+
+    function applyContacts(data) {
+      const phone = (data && data.phone) || "";
+      const email = (data && data.email) || "";
+      $("acctPhone").textContent = phone || t("contactNone");
+      $("acctEmail").textContent = email || t("contactNone");
+      const anyChannel = !!(authChannels.phone || authChannels.email);
+      $("acctPhoneBind").classList.toggle("hidden", !authChannels.phone);
+      $("acctEmailBind").classList.toggle("hidden", !authChannels.email);
+      $("acctPhoneUnbind").classList.toggle("hidden", !phone);
+      $("acctEmailUnbind").classList.toggle("hidden", !email);
+      $("acctPhoneBind").textContent = t(phone ? "rebind" : "bind");
+      $("acctEmailBind").textContent = t(email ? "rebind" : "bind");
+      $("acctHint").textContent = anyChannel
+        ? (phone || email ? t("acctHintBound") : t("acctHintContacts"))
+        : `${t("smsDisabled")} / ${t("emailDisabled")}`;
+    }
+
+    function openBind(channel) {
+      bindChannel = channel === "email" ? "email" : "phone";
+      bindMode = "bind";
+      const isPhone = bindChannel === "phone";
+      $("bindTitle").textContent = t(isPhone ? "bindTitle" : "bindTitleEmail");
+      $("bindIntro").textContent = t("bindIntro");
+      $("bindTargetLabel").textContent = t(isPhone ? "phoneLabel" : "emailLabel");
+      $("bindTarget").type = isPhone ? "text" : "email";
+      $("bindTarget").placeholder = t(isPhone ? "phonePlaceholder" : "emailPlaceholder");
+      $("bindTarget").value = "";
+      $("bindCode").value = "";
+      $("bindPwd").value = "";
+      $("bindTargetWrap").classList.remove("hidden");
+      $("bindSubmit").textContent = t("save");
+      setBindStatus("");
+      $("bindContact").showModal();
+    }
+
+    function openUnbind(channel) {
+      bindChannel = channel === "email" ? "email" : "phone";
+      bindMode = "unbind";
+      const isPhone = bindChannel === "phone";
+      $("bindTitle").textContent = t(isPhone ? "unbindTitle" : "unbindTitleEmail");
+      $("bindIntro").textContent = t("unbindIntro");
+      $("bindTargetWrap").classList.add("hidden");
+      $("bindPwd").value = "";
+      $("bindSubmit").textContent = t("unbind");
+      setBindStatus("");
+      $("bindContact").showModal();
+    }
+
+    function closeBind() { $("bindContact").close(); }
+
+    async function submitBind() {
+      const password = $("bindPwd").value;
+      const label = bindChannel === "phone" ? $("acctPhone").textContent : $("acctEmail").textContent;
+      if (!password) return setBindStatus(t("currentPasswordPlaceholder"));
+      $("bindSubmit").disabled = true;
+      try {
+        if (bindMode === "unbind") {
+          const data = await api("/api/me/contacts/unbind", {
+            method: "POST",
+            body: JSON.stringify({ channel: bindChannel, password }),
+          });
+          closeBind();
+          applyContacts(data);
+          voiceToast(tf("unboundFmt", { target: label }));
+          return;
+        }
+        const target = $("bindTarget").value.trim();
+        const code = $("bindCode").value.trim();
+        if (!target) return setBindStatus(t("identifierEmpty"));
+        if (!code) return setBindStatus(t("codeEmpty"));
+        const data = await api("/api/me/contacts", {
+          method: "PUT",
+          body: JSON.stringify({ channel: bindChannel, target, code, password }),
+        });
+        closeBind();
+        applyContacts(data);
+        voiceToast(tf("boundFmt", { target }));
+      } catch (err) { setBindStatus(err.message); }
+      finally { $("bindSubmit").disabled = false; }
+    }
+
+    async function submitChangePassword() {
+      const oldPassword = $("acctOldPwd").value;
+      const password = $("acctNewPwd").value;
+      const password2 = $("acctNewPwd2").value;
+      if (!oldPassword) return setAcctStatus(t("currentPasswordPlaceholder"));
+      if (password.length < 4) return setAcctStatus(t("regPasswordShort"));
+      if (password !== password2) return setAcctStatus(t("regPwdMismatch"));
+      try {
+        const data = await api("/api/me/password", {
+          method: "PUT",
+          body: JSON.stringify({ oldPassword, newPassword: password }),
+        });
+        /* 改密会踢掉所有旧会话，这里换上后端补发的新 token，本机不中断 */
+        if (data.token) { store.token = data.token; saveSession(); }
+        $("acctOldPwd").value = "";
+        $("acctNewPwd").value = "";
+        $("acctNewPwd2").value = "";
+        setAcctStatus(t("pwdChanged"), true);
+      } catch (err) { setAcctStatus(err.message); }
     }
 
     function logout() {
@@ -4450,7 +5143,7 @@
 
     /* ---- v2.6：Agent 参数设置弹窗（创建 / 编辑共用：用户名、公钥、头像、3D 形象） ---- */
     let agentsCache = [];
-    const ae = { mode: "create", username: "", avatarAction: "keep", avatarData: null, modelAction: "keep", modelFile: null, pendingBuiltinId: null, loaded: null };
+    const ae = { mode: "create", username: "", avatarAction: "keep", avatarData: null, loaded: null };
 
     function setAeStatus(text) { $("agentEditStatus").textContent = text || ""; }
 
@@ -4461,28 +5154,25 @@
       ae.username = target ? target.username : "";
       ae.avatarAction = "keep";
       ae.avatarData = null;
-      ae.modelAction = "keep";
-      ae.modelFile = null;
-      ae.pendingBuiltinId = null;
       ae.loaded = {
         arkit: target ? !!target.model3dArkit : false,
         humanoid: target ? !!target.model3dHumanoid : false,
         hasModel: target ? !!target.model3dUrl : false,
         modelUrl: target && /^https?:/i.test(target.model3dUrl || "") ? target.model3dUrl : "",
       };
+      /* 3D 替身走共用弹窗：把当前值种进暂存，弹窗与保存都读这一份 */
+      avResetPending({
+        url: ae.loaded.modelUrl,
+        builtinId: builtinAvatarIdOf(target ? (target.model3dUrl || "") : "") || null,
+        arkit: ae.loaded.arkit,
+        humanoid: ae.loaded.humanoid,
+      });
       $("agentEditTitle").textContent = target ? t("agentEditTitle") : t("createAgent");
       $("aeSave").textContent = target ? t("save") : t("create");
       $("aeName").value = target ? target.username : "";
       $("aeKey").value = "";
       $("aeKeyHint").textContent = target ? t("agentKeyKeep") : t("agentKeyRequired");
-      $("aeModelUrl").value = ae.loaded.modelUrl;
-      $("aeModelPh").textContent = t("avatarEmpty");
-      $("aeModelClear").classList.add("hidden");
-      $("aeArkit").checked = ae.loaded.arkit;
-      $("aeHumanoid").checked = ae.loaded.humanoid;
-      const curModelUrl = target ? (target.model3dUrl || "") : "";
-      $("aeModelState").textContent = target ? tf("model3dCurrentFmt", { v: describeModel3d(curModelUrl) }) : "";
-      await renderAvatarModelPicker("aeModelGrid", curModelUrl, onAeBuiltinPick, "aeModelSearch");
+      avSetRow("aeModelState", target ? avStateText(target.model3dUrl || "") : "");
       $("aeToggleBtn").classList.toggle("hidden", !target);
       $("aeToggleBtn").textContent = target && target.status === "active" ? t("disable") : t("enable");
       $("aeDeleteBtn").classList.toggle("hidden", !target);
@@ -4535,28 +5225,6 @@
       renderAeAvatar();
     }
 
-    function onAeModelPick(event) {
-      const input = event.target;
-      const file = input.files[0];
-      input.value = "";
-      if (!file) return;
-      if (file.size > 20 * 1024 * 1024) return setAeStatus(t("model3dTooBig"));
-      if (!/\.(glb|gltf)$/i.test(file.name || "")) return setAeStatus(t("model3dBadType"));
-      ae.modelAction = "file";
-      ae.modelFile = file;
-      $("aeModelPh").textContent = file.name;
-      $("aeModelClear").classList.remove("hidden");
-      setAeStatus("");
-    }
-
-    function clearAeModel() {
-      ae.modelAction = ae.mode === "edit" ? "clear" : "keep";
-      ae.modelFile = null;
-      $("aeModelPh").textContent = t("avatarEmpty");
-      $("aeModelClear").classList.add("hidden");
-      $("aeModelUrl").value = "";
-    }
-
     async function aeUploadModel(name, file, arkit, humanoid) {
       const form = new FormData();
       form.append("file", file);
@@ -4564,33 +5232,11 @@
       await api(`/api/me/model3d?${q.toString()}`, { method: "POST", body: form });
     }
 
-    /* 内置形象：编辑态立即生效（PUT ?as=），创建态先暂存、提交时随 POST 一起写。
-       注意必须同步清掉 ae.loaded.modelUrl——否则保存时「URL 变了」会被判成 clear，
-       反而把刚设好的内置形象删掉。 */
-    async function onAeBuiltinPick(id) {
-      const url = BUILTIN_AVATAR_PREFIX + id;
-      if (ae.mode === "edit" && ae.username) {
-        try {
-          await putBuiltinAvatar(id, ae.username);
-          ae.loaded.modelUrl = "";
-          $("aeModelUrl").value = "";
-          markAvatarModelPicked("aeModelGrid", url);
-          $("aeModelState").textContent = tf("model3dCurrentFmt", { v: describeModel3d(url) });
-          setAeStatus(tf("avatarModelPicked", { name: builtinAvatarName(id) }));
-          refreshAgents();
-        } catch (err) { setAeStatus(err.message); }
-        return;
-      }
-      ae.pendingBuiltinId = id;
-      markAvatarModelPicked("aeModelGrid", url);
-      setAeStatus(tf("avatarModelPicked", { name: builtinAvatarName(id) }));
-    }
-
     async function saveAgentEditor() {
       const name = $("aeName").value.trim();
       const key = $("aeKey").value.trim();
-      const arkit = $("aeArkit").checked;
-      const humanoid = $("aeHumanoid").checked;
+      const arkit = avPending.arkit;
+      const humanoid = avPending.humanoid;
       $("aeSave").disabled = true;
       try {
         if (ae.mode === "create") {
@@ -4598,11 +5244,10 @@
           if (!key) { setAeStatus(t("pasteKey")); return; }
           const payload = { username: name, publicKey: key, model3dArkit: arkit, model3dHumanoid: humanoid };
           if (ae.avatarAction === "set" && ae.avatarData) payload.avatar = ae.avatarData;
-          const urlVal = $("aeModelUrl").value.trim();
-          if (ae.modelAction === "url" || (ae.modelAction === "keep" && urlVal)) payload.model3dUrl = urlVal;
-          else if (ae.pendingBuiltinId) payload.model3dUrl = BUILTIN_AVATAR_PREFIX + ae.pendingBuiltinId;
+          if (avPending.url) payload.model3dUrl = avPending.url;
+          else if (avPending.builtinId) payload.model3dUrl = BUILTIN_AVATAR_PREFIX + avPending.builtinId;
           await api("/api/agents", { method: "POST", body: JSON.stringify(payload) });
-          if (ae.modelAction === "file" && ae.modelFile) await aeUploadModel(name, ae.modelFile, arkit, humanoid);
+          if (avPending.file) await aeUploadModel(name, avPending.file, arkit, humanoid);
           $("agentEdit").close();
           voiceToast(tf("agentCreated", { name }));
         } else {
@@ -4622,14 +5267,19 @@
           } else if (ae.avatarAction === "clear") {
             await api(`/api/me/avatar?as=${encodeURIComponent(finalName)}`, { method: "DELETE" });
           }
-          let modelAction = ae.modelAction;
-          const urlVal = $("aeModelUrl").value.trim();
-          if (modelAction === "keep" && urlVal !== ae.loaded.modelUrl) modelAction = urlVal ? "url" : "clear";
-          if (modelAction === "file" && ae.modelFile) {
-            await aeUploadModel(finalName, ae.modelFile, arkit, humanoid);
+          /* 替身弹窗把意图都暂存在 avPending：文件 > 清空 > 内置 > 改过的外链 > 只改能力位 */
+          let modelAction = "keep";
+          if (avPending.file) modelAction = "file";
+          else if (avPending.clear) modelAction = "clear";
+          else if (avPending.builtinId) modelAction = "builtin";
+          else if (avPending.url && avPending.url !== ae.loaded.modelUrl) modelAction = "url";
+          if (modelAction === "file") {
+            await aeUploadModel(finalName, avPending.file, arkit, humanoid);
+          } else if (modelAction === "builtin") {
+            await putBuiltinAvatar(avPending.builtinId, finalName);
           } else if (modelAction === "url") {
             await api(`/api/me/model3d?as=${encodeURIComponent(finalName)}`, {
-              method: "PUT", body: JSON.stringify({ url: urlVal, arkit, humanoid }),
+              method: "PUT", body: JSON.stringify({ url: avPending.url, arkit, humanoid }),
             });
           } else if (modelAction === "clear") {
             await api(`/api/me/model3d?as=${encodeURIComponent(finalName)}`, { method: "DELETE" });
@@ -5443,6 +6093,7 @@
 
     (async function boot() {
       applyI18n();
+      await loadAuthChannels();
       if (window.mermaid) {
         mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict", suppressErrors: true });
       }

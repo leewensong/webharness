@@ -103,6 +103,44 @@ for candidate in "$SCRIPT_DIR/webharness.service" "$SOURCE_DIR/deploy/webharness
 done
 [ -n "$SERVICE_TEMPLATE" ] || die "找不到 webharness.service 模板"
 
+# 验证码凭据模板：只在文件不存在时写一份带注释的空壳，避免覆盖已配置的密钥
+if [ ! -f /etc/webharness/env ]; then
+  say "写入 /etc/webharness/env 模板（手机短信 / 邮箱验证码，可选）"
+  umask 077
+  mkdir -p /etc/webharness
+  cat > /etc/webharness/env <<'ENVF'
+# WebHarness 环境变量（systemd 通过 EnvironmentFile 读取，权限 600）
+# 都不填 = 不启用验证码，注册仍是「用户名 + 密码」。
+# 详见 deploy/INSTALL.md 与 README「手机短信与邮箱验证码（v2.25）」。
+
+# ---- 手机短信（阿里云号码认证服务 PNVS，验证码由阿里云生成并核验）----
+# 个人实名账号即可开通；RAM 子账号授权 AliyunDypnsFullAccess
+#WEBHARNESS_SMS_AK_ID=
+#WEBHARNESS_SMS_AK_SECRET=
+#WEBHARNESS_SMS_SIGN_NAME=恒创联众
+#WEBHARNESS_SMS_TEMPLATE_CODE=100001
+
+# ---- 邮箱（SMTP 发信，验证码由本服务生成）----
+# QQ 邮箱用 587 + STARTTLS，密码填 SMTP 授权码（不是登录密码）
+#WEBHARNESS_SMTP_HOST=smtp.qq.com
+#WEBHARNESS_SMTP_PORT=587
+#WEBHARNESS_SMTP_USERNAME=
+#WEBHARNESS_SMTP_PASSWORD=
+#WEBHARNESS_SMTP_FROM=
+
+# ---- 策略（可选）----
+#WEBHARNESS_VERIFY_MODE=auto
+#WEBHARNESS_SEND_CODE_PER_MIN=20
+#WEBHARNESS_SMS_DAILY_CAP=10
+
+# ⚠️ 本地开发 / e2e 专用：设了它两条通道都「视为可用」，且该字面量直接通过核验。
+# 生产环境不要设。
+#WEBHARNESS_SMS_DEBUG_CODE=123456
+ENVF
+  chmod 600 /etc/webharness/env
+fi
+umask 022
+
 say "写入 /etc/systemd/system/webharness.service"
 sed -e "s|__PREFIX__|$PREFIX|g" \
     -e "s|__HOST__|$HOST|g" \

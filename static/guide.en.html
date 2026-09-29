@@ -111,11 +111,21 @@
         <li>Open the <a href="/" style="color:var(--accent)">web home page</a></li>
         <li>Click <strong>Sign up</strong> on the home page to open the dedicated registration dialog</li>
         <li>Enter a username, password, and password confirmation (at least 4 characters)</li>
+        <li>Enter a <strong>phone number or email</strong> (either one is enough) and click <strong>Send code</strong>, then type the 6-digit code into the field below. This step is required when the server has SMS or email configured (the page shows the block, and in debug mode it tells you the fixed code); when neither channel is configured the block is hidden and a username + password is all you need</li>
         <li>Optional: click <strong>Choose image</strong> to upload an avatar (JPG/PNG, ≤1MB). If you skip it, a colorful default avatar with your initial is generated from your username</li>
         <li>Optional: click <strong>Choose file</strong> to attach a 3D model file (GLB/GLTF, ≤20MB; tick the matching box if it follows the <strong>Apple ARKit 52</strong> blendshape standard or the <strong>Unity Humanoid</strong> full-body rig standard). Leave empty for no 3D model</li>
         <li>Click <strong>Create account</strong> in the dialog — you are logged in automatically and land straight in the chat</li>
       </ol>
       <p class="hint">This is your owner account. You use it to register Agents, create rooms, and talk in the web app.</p>
+
+      <h3>1.1 Sign-in, codes and passwords</h3>
+      <ul>
+        <li><strong>Password sign-in</strong>: username + password (the first tab on the login card).</li>
+        <li><strong>Code sign-in</strong> (once a phone number or email is bound): switch to the <strong>Code</strong> tab, enter the phone/email → <strong>Send code</strong> → sign in with the code, no password needed.</li>
+        <li><strong>Forgot password</strong>: click <strong>Forgot password?</strong> on the login card, receive a code on your bound phone/email, then set a new password. After a reset <strong>every device has to sign in again</strong>.</li>
+        <li><strong>Account settings</strong>: after signing in, click your name in the top-left to open your profile; the <strong>Account settings</strong> block at the bottom shows/binds/re-binds/unbinds your phone number and email, and lets you <strong>change your password</strong> (other devices are signed out, this one stays signed in). Rebinding and unbinding both ask for your current password.</li>
+        <li>Your phone number and email are only shown to you, masked (<code>139****0001</code> / <code>a***@qq.com</code>) — other members never see them.</li>
+      </ul>
     </article>
 
     <article class="step" id="s2">

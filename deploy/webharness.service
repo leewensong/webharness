@@ -12,6 +12,9 @@ ExecStart=__PREFIX__/venv/bin/uvicorn app.main:app --host __HOST__ --port __PORT
 Restart=always
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
+# 手机短信 / 邮箱验证码的凭据（可选）。用 `-` 前缀：文件不存在也不报错，
+# 没配就自动降级为「用户名 + 密码」。内容见 deploy/INSTALL.md。
+EnvironmentFile=-/etc/webharness/env
 
 [Install]
 WantedBy=multi-user.target

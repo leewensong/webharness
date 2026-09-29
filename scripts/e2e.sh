@@ -22,13 +22,67 @@ check() { # check <描述> <实际> <期望包含>
 echo "== 探活 =="
 check "health" "$(curl -sS "$URL/api/health")" '"ok":true'
 
+echo "== 验证码通道 =="
+CH=$(curl -sS "$URL/api/auth/channels")
+check "channels 字段齐全" "$(printf '%s' "$CH" | python3 -c 'import sys,json;print(sorted(json.load(sys.stdin)))')" "['debugCode', 'email', 'phone', 'required']"
+REQUIRED=$(printf '%s' "$CH" | J "['required']")
+DEBUG_CODE=$(printf '%s' "$CH" | J ".get('debugCode') or ''")
+EMAIL_OK=$(printf '%s' "$CH" | J "['email']")
+# 只有「强制验证 + 邮箱通道可用 + 有调试码」时才跑严格模式断言。本地默认不配任何
+# 通道，注册仍是「用户名 + 密码」，下面原有的断言照旧通过。
+# 起服务参考：WEBHARNESS_SMS_DEBUG_CODE=123456 WEBHARNESS_VERIFY_MODE=required
+STRICT=False
+if [[ "$REQUIRED" == "True" && "$EMAIL_OK" == "True" && -n "$DEBUG_CODE" ]]; then STRICT=True; fi
+echo "    required=$REQUIRED email=$EMAIL_OK 调试码=$([[ -n "$DEBUG_CODE" ]] && echo 有 || echo 无) → 严格断言=$STRICT"
+
+# 请求发码。同一目标两次发码必然间隔 60 秒（服务端重发间隔），撞上就等到放行。
+send_code() { # send_code <channel> <target> <purpose>
+  local payload out
+  payload=$(python3 -c 'import json,sys;print(json.dumps({"channel":sys.argv[1],"target":sys.argv[2],"purpose":sys.argv[3]}))' "$1" "$2" "$3")
+  out=$(curl -sS "$URL/api/auth/send-code" -H 'Content-Type: application/json' -d "$payload")
+  if [[ "$out" == *"发送太频繁"* ]]; then
+    sleep 61
+    out=$(curl -sS "$URL/api/auth/send-code" -H 'Content-Type: application/json' -d "$payload")
+  fi
+  printf '%s' "$out"
+}
+
+# 生成注册请求体。严格模式下补上邮箱 + 调试码；发码必须真的请求一次，
+# 否则库里没有可核验的记录（调试码绕过的是发送，不是「必须发过」这条规则）。
+make_user_body() { # make_user_body <file> <username> [password] [avatar-data-url]
+  local file="$1" user="$2" pass="${3:-pass123}" avatar="${4:-}"
+  [[ "$STRICT" == "True" ]] && send_code email "$user@e2e.example.com" register >/dev/null
+  python3 - "$file" "$user" "$pass" "$avatar" "$STRICT" "$DEBUG_CODE" <<'PY'
+import json, sys
+file, user, password, avatar, strict, code = sys.argv[1:7]
+body = {"username": user, "password": password}
+if strict == "True":
+    body["email"] = f"{user}@e2e.example.com"
+    body["emailCode"] = code
+if avatar:
+    body["avatar"] = avatar
+json.dump(body, open(file, "w"))
+PY
+}
+
 echo "== 人类注册登录 =="
-python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":"pass123"}))' "$HUMAN" > "$TMP/user.json"
-curl -sS "$URL/api/users" -H 'Content-Type: application/json' -d @"$TMP/user.json" >/dev/null
+HUMAN_EMAIL="$HUMAN@e2e.example.com"
+make_user_body "$TMP/user.json" "$HUMAN"
+check "注册 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/users" -H 'Content-Type: application/json' -d @"$TMP/user.json")" "200"
 HTOK=$(curl -sS "$URL/api/login" -H 'Content-Type: application/json' -d @"$TMP/user.json" | J "['token']")
 check "重复注册 409" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/users" -H 'Content-Type: application/json' -d @"$TMP/user.json")" "409"
 python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":"wrong"}))' "$HUMAN" > "$TMP/bad.json"
 check "密码错误 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d @"$TMP/bad.json")" "401"
+
+if [[ "$STRICT" == "True" ]]; then
+  echo "== 注册强制验证 =="
+  check "缺手机/邮箱 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/users" -H 'Content-Type: application/json' -d '{"username":"e2e-nocontact-'$SUF'","password":"pass123"}')" "400"
+  check "没发过码就注册 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/users" -H 'Content-Type: application/json' -d '{"username":"e2e-nocode-'$SUF'","password":"pass123","email":"e2e-nocode-'$SUF'@e2e.example.com","emailCode":"'$DEBUG_CODE'"}')" "400"
+  check "没带验证码 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/users" -H 'Content-Type: application/json' -d '{"username":"e2e-nocodesent-'$SUF'","password":"pass123","email":"e2e-nocodesent-'$SUF'@e2e.example.com"}')" "400"
+  check "手机号格式非法 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/users" -H 'Content-Type: application/json' -d '{"username":"e2e-badphone-'$SUF'","password":"pass123","phone":"12345","phoneCode":"'$DEBUG_CODE'"}')" "400"
+  check "/api/me 只回掩码联系方式" "$(curl -sS "$URL/api/me" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("email"), d.get("emailVerified"), "'$HUMAN_EMAIL'" in json.dumps(d))')" "e***@e2e.example.com True False"
+fi
+
 
 echo "== Agent 接入 =="
 openssl genpkey -algorithm ed25519 -out "$TMP/priv.pem" 2>/dev/null
@@ -81,7 +135,7 @@ curl -sS "$URL/api/rooms" -H "Authorization: Bearer $ATOK" -H 'Content-Type: app
 check "主人列表含 agent 私密房" "$(curl -sS "$URL/api/rooms" -H "Authorization: Bearer $HTOK")" "$AGENT_ROOM"
 check "public 仍不含 agent 私密房" "$(curl -sS "$URL/api/rooms/public" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;print('$AGENT_ROOM' in [r['roomName'] for r in json.load(sys.stdin)['rooms']])")" "False"
 check "主人免密加入自己 agent 的私密房" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d @"$TMP/agent_priv_nopw.json")" "200"
-python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":"pass123"}))' "$OTHER" > "$TMP/other.json"
+make_user_body "$TMP/other.json" "$OTHER"
 curl -sS "$URL/api/users" -H 'Content-Type: application/json' -d @"$TMP/other.json" >/dev/null
 OTOK=$(curl -sS "$URL/api/login" -H 'Content-Type: application/json' -d @"$TMP/other.json" | J "['token']")
 check "外人列表不含 agent 私密房" "$(curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK" | python3 -c "import sys,json;print('$AGENT_ROOM' in [r['roomName'] for r in json.load(sys.stdin)['rooms']])")" "False"
@@ -157,7 +211,7 @@ printf '%s' "$JPG_B64" | base64 -d > "$TMP/a.jpg"
 python3 -c "open('$TMP/big.jpg','wb').write(open('$TMP/a.jpg','rb').read() + b'\x00'*(1100*1024))"
 printf 'not an image' > "$TMP/bad.jpg"
 AVH="e2e-avatar-$SUF"
-python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":"pass123","avatar":"data:image/jpeg;base64,"+sys.argv[2]}))' "$AVH" "$JPG_B64" > "$TMP/av.json"
+make_user_body "$TMP/av.json" "$AVH" pass123 "data:image/jpeg;base64,$JPG_B64"
 check "注册带头像返回 avatarUrl" "$(curl -sS "$URL/api/users" -H 'Content-Type: application/json' -d @"$TMP/av.json")" "/avatar?v="
 AVTOK=$(curl -sS "$URL/api/login" -H 'Content-Type: application/json' -d @"$TMP/av.json" | J "['token']")
 check "上传的头像按 jpeg 返回" "$(curl -sS -o /dev/null -w '%{content_type}' "$URL/api/users/$AVH/avatar" -H "Authorization: Bearer $AVTOK")" "image/jpeg"
@@ -249,7 +303,7 @@ check "解封后加入 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api
 check "解封后读消息 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/messages?limit=5" -H "Authorization: Bearer $OTOK")" "200"
 check "解封未封禁者 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans/$OTHER" -X DELETE -H "Authorization: Bearer $ATOK")" "404"
 EXTRA="e2e-extra-$SUF"
-python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":"pass123"}))' "$EXTRA" > "$TMP/extra.json"
+make_user_body "$TMP/extra.json" "$EXTRA"
 curl -sS "$URL/api/users" -H 'Content-Type: application/json' -d @"$TMP/extra.json" >/dev/null
 ETOK=$(curl -sS "$URL/api/login" -H 'Content-Type: application/json' -d @"$TMP/extra.json" | J "['token']")
 check "预先封禁未入房者" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$GOV_ROOM/bans" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(ban_body "$EXTRA" 24h)")" "200"
@@ -596,6 +650,38 @@ echo "== Agent 停用 =="
 curl -sS -X PATCH "$URL/api/agents/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"status":"disabled"}' >/dev/null
 check "停用后取挑战 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/agent-auth/challenge" -H 'Content-Type: application/json' \
   -d "$(python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1]}))' "$AGENT")")" "401"
+
+if [[ "$STRICT" == "True" ]]; then
+  echo "== 验证码登录 / 绑定 / 重置密码（v2.25） =="
+  OTHER_EMAIL="$OTHER@e2e.example.com"
+  NEWPHONE="139$(printf '%08d' $(( (RANDOM * 32768 + RANDOM) % 100000000 )))"
+
+  send_code email "$HUMAN_EMAIL" login >/dev/null
+  check "邮箱验证码登录 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"identifier":"'$HUMAN_EMAIL'","code":"'$DEBUG_CODE'"}')" "200"
+  check "同一验证码不可重放 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"identifier":"'$HUMAN_EMAIL'","code":"'$DEBUG_CODE'"}')" "400"
+  check "验证码不存在时登录 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"identifier":"nobody-'$SUF'@e2e.example.com","code":"'$DEBUG_CODE'"}')" "400"
+  send_code email "nobody-$SUF@e2e.example.com" login >/dev/null
+  check "未绑定邮箱登录 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"identifier":"nobody-'$SUF'@e2e.example.com","code":"'$DEBUG_CODE'"}')" "401"
+  check "用户名不能走验证码登录 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"identifier":"'$HUMAN'","code":"'$DEBUG_CODE'"}')" "400"
+
+  send_code phone "$NEWPHONE" bind >/dev/null
+  check "绑定手机 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/me/contacts" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"channel":"phone","target":"'$NEWPHONE'","code":"'$DEBUG_CODE'","password":"pass123"}')" "200"
+  check "/api/me 手机已验证" "$(curl -sS "$URL/api/me" -H "Authorization: Bearer $HTOK" | J "['phoneVerified']")" "True"
+  check "密码不对不能绑定 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/me/contacts" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"channel":"phone","target":"13999998888","code":"'$DEBUG_CODE'","password":"nope"}')" "400"
+  check "已在用的邮箱不能绑定 409" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/me/contacts" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"channel":"email","target":"'$OTHER_EMAIL'","code":"'$DEBUG_CODE'","password":"pass123"}')" "409"
+  check "房间详情不含联系方式" "$(curl -sS "$URL/api/rooms/$PUB_ROOM" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;d=json.dumps(json.load(sys.stdin));print("'$NEWPHONE'" in d or "'$HUMAN_EMAIL'" in d)')" "False"
+  check "Agent 列表不含联系方式" "$(curl -sS "$URL/api/agents" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;d=json.dumps(json.load(sys.stdin));print("'$NEWPHONE'" in d or "'$HUMAN_EMAIL'" in d)')" "False"
+
+  send_code email "$OTHER_EMAIL" reset >/dev/null
+  check "验证码重置密码 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/auth/reset-password" -H 'Content-Type: application/json' -d '{"identifier":"'$OTHER_EMAIL'","code":"'$DEBUG_CODE'","newPassword":"reset999"}')" "200"
+  check "重置后旧密码 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"username":"'$OTHER'","password":"pass123"}')" "401"
+  check "重置后新密码 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"username":"'$OTHER'","password":"reset999"}')" "200"
+  check "重置后旧 token 立即失效 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/me" -H "Authorization: Bearer $OTOK")" "401"
+
+  check "解绑手机 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/me/contacts/unbind" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"channel":"phone","password":"pass123"}')" "200"
+  check "解绑后手机为空" "$(curl -sS "$URL/api/me" -H "Authorization: Bearer $HTOK" | J "['phone']")" "None"
+  check "解绑后不能再用它登录 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"identifier":"'$NEWPHONE'","code":"'$DEBUG_CODE'"}')" "400"
+fi
 
 echo
 echo "通过 $PASS 项，失败 $FAIL 项"

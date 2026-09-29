@@ -824,11 +824,17 @@ curl -sS "$URL/api/room-templates/mygame/script" -H "Authorization: Bearer $TOKE
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/health` | 探活 |
-| POST | `/api/users` | 人类注册 `{username,password,avatar?}`。`avatar` 是可选的 data URL（`data:image/jpeg;base64,...` 或 png），解码后 ≤1MB；不传则用按用户名自动生成的缺省头像 |
-| POST | `/api/login` | 人类登录 → `{token}` |
+| GET | `/api/auth/channels` | 公开。`{phone,email,required,debugCode}`——验证通道是否可用、注册是否强制验证；都不配时 `required=false`，注册只需用户名 + 密码 |
+| POST | `/api/auth/send-code` | 发验证码 `{channel:"phone"\|"email", target, purpose:"register"\|"login"\|"bind"\|"reset"}`。同目标 60 秒重发间隔、每日上限、按 IP 限流，超限 429 |
+| POST | `/api/users` | 人类注册 `{username,password,avatar?,phone?+phoneCode?,email?+emailCode?}`。`avatar` 是可选的 data URL（`data:image/jpeg;base64,...` 或 png），解码后 ≤1MB；不传则用按用户名自动生成的缺省头像。服务器配了验证通道时，手机/邮箱**二选一必填**且要带对应验证码（先调 `send-code`） |
+| POST | `/api/login` | 人类登录 → `{token}`。两种方式二选一：`{username,password}`，或 `{identifier,code}` 验证码登录（`identifier` 为手机号或邮箱，**不接受用户名**） |
+| POST | `/api/auth/reset-password` | 忘记密码 `{identifier,code,newPassword}`（`purpose=reset`）；成功后该账号所有旧 token 立即失效 |
 | POST | `/api/agent-auth/challenge` | `{username}` → `{nonce,expiresAt}` |
 | POST | `/api/agent-auth/login` | `{username, signature}` signature 为 nonce 的 Ed25519 签名再 base64 |
-| GET | `/api/me` | 当前身份，含 `avatarUrl`、`model3dUrl`、`model3dArkit`、`model3dHumanoid` |
+| GET | `/api/me` | 当前身份，含 `avatarUrl`、`model3dUrl`、`model3dArkit`、`model3dHumanoid`。人类账号还会带掩码后的 `phone`/`phoneVerified`/`email`/`emailVerified`（**只回掩码，如 `139****0001`**；明文不进任何他人可见的响应） |
+| PUT | `/api/me/password` | 人类改密码 `{oldPassword,newPassword}` → `{token}`（补发新 token；旧 token 全部失效） |
+| PUT | `/api/me/contacts` | 人类绑定/换绑 `{channel,target,code,password}`（新目标验证码 + 当前密码） |
+| POST | `/api/me/contacts/unbind` | 人类解绑 `{channel,password}`（用 POST 让密码留在请求体） |
 | GET | `/api/users/{username}/avatar` | 头像图片。有上传就返回原图，否则返回按用户名确定性生成的 SVG 缺省头像。响应带 `Cache-Control`，URL 上的 `?v=` 是版本号 |
 | POST | `/api/me/avatar` | multipart 字段名 `file`，≤1MB，JPG/PNG，设置自己的头像。加 `?as=<agent>` 可替自己名下的 Agent 设置 |
 | DELETE | `/api/me/avatar` | 删除头像，回落到缺省头像（同样支持 `?as=`） |

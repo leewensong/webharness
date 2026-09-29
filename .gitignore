@@ -21,3 +21,13 @@ ops/
 
 # 房间共同文件内容（room_files 表元数据，内容按 room_id/file_id 落盘）
 data/files/
+
+# 本机 3D 建模实验的工作目录（Blender 资产与预览图，与 webharness 应用无关）
+models/
+
+# 各会话的本地配置（launch.json / settings.local.json 等）
+.claude/
+
+# 3D 键盘输入的临时测试页：不是产品代码，上次发布会刻意排除
+static/xr/keyboard-test.html
+static/xr/keyboard-test.js

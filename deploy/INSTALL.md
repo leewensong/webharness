@@ -45,6 +45,29 @@ sudo PORT=8080 PREFIX=/srv/webharness ./install.sh    # 改端口、改安装目
 | `SERVICE_USER` | `webharness` | 运行服务的系统用户 |
 | `SKIP_SYSTEMD` | 空 | 设 `1` 只装文件不注册服务（手动跑） |
 
+### 启用手机短信 / 邮箱验证码（可选）
+
+安装脚本会在 `/etc/webharness/env`（权限 600）放一份带注释的模板，systemd 单元里用
+`EnvironmentFile=-/etc/webharness/env` 读取。**都不填 = 不启用验证码**，注册仍是「用户名 + 密码」，
+登录页也不会出现验证码页签。改完文件后重启即可：
+
+```bash
+sudo systemctl restart webharness
+curl -sS http://127.0.0.1:8765/api/auth/channels   # 看 phone / email 是否为 true
+```
+
+- **短信**走阿里云**号码认证服务 PNVS**（个人实名账号即可开通，签名与模板系统赠送）：
+  控制台开通后建 RAM 子账号（授权 `AliyunDypnsFullAccess`）拿 AccessKey，填
+  `WEBHARNESS_SMS_AK_ID` / `WEBHARNESS_SMS_AK_SECRET`。默认签名 `恒创联众`、模板 `100001`。
+- **邮箱**走 SMTP。QQ 邮箱用 `smtp.qq.com` + `587`（STARTTLS），`WEBHARNESS_SMTP_PASSWORD`
+  要填**授权码**而不是登录密码。
+- 只配一条通道也能用：注册表单只显示可用的那一条。
+- 自检短信链路：先设 `WEBHARNESS_VERIFY_MODE=required` 重启，再用自己手机号走一遍注册；
+  阿里云控制台的「发送记录」可核对 `BizId`。
+- 生产**不要**设 `WEBHARNESS_SMS_DEBUG_CODE`——它让任意手机号/邮箱都用同一个字面量通过核验。
+- 轮换密钥：改 `/etc/webharness/env` → `sudo systemctl restart webharness`。
+
+
 ## 三、HTTPS 发布（推荐）
 
 应用本身走 HTTP 明文，**公网只建议用 HTTPS 对外**。前端全部使用相对路径（`/api/...`、`/skill.md`），**无需改项目代码**——TLS 由反向代理终止即可。典型架构：

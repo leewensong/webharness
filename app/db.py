@@ -89,6 +89,12 @@ def init_db() -> None:
                 owner_id INTEGER REFERENCES users(id),
                 public_key TEXT,
                 status TEXT NOT NULL DEFAULT 'active',
+                phone TEXT,
+                phone_verified_at TEXT,
+                email TEXT,
+                email_verified_at TEXT,
+                -- 改密/重置密码时 +1：token 里带着签发时的值，对不上即失效（踢掉其他会话）
+                token_epoch INTEGER NOT NULL DEFAULT 0,
                 avatar BLOB,
                 avatar_mime TEXT,
                 avatar_updated_at TEXT,
@@ -107,6 +113,22 @@ def init_db() -> None:
                 expires_at TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            -- 手机 / 邮箱验证码（v2.25）。phone 行的 code_hash 恒为 NULL——码由阿里云
+            -- PNVS 生成并核验，本服务只记发送/过期/尝试次数；email 行存 PBKDF2 哈希
+            -- （无第三方核验，需自存自比）。day_key 是发送当天的 UTC 日期，用于现算每日上限。
+            CREATE TABLE IF NOT EXISTS verify_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel TEXT NOT NULL CHECK (channel IN ('phone', 'email')),
+                target TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                code_hash TEXT,
+                sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT NOT NULL,
+                verified_at TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                day_key TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS rooms (
@@ -307,6 +329,32 @@ def init_db() -> None:
         _add_column_if_missing(conn, "users", "model3d_arkit", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "users", "model3d_humanoid", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "users", "model3d_updated_at", "TEXT")
+        # 人类账号的手机 / 邮箱（v2.25）：邮箱一律以小写存；手机归一化为 11 位。
+        _add_column_if_missing(conn, "users", "phone", "TEXT")
+        _add_column_if_missing(conn, "users", "phone_verified_at", "TEXT")
+        _add_column_if_missing(conn, "users", "email", "TEXT")
+        _add_column_if_missing(conn, "users", "email_verified_at", "TEXT")
+        _add_column_if_missing(conn, "users", "token_epoch", "INTEGER NOT NULL DEFAULT 0")
+        # 唯一性：SQLite 的 ALTER TABLE 加不了 UNIQUE，改用部分唯一索引
+        # （老库这些列全是 NULL，建索引不会冲突）。
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone
+            ON users(phone) WHERE phone IS NOT NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
+            ON users(email) WHERE email IS NOT NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_verify_codes_lookup
+            ON verify_codes(channel, target, purpose)
+            """
+        )
         _add_column_if_missing(conn, "rooms", "password_hash", "TEXT")
         _add_column_if_missing(conn, "rooms", "visibility", "TEXT NOT NULL DEFAULT 'private'")
         _add_column_if_missing(conn, "rooms", "muted", "INTEGER NOT NULL DEFAULT 0")

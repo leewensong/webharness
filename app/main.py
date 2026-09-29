@@ -17,12 +17,12 @@ from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from pydantic import BaseModel, Field, ValidationError
 
-from . import auth
+from . import auth, config, ratelimit, verify_codes
 from .db import FILES_DIR, UPLOADS_DIR, get_db, init_db, seed_builtin_templates
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -236,14 +236,16 @@ async def lifespan(_: FastAPI):
     _main_loop = asyncio.get_running_loop()
     init_db()
     seed_builtin_templates()
+    for warning in config.startup_warnings():
+        print(f"[webharness] 警告：{warning}", flush=True)
     yield
     _main_loop = None
 
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.24.0",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。",
+    version="2.25.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。",
     lifespan=lifespan,
 )
 
@@ -264,11 +266,49 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=4, max_length=128)
     # 可选 2D 头像，data URL（data:image/jpeg;base64,...），解码后 ≤1MB；留空则用缺省头像
     avatar: str | None = Field(default=None, max_length=2_000_000)
+    # 手机 / 邮箱（二选一或都填）+ 各自验证码；是否强制见 config.verify_required()
+    phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=254)
+    phoneCode: str | None = Field(default=None, max_length=32)
+    emailCode: str | None = Field(default=None, max_length=32)
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    """两种登录方式二选一：用户名 + 密码，或 手机/邮箱 + 验证码。"""
+
+    username: str | None = Field(default=None, max_length=254)
+    password: str | None = Field(default=None, max_length=128)
+    identifier: str | None = Field(default=None, max_length=254)
+    code: str | None = Field(default=None, max_length=32)
+
+
+class SendCodeRequest(BaseModel):
+    channel: Literal["phone", "email"]
+    target: str = Field(min_length=3, max_length=254)
+    purpose: Literal["register", "login", "bind", "reset"]
+
+
+class ContactUpdate(BaseModel):
+    channel: Literal["phone", "email"]
+    target: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=1, max_length=32)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class PasswordChange(BaseModel):
+    oldPassword: str = Field(min_length=1, max_length=128)
+    newPassword: str = Field(min_length=4, max_length=128)
+
+
+class PasswordReset(BaseModel):
+    identifier: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=1, max_length=32)
+    newPassword: str = Field(min_length=4, max_length=128)
+
+
+class ContactUnbind(BaseModel):
+    channel: Literal["phone", "email"]
+    password: str = Field(min_length=1, max_length=128)
 
 
 class AgentCreate(BaseModel):
@@ -448,6 +488,16 @@ def require_user(authorization: Annotated[str | None, Header(alias="Authorizatio
     user = auth.parse_token(authorization.removeprefix("Bearer ").strip())
     if not user:
         raise HTTPException(status_code=401, detail="token 无效或已过期")
+    # 每次请求确认账号仍可用、且没被改密/重置密码踢下线：token 里带着签发时的
+    # token_epoch，与库里对不上即失效（也让禁用账号的旧 token 立刻作废）。
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, token_epoch FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()
+    if not row or row["status"] != "active":
+        raise HTTPException(status_code=401, detail="账号不可用")
+    if int(row["token_epoch"] or 0) != user["epoch"]:
+        raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录")
     return user
 
 
@@ -461,6 +511,11 @@ def require_human(user: CurrentUser):
 
 
 HumanUser = Annotated[dict, Depends(require_human)]
+
+
+@app.exception_handler(verify_codes.VerifyError)
+def _verify_error_handler(_: Request, exc: verify_codes.VerifyError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 def _blank_to_none(value: str | None) -> str | None:
@@ -1302,7 +1357,101 @@ def health():
     return {"ok": True}
 
 
-# ---------- 人类账户 ----------
+# ---------- 人类账户（v2.25：手机短信 / 邮箱验证码） ----------
+
+def _login_payload(user) -> dict:
+    return {
+        "token": auth.create_token(
+            user["id"], user["username"], user["kind"], user["token_epoch"] or 0
+        ),
+        "username": user["username"],
+        "userId": user["id"],
+        "kind": user["kind"],
+    }
+
+
+def _get_user_by_contact(conn, channel: str, target: str):
+    """按手机或邮箱找账号。标识符解析顺序固定为「手机 → 邮箱」，永不解析用户名
+    （用户名允许纯数字，可能和手机号撞车）。"""
+    column = "phone" if channel == "phone" else "email"
+    return conn.execute(
+        f"SELECT id, username, kind, status, password_hash, token_epoch"
+        f" FROM users WHERE {column} = ?",
+        (target,),
+    ).fetchone()
+
+
+def _contact_conflict(conn, channel: str, target: str, exclude_user_id: int | None = None) -> str | None:
+    """手机/邮箱是否已被占用；返回冲突说明，可用则返回 None。"""
+    column = "phone" if channel == "phone" else "email"
+    sql = f"SELECT 1 FROM users WHERE {column} = ?"
+    params: list[Any] = [target]
+    if exclude_user_id is not None:
+        sql += " AND id != ?"
+        params.append(exclude_user_id)
+    if conn.execute(sql, params).fetchone():
+        return "该手机号已被使用" if channel == "phone" else "该邮箱已被使用"
+    # 手机号还得排除与用户名撞车：否则「手机 → 邮箱」的解析顺序会让账号归属含糊
+    if channel == "phone":
+        sql = "SELECT 1 FROM users WHERE username = ?"
+        params = [target]
+        if exclude_user_id is not None:
+            sql += " AND id != ?"
+            params.append(exclude_user_id)
+        if conn.execute(sql, params).fetchone():
+            return "该号码与已有用户名重复，请换一个"
+    return None
+
+
+def _contact_fields(conn, user_id: int) -> dict:
+    """本人联系方式的掩码与绑定状态。只在 /api/me 与绑定接口里返回——
+    绝不能进 PROFILE_COLUMNS/_get_user，那会经在线成员、房间成员列表泄露给所有人。"""
+    row = conn.execute(
+        "SELECT phone, phone_verified_at, email, email_verified_at FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if not row:
+        return {"phone": None, "phoneVerified": False, "email": None, "emailVerified": False}
+    return {
+        "phone": config.mask_target("phone", row["phone"]),
+        "phoneVerified": bool(row["phone"] and row["phone_verified_at"]),
+        "email": config.mask_target("email", row["email"]),
+        "emailVerified": bool(row["email"] and row["email_verified_at"]),
+    }
+
+
+def _split_identifier(raw: str) -> tuple[str, str]:
+    """把「手机号或邮箱」拆成 (channel, target)；顺序固定 手机 → 邮箱。"""
+    text = (raw or "").strip()
+    phone = config.normalize_phone(text)
+    if phone:
+        return "phone", phone
+    email = config.normalize_email(text)
+    if email:
+        return "email", email
+    raise HTTPException(status_code=400, detail="请填写正确的手机号或邮箱")
+
+
+@app.get("/api/auth/channels")
+def auth_channels():
+    """公开：前端据此隐藏不可用入口，e2e 据此决定跑哪条分支。"""
+    return {
+        "phone": config.sms_available(),
+        "email": config.email_available(),
+        "required": config.verify_required(),
+        # 仅调试模式（设了 WEBHARNESS_SMS_DEBUG_CODE）才回显，方便本地浏览器实测
+        "debugCode": config.sms_debug_code(),
+    }
+
+
+@app.post("/api/auth/send-code")
+def send_code(body: SendCodeRequest, request: Request):
+    client = request.client.host if request.client else "unknown"
+    wait = ratelimit.hit("send-code", client, config.send_code_per_minute(), 60.0)
+    if wait > 0:
+        raise HTTPException(status_code=429, detail=f"操作太频繁，请 {int(wait) + 1} 秒后再试")
+    return verify_codes.send(body.channel, body.target, body.purpose)
+
 
 @app.post("/api/users")
 def create_user(body: UserCreate):
@@ -1312,23 +1461,62 @@ def create_user(body: UserCreate):
         data, declared = _decode_data_url(body.avatar)
         avatar_mime = _validate_avatar_bytes(data, declared)
         avatar_bytes = data
+
+    phone = config.normalize_phone(body.phone) if body.phone else None
+    email = config.normalize_email(body.email) if body.email else None
+    if body.phone and not phone:
+        raise HTTPException(status_code=400, detail="手机号格式不正确")
+    if body.email and not email:
+        raise HTTPException(status_code=400, detail="邮箱格式不正确")
+    if config.verify_required() and not (phone or email):
+        raise HTTPException(status_code=400, detail="请填写手机号或邮箱，并完成验证码验证")
+
+    # 先查占用，避免白烧一个验证码；再把码核验掉（consume 自己开连接，故放在事务外）
     with get_db() as conn:
-        exists = conn.execute("SELECT 1 FROM users WHERE username = ?", (body.username,)).fetchone()
-        if exists:
+        if phone:
+            conflict = _contact_conflict(conn, "phone", phone)
+            if conflict:
+                raise HTTPException(status_code=409, detail=conflict)
+        if email:
+            conflict = _contact_conflict(conn, "email", email)
+            if conflict:
+                raise HTTPException(status_code=409, detail=conflict)
+        if conn.execute("SELECT 1 FROM users WHERE username = ?", (body.username,)).fetchone():
             raise HTTPException(status_code=409, detail="用户名已存在")
-        conn.execute(
-            """
-            INSERT INTO users (username, password_hash, kind, avatar, avatar_mime, avatar_updated_at)
-            VALUES (?, ?, 'human', ?, ?, ?)
-            """,
-            (
-                body.username,
-                auth.hash_password(body.password),
-                avatar_bytes,
-                avatar_mime,
-                _db_now(conn) if avatar_bytes else None,
-            ),
-        )
+
+    if phone:
+        if not body.phoneCode:
+            raise HTTPException(status_code=400, detail="请先获取手机验证码")
+        verify_codes.consume("phone", phone, "register", body.phoneCode)
+    if email:
+        if not body.emailCode:
+            raise HTTPException(status_code=400, detail="请先获取邮箱验证码")
+        verify_codes.consume("email", email, "register", body.emailCode)
+
+    with get_db() as conn:
+        now = _db_now(conn)
+        try:
+            conn.execute(
+                """
+                INSERT INTO users (username, password_hash, kind, avatar, avatar_mime, avatar_updated_at,
+                                   phone, phone_verified_at, email, email_verified_at)
+                VALUES (?, ?, 'human', ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    body.username,
+                    auth.hash_password(body.password),
+                    avatar_bytes,
+                    avatar_mime,
+                    now if avatar_bytes else None,
+                    phone,
+                    now if phone else None,
+                    email,
+                    now if email else None,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            # 唯一索引兜底（上面的检查有竞态窗口）
+            raise HTTPException(status_code=409, detail="用户名或联系方式已被占用") from exc
         user = _get_user(conn, body.username)
     return {
         "userId": user["id"],
@@ -1340,19 +1528,147 @@ def create_user(body: UserCreate):
 
 @app.post("/api/login")
 def login(body: LoginRequest):
-    with get_db() as conn:
-        user = conn.execute(
-            "SELECT id, username, kind, password_hash FROM users WHERE username = ?",
-            (body.username,),
-        ).fetchone()
-        if not user or user["kind"] != "human" or not auth.verify_password(body.password, user["password_hash"]):
+    if body.identifier and body.code:
+        return _login_by_code(body.identifier, body.code)
+    if body.username and body.password:
+        with get_db() as conn:
+            user = conn.execute(
+                "SELECT id, username, kind, status, password_hash, token_epoch"
+                " FROM users WHERE username = ?",
+                (body.username,),
+            ).fetchone()
+        if (
+            not user
+            or user["kind"] != "human"
+            or user["status"] != "active"
+            or not auth.verify_password(body.password, user["password_hash"])
+        ):
             raise HTTPException(status_code=401, detail="用户名或密码错误")
+        return _login_payload(user)
+    raise HTTPException(status_code=400, detail="请填写用户名密码，或用手机/邮箱验证码登录")
+
+
+def _login_by_code(identifier: str, code: str) -> dict:
+    if not config.any_channel_available():
+        raise HTTPException(status_code=400, detail="验证码登录未启用")
+    channel, target = _split_identifier(identifier)
+    verified = verify_codes.consume(channel, target, "login", code)
+    with get_db() as conn:
+        user = _get_user_by_contact(conn, channel, verified)
+    if not user or user["kind"] != "human" or user["status"] != "active":
+        raise HTTPException(
+            status_code=401, detail="该手机号或邮箱尚未绑定账号，请先用用户名密码登录后绑定"
+        )
+    return _login_payload(user)
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(body: PasswordReset):
+    """忘记密码：手机/邮箱验证码 + 新密码。成功后所有旧会话立即失效。"""
+    if not config.any_channel_available():
+        raise HTTPException(status_code=400, detail="密码重置未启用")
+    channel, target = _split_identifier(body.identifier)
+    with get_db() as conn:
+        user = _get_user_by_contact(conn, channel, target)
+    if not user or user["kind"] != "human" or user["status"] != "active":
+        raise HTTPException(status_code=404, detail="该手机号或邮箱尚未绑定账号")
+    verify_codes.consume(channel, target, "reset", body.code)
+    _set_password(user["id"], body.newPassword, user["password_hash"])
+    return {"ok": True, "username": user["username"]}
+
+
+def _set_password(user_id: int, new_password: str, current_hash: str) -> None:
+    """改密 + token_epoch +1（踢掉所有旧会话）。"""
+    if auth.verify_password(new_password, current_hash):
+        raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash = ?, token_epoch = token_epoch + 1 WHERE id = ?",
+            (auth.hash_password(new_password), user_id),
+        )
+
+
+@app.put("/api/me/password")
+def change_password(body: PasswordChange, user: HumanUser):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()
+        # 用 400 而不是 401：前端 api() 见到带 token 的 401 会直接登出，
+        # 而这里只是「重新验证失败」，不该把用户踢下线
+        if not row or not auth.verify_password(body.oldPassword, row["password_hash"]):
+            raise HTTPException(status_code=400, detail="当前密码不正确")
+        current_hash = row["password_hash"]
+    _set_password(user["id"], body.newPassword, current_hash)
+    # 改密会连本机一起踢下线，所以顺手补发一个新 token，前端换上后无需重新登录
+    with get_db() as conn:
+        epoch = conn.execute(
+            "SELECT token_epoch FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()["token_epoch"]
     return {
-        "token": auth.create_token(user["id"], user["username"], "human"),
-        "username": user["username"],
-        "userId": user["id"],
-        "kind": "human",
+        "ok": True,
+        "token": auth.create_token(user["id"], user["username"], "human", epoch),
     }
+
+
+@app.put("/api/me/contacts")
+def bind_contact(body: ContactUpdate, user: HumanUser):
+    """绑定 / 换绑手机或邮箱：新目标的验证码 + 当前密码（身份确认）。
+
+    换绑用「当前密码」而不是「旧号验证码」：密码在注册时必填、恒可用，UI 也只要一个
+    密码框，不依赖旧号还能收码。
+    """
+    normalized = config.normalize_target(body.channel, body.target)
+    if not normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="手机号格式不正确" if body.channel == "phone" else "邮箱格式不正确",
+        )
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()
+        if not row or not auth.verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=400, detail="密码不正确")
+        conflict = _contact_conflict(conn, body.channel, normalized, exclude_user_id=user["id"])
+        if conflict:
+            raise HTTPException(status_code=409, detail=conflict)
+    verified = verify_codes.consume(body.channel, body.target, "bind", body.code)
+    column = "phone" if body.channel == "phone" else "email"
+    with get_db() as conn:
+        now = _db_now(conn)
+        try:
+            conn.execute(
+                f"UPDATE users SET {column} = ?, {column}_verified_at = ? WHERE id = ?",
+                (verified, now, user["id"]),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="该手机号或邮箱已被占用") from exc
+        contacts = _contact_fields(conn, user["id"])
+    return {"ok": True, **contacts}
+
+
+@app.post("/api/me/contacts/unbind")
+def unbind_contact(body: ContactUnbind, user: HumanUser):
+    """解绑手机或邮箱。用 POST 而非 DELETE：密码必须放请求体，不能进 URL（访问日志）。"""
+    column = "phone" if body.channel == "phone" else "email"
+    with get_db() as conn:
+        row = conn.execute(
+            f"SELECT password_hash, {column} AS target FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()
+        if not row or not auth.verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=400, detail="密码不正确")
+        if not row["target"]:
+            raise HTTPException(
+                status_code=400,
+                detail="尚未绑定手机号" if body.channel == "phone" else "尚未绑定邮箱",
+            )
+        conn.execute(
+            f"UPDATE users SET {column} = NULL, {column}_verified_at = NULL WHERE id = ?",
+            (user["id"],),
+        )
+        contacts = _contact_fields(conn, user["id"])
+    return {"ok": True, **contacts}
 
 
 # ---------- Agent 登录（challenge-response） ----------
@@ -1417,6 +1733,9 @@ def me(user: CurrentUser):
             if row["owner_id"]:
                 owner = conn.execute("SELECT username FROM users WHERE id = ?", (row["owner_id"],)).fetchone()
                 result["ownerName"] = owner["username"] if owner else None
+            if user["kind"] == "human":
+                # 联系方式只在自己这里回显（掩码），不进 PROFILE_COLUMNS
+                result.update(_contact_fields(conn, row["id"]))
     return result
 
 

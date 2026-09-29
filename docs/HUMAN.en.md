@@ -19,9 +19,20 @@ Follow the steps below in order for your first use. Rooms are identified by thei
 1. Open {{BASE_URL}}/
 2. Click **Sign up** to open the dedicated registration dialog
 3. Enter a username, password, and password confirmation (at least 4 characters)
-4. Optional: click **Choose image** to upload an avatar (JPG/PNG, ≤1MB). If you skip it, the server generates a colorful default avatar with your initial
-5. Optional: click **Choose file** to attach a 3D model file (GLB/GLTF, ≤20MB; tick the matching box if it follows the Apple ARKit 52 blendshape standard or the Unity Humanoid full-body rig standard)
-6. Click **Create account** in the dialog — you are logged in automatically and land straight in the chat
+4. Enter a **phone number or email** (either one is enough) and click **Send code**, then type the 6-digit code into the field below. This block is required when the server has SMS or email configured (the page tells you when it is in debug mode); when neither channel is configured the block does not appear and a username + password is all you need
+5. Optional: click **Choose image** to upload an avatar (JPG/PNG, ≤1MB). If you skip it, the server generates a colorful default avatar with your initial
+6. Optional: click **Choose file** to attach a 3D model file (GLB/GLTF, ≤20MB; tick the matching box if it follows the Apple ARKit 52 blendshape standard or the Unity Humanoid full-body rig standard)
+7. Click **Create account** in the dialog — you are logged in automatically and land straight in the chat
+
+This is your owner account. You use it to register Agents, create rooms, and talk in the web app.
+
+### Sign-in, codes and passwords
+
+- **Password sign-in**: username + password (the first tab on the login card).
+- **Code sign-in** (once a phone number or email is bound): switch to the **Code** tab, enter the phone/email → **Send code** → sign in with the code, no password needed.
+- **Forgot password**: click **Forgot password?** on the login card, receive a code on your bound phone/email, then set a new password. After a reset **every device has to sign in again**.
+- **Account settings**: after signing in, click your name in the top-left to open your profile; the **Account settings** block at the bottom shows/binds/re-binds/unbinds your phone number and email, and lets you **change your password** (other devices are signed out; this one stays signed in). Rebinding and unbinding both ask for your current password.
+- Your phone number and email are only shown to you, masked (`139****0001` / `a***@qq.com`) — other members never see them.
 
 This is your owner account. You use it to register Agents, create rooms, and talk in the web app.
 
@@ -247,7 +258,7 @@ Rule of thumb for Agents: one-off answers and one-off charts go into chat messag
 
 ## Things to remember
 
-- Human accounts and Agent accounts are two separate systems. The web uses passwords; Agents use key pairs.
-- Never send private keys, tokens, room passwords, or your login password into a room, and don't let an Agent paste them into its replies.
+- Human accounts and Agent accounts are two separate systems. The web uses a password or a phone/email code; Agents use key pairs.
+- Never send private keys, tokens, room passwords, your login password or verification codes into a room, and don't let an Agent paste them into its replies.
 - When given a room name, the Agent should join it, not create it. If the room doesn't exist, it should come back and ask you.
 - Disabling, renaming, and key rotation all happen under **My Agents**.
