@@ -1009,6 +1009,7 @@ export function createXRFiles(opts) {
           drag.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, c.clone());
           const p = new THREE.Vector3();
           drag.scY0 = ray.ray.intersectPlane(drag.plane, p) ? p.y : c.y;
+          drag.sc0 = rec.holder.scale.x;   /* 起始缩放：每帧都乘 holder 会指数失控 */
         }
         return drag;
       }
@@ -1072,14 +1073,16 @@ export function createXRFiles(opts) {
       const p = new THREE.Vector3();
       if (drag.plane && ray.ray.intersectPlane(drag.plane, p)) {
         const c = rec.holder.position;
-        const a = Math.atan2(p.x - c.x, p.z - c.z);
-        rec.holder.rotation.y = drag.rot0 + (a - drag.a0);
-        scheduleSave(drag.fileId);
+        if (Math.hypot(p.x - c.x, p.z - c.z) > 0.15) {
+          const a = Math.atan2(p.x - c.x, p.z - c.z);
+          rec.holder.rotation.y = drag.rot0 + (a - drag.a0);
+          scheduleSave(drag.fileId);
+        }
       }
     } else if (drag.submode === "scale") {
       const p = new THREE.Vector3();
       if (drag.plane && ray.ray.intersectPlane(drag.plane, p)) {
-        const s = THREE.MathUtils.clamp(rec.holder.scale.x * Math.exp((p.y - drag.scY0) * 1.6), 0.05, MAX_WORLD_SCALE);
+        const s = THREE.MathUtils.clamp(drag.sc0 * Math.exp((p.y - drag.scY0) * 1.6), 0.05, MAX_WORLD_SCALE);
         rec.holder.scale.setScalar(s);
         scheduleSave(drag.fileId);
       }
@@ -1104,17 +1107,17 @@ export function createXRFiles(opts) {
         fwd.y = 0;
         if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1); else fwd.normalize();
         const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
-        rec.holder.position.addScaledVector(fwd, -lay * dt * 1.2).addScaledVector(right, lax * dt * 1.2);
+        rec.holder.position.addScaledVector(fwd, -lay * dt * 0.6).addScaledVector(right, lax * dt * 0.6);
         scheduleSave(adjust.fileId);
       }
       return true;
     }
     const rax = dead(ax), rayY = dead(ay);
     if (adjust.submode === "rotate" && rax) {
-      rec.holder.rotation.y -= rax * dt * 2.0;
+      rec.holder.rotation.y -= rax * dt * 0.9;
       scheduleSave(adjust.fileId);
     } else if (adjust.submode === "scale" && rayY) {
-      const s = THREE.MathUtils.clamp(rec.holder.scale.x * (1 - rayY * dt * 1.4), 0.05, MAX_WORLD_SCALE);
+      const s = THREE.MathUtils.clamp(rec.holder.scale.x * (1 - rayY * dt * 0.7), 0.05, MAX_WORLD_SCALE);
       rec.holder.scale.setScalar(s);
       scheduleSave(adjust.fileId);
     }
