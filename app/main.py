@@ -4214,7 +4214,57 @@ def _presence_level(body: PresenceUpdate) -> int:
             status_code=400,
             detail=f"level {level} 只报位姿，不能带 hands（要上报双手请声明 level 2）",
         )
+    wants_bones = bool(body.bones) or bool(body.face)
+    if wants_bones and not PRESENCE_LEVELS[level]["bones"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"level {level} 不支持骨骼/表情上报（要上报请声明 level 3）",
+        )
     return level
+
+
+# 关节表（**顺序即二进制帧里的关节序号**）：VRM 1.0 humanoid 标准骨骼，与 three-vrm 的
+# 枚举顺序一致（从 vendored three-vrm 抽出）。渲染端用同一张表把序号还原成骨头，
+# 两边顺序必须完全一致——改动这里就要同步 static/xr/xr-avatars.js 的 PRESENCE_BONES。
+PRESENCE_BONES = (
+    "hips", "spine", "chest", "upperChest", "neck", "head", "leftEye", "rightEye", "jaw",
+    "leftUpperLeg", "leftLowerLeg", "leftFoot", "leftToes",
+    "rightUpperLeg", "rightLowerLeg", "rightFoot", "rightToes",
+    "leftShoulder", "leftUpperArm", "leftLowerArm", "leftHand",
+    "rightShoulder", "rightUpperArm", "rightLowerArm", "rightHand",
+    "leftThumbMetacarpal", "leftThumbProximal", "leftThumbDistal",
+    "leftIndexProximal", "leftIndexIntermediate", "leftIndexDistal",
+    "leftMiddleProximal", "leftMiddleIntermediate", "leftMiddleDistal",
+    "leftRingProximal", "leftRingIntermediate", "leftRingDistal",
+    "leftLittleProximal", "leftLittleIntermediate", "leftLittleDistal",
+    "rightThumbMetacarpal", "rightThumbProximal", "rightThumbDistal",
+    "rightIndexProximal", "rightIndexIntermediate", "rightIndexDistal",
+    "rightMiddleProximal", "rightMiddleIntermediate", "rightMiddleDistal",
+    "rightRingProximal", "rightRingIntermediate", "rightRingDistal",
+    "rightLittleProximal", "rightLittleIntermediate", "rightLittleDistal",
+)
+PRESENCE_BONE_INDEX = {name: i for i, name in enumerate(PRESENCE_BONES)}
+
+# ARKit 52 表情表（**顺序即帧里的字节序**）：与 static/xr/xr-avatars.js 的 ARKIT52 必须逐字一致。
+PRESENCE_FACE = (
+    "eyeBlinkLeft", "eyeBlinkRight", "eyeLookDownLeft", "eyeLookDownRight",
+    "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft", "eyeLookOutRight",
+    "eyeLookUpLeft", "eyeLookUpRight", "eyeSquintLeft", "eyeSquintRight",
+    "eyeWideLeft", "eyeWideRight", "browDownLeft", "browDownRight", "browInnerUp",
+    "browOuterUpLeft", "browOuterUpRight", "noseSneerLeft", "noseSneerRight",
+    "cheekPuff", "cheekSquintLeft", "cheekSquintRight", "jawOpen", "jawLeft",
+    "jawRight", "jawForward", "mouthLeft", "mouthRight", "mouthFrownLeft",
+    "mouthFrownRight", "mouthSmileLeft", "mouthSmileRight", "mouthDimpleLeft",
+    "mouthDimpleRight", "mouthPucker", "mouthStretchLeft", "mouthStretchRight",
+    "mouthPressLeft", "mouthPressRight", "mouthRollLower", "mouthRollUpper",
+    "mouthShrugLower", "mouthShrugUpper", "mouthClose", "mouthFunnel",
+    "mouthLowerDownLeft", "mouthLowerDownRight", "mouthUpperUpLeft",
+    "mouthUpperUpRight", "tongueOut",
+)
+P_DIRTY_BONES = 16
+P_DIRTY_FACE = 32
+PRESENCE_FACE_SET = frozenset(PRESENCE_FACE)
+PRESENCE_FACE_INDEX = {name: i for i, name in enumerate(PRESENCE_FACE)}
 
 
 def _presence_hands_dirty(ph, ch) -> bool:
@@ -4232,9 +4282,14 @@ def _presence_hands_dirty(ph, ch) -> bool:
 
 
 def _presence_dirty(prev: dict | None, cur: dict) -> int:
-    """对比上一次位姿得出脏位掩码；没有上一次（首次/全量重来）视为全脏。"""
+    """对比上一次位姿得出脏位掩码；没有上一次（首次/全量重来）视为全脏。
+
+    注意这里必须包含 BONES/FACE：漏了它们的话，Agent 的**首次**骨骼上报不会被标记为脏，
+    而后续上报骨骼没变也不算脏 ⇒ 骨骼永远发不出去（静默失效）。
+    """
     if not prev:
-        return P_DIRTY_POS | P_DIRTY_ORIENT | P_DIRTY_HANDS | P_DIRTY_STATE
+        return (P_DIRTY_POS | P_DIRTY_ORIENT | P_DIRTY_HANDS | P_DIRTY_STATE
+                | P_DIRTY_BONES | P_DIRTY_FACE)
     bits = 0
     pp, cp = (prev.get("p") or [0.0, 0.0, 0.0]), (cur.get("p") or [0.0, 0.0, 0.0])
     if any(abs(cp[i] - pp[i]) > PRESENCE_POS_EPS for i in range(3)):
@@ -4244,15 +4299,20 @@ def _presence_dirty(prev: dict | None, cur: dict) -> int:
         bits |= P_DIRTY_ORIENT
     if _presence_hands_dirty(prev.get("hands"), cur.get("hands")):
         bits |= P_DIRTY_HANDS
+    if (prev.get("bones") or {}) != (cur.get("bones") or {}):
+        bits |= P_DIRTY_BONES
+    if (prev.get("face") or {}) != (cur.get("face") or {}):
+        bits |= P_DIRTY_FACE
     if json.dumps(prev.get("state"), sort_keys=True) != json.dumps(cur.get("state"), sort_keys=True):
         bits |= P_DIRTY_STATE
     return bits
 
 
 def _presence_lod_bits(dist: float) -> int:
-    """按距离给出这一帧允许携带的字段。"""
+    """按距离给出这一帧允许携带的字段。骨骼与表情最贵，只给近处。"""
     if dist < PRESENCE_LOD_NEAR_M:
-        return P_DIRTY_POS | P_DIRTY_ORIENT | P_DIRTY_HANDS | P_DIRTY_STATE
+        return (P_DIRTY_POS | P_DIRTY_ORIENT | P_DIRTY_HANDS | P_DIRTY_STATE
+                | P_DIRTY_BONES | P_DIRTY_FACE)
     if dist < PRESENCE_LOD_MID_M:
         return P_DIRTY_POS | P_DIRTY_ORIENT
     return P_DIRTY_POS
@@ -4293,6 +4353,22 @@ def _presence_entry_bytes(user_id: int, kind: int, mask: int, pose: dict | None)
     if mask & P_DIRTY_STATE:
         raw = json.dumps(pose.get("state"), ensure_ascii=False, separators=(",", ":")).encode("utf-8")[:255]
         out += struct.pack("<B", len(raw)) + raw
+    if mask & P_DIRTY_BONES:
+        # u8 根数 + 每根 (u8 关节序号 + 4×int16 四元数) ≈ 9B/根；没报的关节渲染端保持程序化动画
+        items = [(PRESENCE_BONE_INDEX[n], q) for n, q in (pose.get("bones") or {}).items()
+                 if n in PRESENCE_BONE_INDEX]
+        items = items[:len(PRESENCE_BONES)]
+        out += struct.pack("<B", len(items))
+        for idx, q in items:
+            out += struct.pack("<B", idx)
+            out += struct.pack("<4h", *[max(-32768, min(32767, int(round(float(v) * 32767)))) for v in list(q)[:4]])
+    if mask & P_DIRTY_FACE:
+        # u8 个数 + 每个 (u8 表情序号 + u8 权重)：只发变化的，未报的渲染端保持
+        items = [(PRESENCE_FACE_INDEX[n], w) for n, w in (pose.get("face") or {}).items()
+                 if n in PRESENCE_FACE_INDEX]
+        out += struct.pack("<B", len(items))
+        for idx, w in items:
+            out += struct.pack("<2B", idx, max(0, min(255, int(round(float(w) * 255)))))
     return bytes(out)
 
 
@@ -4318,6 +4394,10 @@ class PresenceUpdate(BaseModel):
     state: dict | None = None          # 可选小状态（speaking/expression/…）
     # Agent 自报的能力档（见 PRESENCE_LEVELS）。不传则按载荷推断：有 hands 记 2，否则 1。
     level: int | None = Field(default=None, ge=1, le=3)
+    # level 3 才有：关节名（VRM humanoid 标准名）→ 四元数 [x,y,z,w]；未报的关节仍走渲染端的程序化动画
+    bones: dict[str, list[float]] | None = None
+    # level 3 才有：ARKit52 表情名 → 权重 0..1（只报变化的，没报的保持）
+    face: dict[str, float] | None = None
 
 
 def _presence_secs(conn, a: str | None, b: str | None) -> float:
@@ -4362,7 +4442,37 @@ def _presence_validate(body: PresenceUpdate) -> dict:
             raise HTTPException(status_code=400, detail="state 必须是对象")
         if len(json.dumps(state, ensure_ascii=False)) > PRESENCE_STATE_CHARS:
             raise HTTPException(status_code=413, detail=f"state 过大（上限 {PRESENCE_STATE_CHARS} 字符）")
-    return {"p": p, "yaw": float(body.yaw), "pitch": float(body.pitch), "hands": hands, "state": state}
+    bones = {}
+    for name, q in (body.bones or {}).items():
+        if name not in PRESENCE_BONE_INDEX:
+            raise HTTPException(status_code=400, detail=f"未知关节 {name}（须是 VRM humanoid 标准骨骼名）")
+        if not isinstance(q, (list, tuple)) or len(q) != 4:
+            raise HTTPException(status_code=400, detail=f"关节 {name} 的四元数必须是 [x, y, z, w]")
+        try:
+            vals = [float(v) for v in q]
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"关节 {name} 的四元数必须是数字") from exc
+        if not all(math.isfinite(v) for v in vals):
+            raise HTTPException(status_code=400, detail=f"关节 {name} 的四元数不能含 NaN/Infinity")
+        norm = math.sqrt(sum(v * v for v in vals))
+        if norm < 1e-6:
+            raise HTTPException(status_code=400, detail=f"关节 {name} 的四元数长度为零")
+        bones[name] = [v / norm for v in vals]     # 归一化，免得下游拿到坏旋转
+    face = {}
+    for name, w in (body.face or {}).items():
+        if name not in PRESENCE_FACE_SET:
+            raise HTTPException(status_code=400, detail=f"未知表情 {name}（须是 ARKit52 名称）")
+        try:
+            wf = float(w)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"表情 {name} 的权重必须是数字") from exc
+        if not math.isfinite(wf):
+            raise HTTPException(status_code=400, detail=f"表情 {name} 的权重不能是 NaN/Infinity")
+        face[name] = min(1.0, max(0.0, wf))
+    return {
+        "p": p, "yaw": float(body.yaw), "pitch": float(body.pitch),
+        "hands": hands, "state": state, "bones": bones, "face": face,
+    }
 
 
 _presence_purge_at = 0.0

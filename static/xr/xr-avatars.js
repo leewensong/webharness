@@ -37,6 +37,26 @@ export const ARKIT52 = [
   "mouthUpperUpRight", "tongueOut",
 ];
 const ARKIT_SET = new Set(ARKIT52);
+
+/* 关节表（顺序即二进制帧里的关节序号）：VRM humanoid 标准骨骼，与 three-vrm 的枚举同序。
+   必须与 app/main.py 的 PRESENCE_BONES 完全一致——服务端按序号发，这里按序号还原。 */
+export const PRESENCE_BONES = [
+  "hips", "spine", "chest", "upperChest", "neck", "head", "leftEye", "rightEye", "jaw",
+  "leftUpperLeg", "leftLowerLeg", "leftFoot", "leftToes",
+  "rightUpperLeg", "rightLowerLeg", "rightFoot", "rightToes",
+  "leftShoulder", "leftUpperArm", "leftLowerArm", "leftHand",
+  "rightShoulder", "rightUpperArm", "rightLowerArm", "rightHand",
+  "leftThumbMetacarpal", "leftThumbProximal", "leftThumbDistal",
+  "leftIndexProximal", "leftIndexIntermediate", "leftIndexDistal",
+  "leftMiddleProximal", "leftMiddleIntermediate", "leftMiddleDistal",
+  "leftRingProximal", "leftRingIntermediate", "leftRingDistal",
+  "leftLittleProximal", "leftLittleIntermediate", "leftLittleDistal",
+  "rightThumbMetacarpal", "rightThumbProximal", "rightThumbDistal",
+  "rightIndexProximal", "rightIndexIntermediate", "rightIndexDistal",
+  "rightMiddleProximal", "rightMiddleIntermediate", "rightMiddleDistal",
+  "rightRingProximal", "rightRingIntermediate", "rightRingDistal",
+  "rightLittleProximal", "rightLittleIntermediate", "rightLittleDistal",
+];
 const _handQ = new THREE.Quaternion();   /* 手部四元数插值临时值 */
 
 const ARKIT_TO_VRM = {
@@ -537,6 +557,9 @@ export function createAvatarSystem(opts) {
         const speed = rec.speed || 0;
         const wantWalk = speed > 0.15;
         rec.walkMix = (rec.walkMix || 0) + ((wantWalk ? 1 : 0) - (rec.walkMix || 0)) * (1 - Math.exp(-dt * 5));
+        /* Agent 接管过的关节不许我们碰——包括下面「停下复位」那条路径，
+           否则一停步就会把 Agent 摆好的姿势清零（rotation 与 quaternion 是联动的）。 */
+        const ours = (bone) => !rec.agentBones || !rec.agentBones.has(bone);
         if (rec.walkMix > 0.02) {
           const fwd = Math.abs(rec.moveFwd || 0);
           const lat = rec.moveLat || 0;
@@ -544,22 +567,25 @@ export function createAvatarSystem(opts) {
           const amp = 0.55 * rec.walkMix * Math.min(1, speed / 1.2) * (0.35 + 0.65 * fwd);
           rec.walkPhase = (rec.walkPhase || 0) + dt * (2.0 + speed * 2.4) * Math.PI;
           const sw = Math.sin(rec.walkPhase);
-          if (rec.legL) rec.legL.rotation.x = sw * amp;
-          if (rec.legR) rec.legR.rotation.x = -sw * amp;
-          if (rec.shinL) rec.shinL.rotation.x = Math.max(0, -sw) * amp * 0.9;
-          if (rec.shinR) rec.shinR.rotation.x = Math.max(0, sw) * amp * 0.9;
+          if (rec.legL && ours("leftUpperLeg")) rec.legL.rotation.x = sw * amp;
+          if (rec.legR && ours("rightUpperLeg")) rec.legR.rotation.x = -sw * amp;
+          if (rec.shinL && ours("leftLowerLeg")) rec.shinL.rotation.x = Math.max(0, -sw) * amp * 0.9;
+          if (rec.shinR && ours("rightLowerLeg")) rec.shinR.rotation.x = Math.max(0, sw) * amp * 0.9;
           if (rec.waveT == null) {
-            if (rec.leftArm) rec.leftArm.rotation.x = -sw * amp * 0.7;
-            if (rec.armBone) rec.armBone.rotation.x = sw * amp * 0.7;
+            if (rec.leftArm && ours("leftUpperArm")) rec.leftArm.rotation.x = -sw * amp * 0.7;
+            if (rec.armBone && ours("rightUpperArm")) rec.armBone.rotation.x = sw * amp * 0.7;
           }
           /* 横移时上身轻微侧倾，让动作不像纯滑行（呼吸用的是 .x，这里用 .z 不打架） */
           if (rec.breathBone) rec.breathBone.rotation.z = -lat * 0.12 * rec.walkMix;
           rec.root.position.y = Math.abs(sw) * 0.022 * rec.walkMix;  /* 轻微上下起伏 */
         } else {
-          for (const bone of [rec.legL, rec.legR, rec.shinL, rec.shinR]) if (bone) bone.rotation.x = 0;
+          for (const [bone, node] of [["leftUpperLeg", rec.legL], ["rightUpperLeg", rec.legR],
+                                      ["leftLowerLeg", rec.shinL], ["rightLowerLeg", rec.shinR]]) {
+            if (node && ours(bone)) node.rotation.x = 0;
+          }
           if (rec.waveT == null) {
-            if (rec.leftArm) rec.leftArm.rotation.x = 0;
-            if (rec.armBone) rec.armBone.rotation.x = 0;
+            if (rec.leftArm && ours("leftUpperArm")) rec.leftArm.rotation.x = 0;
+            if (rec.armBone && ours("rightUpperArm")) rec.armBone.rotation.x = 0;
           }
           if (rec.breathBone) rec.breathBone.rotation.z = 0;
           rec.root.position.y = 0;
@@ -589,6 +615,26 @@ export function createAvatarSystem(opts) {
     inFlight = 0;
   }
 
+  /* Agent 上报的骨骼（level 3）：**只覆盖它报过的关节**，未报的继续走本地程序化动画
+     （所以 Agent 可以只做上半身 IK，腿仍由我们的走路算法负责）。 */
+  function setRemoteBones(username, bones) {
+    const rec = avatars.get(String(username));
+    if (!rec || rec.disposed || !rec.vrm || !rec.vrm.humanoid) return false;
+    if (!bones) return false;
+    if (!rec.agentBones) rec.agentBones = new Set();
+    const hb = rec.vrm.humanoid;
+    let applied = 0;
+    for (const [name, q] of Object.entries(bones)) {
+      if (!Array.isArray(q) || q.length !== 4) continue;
+      const node = hb.getNormalizedBoneNode(name);
+      if (!node) continue;                       /* 该模型没有这根骨头：静默跳过 */
+      node.quaternion.set(q[0], q[1], q[2], q[3]);
+      rec.agentBones.add(name);
+      applied++;
+    }
+    return applied > 0;
+  }
+
   /* 走路循环的调试快照（验证/排查用）：速度、混合权重、腿的当前摆角 */
   function debugWalk(username) {
     const rec = avatars.get(String(username));
@@ -606,5 +652,17 @@ export function createAvatarSystem(opts) {
     };
   }
 
-  return { group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats, setRemotePose, removeRemote, clearLeft, debugWalk };
+  /* 单根骨骼的调试快照：当前四元数 + 是否已被 Agent 接管（排查 level 3 用） */
+  function debugBone(username, bone) {
+    const rec = avatars.get(String(username));
+    if (!rec || rec.disposed || !rec.vrm || !rec.vrm.humanoid) return null;
+    const node = rec.vrm.humanoid.getNormalizedBoneNode(bone);
+    if (!node) return null;
+    return {
+      q: node.quaternion.toArray().map((v) => +v.toFixed(3)),
+      agent: !!(rec.agentBones && rec.agentBones.has(bone)),
+    };
+  }
+
+  return { group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats, setRemotePose, removeRemote, clearLeft, debugWalk, setRemoteBones, debugBone };
 }

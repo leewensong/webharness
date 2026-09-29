@@ -10,7 +10,7 @@ import { isModelFilename } from "../model-preview.js";
 import { mergeXRI18n } from "./xr-i18n.js";
 import { createPanelSystem } from "./xr-panels.js";
 import { createNativeSystem } from "./xr-native.js";
-import { createAvatarSystem } from "./xr-avatars.js";
+import { createAvatarSystem, ARKIT52, PRESENCE_BONES } from "./xr-avatars.js";
 import { createXRFiles } from "./xr-files.js";
 import { buildRoomScene, sceneKeyOf } from "./xr-rooms.js";
 
@@ -193,6 +193,8 @@ export async function createXR(ctx) {
   const P_DIRTY_ORIENT = 2;
   const P_DIRTY_HANDS = 4;
   const P_DIRTY_STATE = 8;
+  const P_DIRTY_BONES = 16;   /* level 3：Agent 上报的骨骼（只覆盖它报过的关节） */
+  const P_DIRTY_FACE = 32;    /* level 3：Agent 上报的 ARKit52 表情权重（只覆盖报过的） */
   const PRESENCE_NEAR_M = 5.0;
   const PRESENCE_MID_M = 15.0;
   const PRESENCE_FAR_APPLY_MS = 500;   /* 远处成员本地最多每 500ms 应用一次（2Hz） */
@@ -357,6 +359,26 @@ export async function createXR(ctx) {
         } catch (err) { pose.state = null; }
         o += len;
       }
+      if (mask & P_DIRTY_BONES) {
+        const n = dv.getUint8(o); o += 1;
+        pose.bones = {};
+        for (let b = 0; b < n; b++) {
+          const idx = dv.getUint8(o); o += 1;
+          pose.bones[PRESENCE_BONES[idx]] = [
+            dv.getInt16(o, true) / 32767, dv.getInt16(o + 2, true) / 32767,
+            dv.getInt16(o + 4, true) / 32767, dv.getInt16(o + 6, true) / 32767,
+          ];
+          o += 8;
+        }
+      }
+      if (mask & P_DIRTY_FACE) {
+        const n = dv.getUint8(o); o += 1;
+        pose.face = {};
+        for (let f = 0; f < n; f++) {
+          const idx = dv.getUint8(o); const val = dv.getUint8(o + 1); o += 2;
+          pose.face[ARKIT52[idx]] = val / 255;
+        }
+      }
       out.push({ userId, kind: 0, pose });
     }
     return out;
@@ -385,6 +407,9 @@ export async function createXR(ctx) {
     if (d.pitch !== undefined) cur.pitch = d.pitch;
     if (d.hands !== undefined) cur.hands = d.hands;
     if (d.state !== undefined) cur.state = d.state;
+    /* 骨骼/表情也是稀疏的：只把报过的并进去，未报的保持上一次的值 */
+    if (d.bones !== undefined) cur.bones = Object.assign({}, cur.bones, d.bones);
+    if (d.face !== undefined) cur.face = Object.assign({}, cur.face, d.face);
     presencePoses.set(username, cur);
     return cur;
   }
@@ -421,6 +446,17 @@ export async function createXR(ctx) {
             continue;
           }
           const merged = presenceMergePose(username, ev);
+          /* 骨骼/表情（level 3）只在近处才下发（服务端 LOD），且与本地限频无关，先应用它们。
+             只应用**本次新增**的那些——之前应用过的关节/表情已经落在模型上，没人会覆盖
+             （程序化动画对 Agent 接管的关节会让路）。 */
+          if (ev.pose && ev.pose.bones) {
+            try { avatars.setRemoteBones(username, ev.pose.bones); } catch (err) {}
+          }
+          if (ev.pose && ev.pose.face) {
+            for (const [ename, weight] of Object.entries(ev.pose.face)) {
+              try { avatars.setExpression(username, ename, weight); } catch (err) {}
+            }
+          }
           if (!presenceApplyLod(username, merged)) continue;
           if (!avatars.setRemotePose(username, merged)) ensurePresenceMember(username, merged);
           else applyRemoteState(username, merged.state);

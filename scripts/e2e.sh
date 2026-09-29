@@ -703,6 +703,19 @@ check "level 3 上报 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$
 check "level 越界 4 → 422" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
   -d '{"p":[0,1.6,0],"level":4}')" "422"
 check "全量快照透出能力档" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK")" '"level":'
+# level 3：骨骼 / 表情上报（VRM humanoid 关节名 + ARKit52 表情名）
+check "level 2 带骨骼 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":2,"bones":{"head":[0,0.3827,0,0.9239]}}')" "400"
+check "level 3 带骨骼 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":3,"bones":{"head":[0,0.3827,0,0.9239],"leftUpperLeg":[0.2588,0,0,0.9659]}}')" "200"
+check "level 3 带表情 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":3,"face":{"jawOpen":0.8}}')" "200"
+check "未知关节名 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":3,"bones":{"nose":[0,0,0,1]}}')" "400"
+check "四元数长度为零 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":3,"bones":{"head":[0,0,0,0]}}')" "400"
+check "未知表情名 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":3,"face":{"smile":1}}')" "400"
 
 echo
 echo "通过 $PASS 项，失败 $FAIL 项"
