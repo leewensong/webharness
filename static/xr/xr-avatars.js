@@ -548,6 +548,9 @@ export function createAvatarSystem(opts) {
         }
       }
       if (!rec.humanoidOn) {
+        /* 未开启 humanoid 程序动画也要推进 VRM：Agent 远端骨骼/表情只有走
+           vrm.update 才会写进渲染骨骼（账号 humanoid 开关只管程序动画本身） */
+        if (rec.vrm) rec.vrm.update(dt);
         rec.root.position.y = Math.abs(Math.sin(now * 1.5)) * 0.03;
       } else if (rec.vrm) {
         if (rec.breathBone) rec.breathBone.rotation.x = Math.sin(now * 1.1) * 0.02; /* 待机呼吸 */
@@ -615,12 +618,29 @@ export function createAvatarSystem(opts) {
     inFlight = 0;
   }
 
+  /* Agent 接管即授权：账号没勾 humanoid 的 VRM，一旦收到远端骨骼就补齐
+     程序动画所需的骨骼捕获（走路循环与呼吸共用 ours() 让位给 Agent 关节）。 */
+  function enableHumanoidProcedurals(rec) {
+    if (rec.humanoidOn || !rec.vrm || !rec.vrm.humanoid) return;
+    const hb = rec.vrm.humanoid;
+    rec.breathBone = hb.getNormalizedBoneNode("chest") || hb.getNormalizedBoneNode("spine");
+    rec.armBone = hb.getNormalizedBoneNode("rightUpperArm");
+    rec.foreArm = hb.getNormalizedBoneNode("rightLowerArm");
+    rec.leftArm = hb.getNormalizedBoneNode("leftUpperArm");
+    rec.legL = hb.getNormalizedBoneNode("leftUpperLeg");
+    rec.legR = hb.getNormalizedBoneNode("rightUpperLeg");
+    rec.shinL = hb.getNormalizedBoneNode("leftLowerLeg");
+    rec.shinR = hb.getNormalizedBoneNode("rightLowerLeg");
+    rec.humanoidOn = true;
+  }
+
   /* Agent 上报的骨骼（level 3）：**只覆盖它报过的关节**，未报的继续走本地程序化动画
      （所以 Agent 可以只做上半身 IK，腿仍由我们的走路算法负责）。 */
   function setRemoteBones(username, bones) {
     const rec = avatars.get(String(username));
     if (!rec || rec.disposed || !rec.vrm || !rec.vrm.humanoid) return false;
     if (!bones) return false;
+    enableHumanoidProcedurals(rec);
     if (!rec.agentBones) rec.agentBones = new Set();
     const hb = rec.vrm.humanoid;
     let applied = 0;
