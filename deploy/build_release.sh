@@ -38,6 +38,22 @@ cp -a deploy/install.sh "$PKG_DIR/install.sh"
 
 find "$PKG_DIR" \( -name '__pycache__' -o -name '*.pyc' -o -name '.DS_Store' \) -exec rm -rf {} + 2>/dev/null || true
 
+# 构建守卫（2026-09-30 事故后加）：本地 venv 是 Python 3.14、生产是 3.11，
+# 3.14 起注解惰性求值，所以「函数注解里前向引用一个后面才定义的类」这类错**本地永远测不出来**，
+# 但生产会在启动时 NameError → 502。py_compile 也抓不到（函数注解是运行时求值）。
+#   ① 有 python3.11 就用它编译一遍，顺带抓语法层面的版本差异；
+#   ② 注解前向引用检查，抓 3.11 会在 def 处就崩的写法。
+if command -v python3.11 >/dev/null 2>&1; then
+  python3.11 -m compileall -q "$PKG_DIR/app" >/dev/null
+  echo "==> python3.11 语法检查通过"
+else
+  echo "==> 警告：本机没有 python3.11，跳过「生产同款语法」检查（只做了注解检查）"
+fi
+python3 "$REPO_DIR/deploy/check_annotations.py" "$PKG_DIR/app" || {
+  echo "[error] 注解前向引用检查未通过，已中止打包（生产 3.11 会启动失败）" >&2
+  exit 1
+}
+
 tar -czf "$REPO_DIR/dist/$PKG_NAME.tar.gz" -C "$STAGE" "$PKG_NAME"
 
 echo "==> 完成: dist/$PKG_NAME.tar.gz"

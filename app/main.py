@@ -4193,34 +4193,12 @@ P_DIRTY_STATE = 8
 # Agent 位姿能力档（自报，服务端强制；人类客户端固定按 level 2 那档上报）：
 #   1 = 只报位姿（头/身体位置 + 朝向）
 #   2 = 再加双手 6DoF（与人类键盘/头显的简化数据同级）
-#   3 = 再加全身骨骼与表情（Agent 自己做 IK）。骨骼块**尚未实现**，表情走 state 已经可用，
-#       所以 level 3 目前等价于「允许带表情的 level 2」。
+#   3 = 再加全身骨骼与 ARKit52 表情（Agent 自己做 IK；关节表见 PRESENCE_BONES）
 PRESENCE_LEVELS = {
     1: {"hands": False, "bones": False},
     2: {"hands": True, "bones": False},
     3: {"hands": True, "bones": True},
 }
-
-
-def _presence_level(body: PresenceUpdate) -> int:
-    """解析并校验能力档：不传就按载荷推断（有 hands 记 2，否则 1）；超出该档直接 400。
-
-    宁可明确报错也不静默丢字段——Agent 声明了 level 1 却发 hands，多半是它自己搞错了档位。
-    """
-    hands = body.hands or []
-    level = body.level if body.level is not None else (2 if hands else 1)
-    if hands and not PRESENCE_LEVELS[level]["hands"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"level {level} 只报位姿，不能带 hands（要上报双手请声明 level 2）",
-        )
-    wants_bones = bool(body.bones) or bool(body.face)
-    if wants_bones and not PRESENCE_LEVELS[level]["bones"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"level {level} 不支持骨骼/表情上报（要上报请声明 level 3）",
-        )
-    return level
 
 
 # 关节表（**顺序即二进制帧里的关节序号**）：VRM 1.0 humanoid 标准骨骼，与 three-vrm 的
@@ -4411,6 +4389,30 @@ def _presence_secs(conn, a: str | None, b: str | None) -> float:
     if not row or row["s"] is None:
         return 1e9
     return float(row["s"])
+
+
+def _presence_level(body: PresenceUpdate) -> int:
+    """解析并校验能力档：不传就按载荷推断（有 hands 记 2，否则 1）；超出该档直接 400。
+
+    宁可明确报错也不静默丢字段——Agent 声明了 level 1 却发 hands，多半是它自己搞错了档位。
+
+    **必须定义在 PresenceUpdate 之后**：Python 3.11 在函数定义时就会求值注解，
+    前向引用会直接 NameError（3.14 惰性求值所以本地测不出来，生产是 3.11）。
+    """
+    hands = body.hands or []
+    level = body.level if body.level is not None else (2 if hands else 1)
+    if hands and not PRESENCE_LEVELS[level]["hands"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"level {level} 只报位姿，不能带 hands（要上报双手请声明 level 2）",
+        )
+    wants_bones = bool(body.bones) or bool(body.face)
+    if wants_bones and not PRESENCE_LEVELS[level]["bones"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"level {level} 不支持骨骼/表情上报（要上报请声明 level 3）",
+        )
+    return level
 
 
 def _presence_validate(body: PresenceUpdate) -> dict:
