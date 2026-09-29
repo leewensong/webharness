@@ -694,6 +694,15 @@ check "JSON 增量路径仍在" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/presence/d
 check "hold 节流生效（≥200ms）" "$(curl -sS -o /dev/null -w '%{time_total}' "$URL/api/rooms/$PUB_ROOM/presence/delta?sinceId=999999999&hold=200&fmt=bin" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys;print("yes" if float(sys.stdin.read())>=0.2 else "no")')" "yes"
 check "离开 3D 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence/leave" -H "Authorization: Bearer $HTOK")" "200"
 check "成员列表带 userId（供二进制帧映射）" "$(curl -sS "$URL/api/rooms/$PUB_ROOM" -H "Authorization: Bearer $HTOK")" '"userId":'
+# Agent 位姿能力档：自报 + 服务端按档强制（用人类令牌——能力档对任何账号都适用，
+# 且本段位于「Agent 停用」之后，Agent 令牌此时已失效）
+check "level 1 却带双手 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":1,"hands":[{"p":[1,1.2,1],"q":[0,0,0,1]}]}')" "400"
+check "level 3 上报 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":3,"state":{"expression":"a","weight":1}}')" "200"
+check "level 越界 4 → 422" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[0,1.6,0],"level":4}')" "422"
+check "全量快照透出能力档" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK")" '"level":'
 
 echo
 echo "通过 $PASS 项，失败 $FAIL 项"

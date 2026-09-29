@@ -415,6 +415,8 @@ def init_db() -> None:
         _add_column_if_missing(conn, "messages", "updated_at", "TEXT")
         # 3D 位姿增量：这条事件动了哪些字段（脏位掩码），供二进制帧按需携带字段而不是每次全发
         _add_column_if_missing(conn, "room_presence_log", "dirty", "INTEGER NOT NULL DEFAULT 0")
+        # Agent 自报的位姿能力档（1=只报位姿 2=+双手 3=+骨骼/表情，见 main.py 的 PRESENCE_LEVELS）
+        _add_column_if_missing(conn, "room_presence", "level", "INTEGER")
         conn.execute(
             """
             UPDATE messages
