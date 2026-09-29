@@ -413,6 +413,8 @@ def init_db() -> None:
         _add_column_if_missing(conn, "messages", "attachment_path", "TEXT")
         _add_column_if_missing(conn, "messages", "streaming", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "messages", "updated_at", "TEXT")
+        # 3D 位姿增量：这条事件动了哪些字段（脏位掩码），供二进制帧按需携带字段而不是每次全发
+        _add_column_if_missing(conn, "room_presence_log", "dirty", "INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             UPDATE messages

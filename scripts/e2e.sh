@@ -683,6 +683,18 @@ if [[ "$STRICT" == "True" ]]; then
   check "解绑后不能再用它登录 400" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/login" -H 'Content-Type: application/json' -d '{"identifier":"'$NEWPHONE'","code":"'$DEBUG_CODE'"}')" "400"
 fi
 
+echo "== 房间 3D 位姿流（v2.26：二进制脏位增量 + 距离分级 + 节流）=="
+check "上报位姿" "$(curl -sS -X POST "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d '{"p":[1.0,1.6,2.0],"yaw":0.5,"pitch":0.1,"hands":[]}' | python3 -c 'import sys,json;print("logged" if json.load(sys.stdin)["ok"] else "no")')" "logged"
+check "全量快照带 logId（增量游标）" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/presence" -H "Authorization: Bearer $HTOK")" '"logId":'
+check "二进制增量 200 且为 octet-stream" "$(curl -sS -o /dev/null -w '%{http_code} %{content_type}' "$URL/api/rooms/$PUB_ROOM/presence/delta?sinceId=0&fmt=bin" -H "Authorization: Bearer $HTOK")" "200 application/octet-stream"
+check "二进制帧首字节是 magic 0xB1" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/presence/delta?sinceId=0&fmt=bin" -H "Authorization: Bearer $HTOK" | od -An -tu1 -N1 | tr -d ' ')" "177"
+check "sinceId 非整数 422" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$PUB_ROOM/presence/delta?sinceId=abc" -H "Authorization: Bearer $HTOK")" "422"
+check "JSON 增量路径仍在" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/presence/delta?since=2020-01-01%2000:00:00.000" -H "Authorization: Bearer $HTOK")" '"events":'
+check "hold 节流生效（≥200ms）" "$(curl -sS -o /dev/null -w '%{time_total}' "$URL/api/rooms/$PUB_ROOM/presence/delta?sinceId=999999999&hold=200&fmt=bin" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys;print("yes" if float(sys.stdin.read())>=0.2 else "no")')" "yes"
+check "离开 3D 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/presence/leave" -H "Authorization: Bearer $HTOK")" "200"
+check "成员列表带 userId（供二进制帧映射）" "$(curl -sS "$URL/api/rooms/$PUB_ROOM" -H "Authorization: Bearer $HTOK")" '"userId":'
+
 echo
 echo "通过 $PASS 项，失败 $FAIL 项"
 [[ $FAIL -eq 0 ]]

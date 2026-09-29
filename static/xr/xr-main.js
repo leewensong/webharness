@@ -182,14 +182,45 @@ export async function createXR(ctx) {
      首次拉全量快照并记下服务端 serverTime 当游标，之后每 0.5s 拉增量；服务端返回
      reset=true（游标过期 / 落后太多）时退回全量重取。离开 3D 时发一条 leave，
      其他人立即移除其形象。旧服务端没有这些接口时静默关闭（404 → presenceOff）。 */
-  const PRESENCE_SEND_MS = 500;
-  const PRESENCE_POLL_MS = 500;
+  /* 位姿流（v2.26）：二进制脏位增量 + 服务端 hold 节流 + 按距离分级。
+     上报 10Hz（每 100ms 一次）；拉取的 tick 由服务端的 hold 决定，客户端只留一个下限
+     防打点（服务端立刻就有数据时也不至于狂发）。分级阈值与服务端一致。 */
+  const PRESENCE_SEND_MS = 100;
+  const PRESENCE_POLL_MS = 60;         /* 客户端下限：真正节奏由服务端 hold 决定 */
+  const PRESENCE_HOLD_MS = 100;        /* 传给服务端的节流窗口（毫秒）≈ 10Hz */
+  const PRESENCE_BIN_MAGIC = 0xb1;     /* 与 app/main.py 的 PRESENCE_BIN_MAGIC 对应 */
+  const P_DIRTY_POS = 1;
+  const P_DIRTY_ORIENT = 2;
+  const P_DIRTY_HANDS = 4;
+  const P_DIRTY_STATE = 8;
+  const PRESENCE_NEAR_M = 5.0;
+  const PRESENCE_MID_M = 15.0;
+  const PRESENCE_FAR_APPLY_MS = 500;   /* 远处成员本地最多每 500ms 应用一次（2Hz） */
+  const PRESENCE_PACK_POS = 100.0;     /* 位置量化：厘米 */
+  const PRESENCE_PACK_ANGLE = 65536.0 / (2 * Math.PI);
   let presenceSendAcc = 0;
   let presencePollAcc = 0;
-  let presenceCursor = null;   /* 服务端时间戳游标（用服务端时间，避免本地时钟偏差） */
-  let presenceBusy = false;    /* 拉取在途（0.5s 一次，避免请求堆积） */
+  let presenceCursor = null;   /* 增量日志 id 游标（单调递增；比时间戳稳，不会漏同一毫秒的事件） */
+  let presenceBusy = false;    /* 拉取在途（避免请求堆积） */
   let presenceOff = false;     /* 服务端不支持（404）→ 关闭 */
+  let presenceWarned = false;  /* 协议不匹配只警告一次（避免每 tick 刷屏） */
   let memberRefreshAt = 0;
+  const presenceIdNames = new Map();  /* userId → username（二进制帧只带数字 id） */
+  const presenceFarAt = new Map();    /* username → 上次应用时间（远处限频） */
+  /* username → 累积出的完整位姿。增量帧只带「变了的那几个字段」，而 setRemotePose
+     需要完整位姿（位置/朝向/手/状态），所以必须在这里把脏字段并进上一份完整位姿。 */
+  const presencePoses = new Map();
+
+  /* 这里才第一次学 id 映射：presenceIdNames 是 const，**必须等它和本节其它声明都求值完**
+     再调用，否则 TDZ 报错会被外面的 try/catch 静默吞掉（表现是远端形象永远不动）。 */
+  presenceLearnIds(ctx.roomInfo && ctx.roomInfo());
+
+  /* 从 roomEvents 的在线成员里学习 id→用户名映射（服务端 _online_users 现在带 userId） */
+  function presenceLearnIds(info) {
+    for (const u of (info && info.onlineUsers) || []) {
+      if (u && u.username && typeof u.userId === "number") presenceIdNames.set(u.userId, u.username);
+    }
+  }
 
   function presenceRoom() {
     const r = ctx.roomName && ctx.roomName();
@@ -220,11 +251,12 @@ export async function createXR(ctx) {
     const room = presenceRoom();
     if (presenceOff || disposed || !room) return;
     try {
-      const res = await ctx.api(`/api/rooms/${room}/presence`, {
+      /* 上报的响应**不动游标**：游标是增量日志 id，由增量响应头给出（曾经在这里用
+         serverTime 覆盖过，时间戳喂给 sinceId 会 422，整个位姿流静默失效）。 */
+      await ctx.api(`/api/rooms/${room}/presence`, {
         method: "POST",
         body: JSON.stringify(localPosePayload()),
       });
-      if (res && res.serverTime) presenceCursor = res.serverTime;
     } catch (err) {
       if (err && err.status === 404) presenceOff = true; /* 旧服务端：静默关闭 */
       /* 服务端会把越速位移裁到步行上限（响应 clamped），不报错；这里只需忽略网络抖动 */
@@ -252,6 +284,111 @@ export async function createXR(ctx) {
     }
   }
 
+  /* 二进制帧必须走裸 fetch：ctx.api 会把响应当 JSON 解析 */
+  async function presenceFetchBin(url) {
+    const res = await fetch(url, {
+      headers: ctx.token ? { Authorization: "Bearer " + ctx.token() } : {},
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const err = new Error("HTTP " + res.status);
+      err.status = res.status;
+      throw err;
+    }
+    return {
+      cursor: res.headers.get("X-Presence-Id") || null,
+      reset: res.headers.get("X-Presence-Reset") === "1",
+      buf: await res.arrayBuffer(),
+    };
+  }
+
+  /* 解一帧二进制增量（与 app/main.py 的 _presence_frame_bytes 严格对应）：
+     帧头 3B（magic/version/count），条目为 u32 id + u8 kind + u8 脏位 + 按脏位排列的字段。
+     kind: 0=位姿 1=离开。预留脏位（16=骨骼 32=面部）本期不产生，遇到就忽略。 */
+  function presenceDecodeFrame(buf) {
+    const dv = new DataView(buf);
+    if (dv.byteLength < 3 || dv.getUint8(0) !== PRESENCE_BIN_MAGIC) return [];
+    const count = dv.getUint8(2);
+    const out = [];
+    let o = 3;
+    for (let i = 0; i < count && o + 6 <= dv.byteLength; i++) {
+      const userId = dv.getUint32(o, true); o += 4;
+      const kind = dv.getUint8(o); o += 1;
+      const mask = dv.getUint8(o); o += 1;
+      if (kind !== 0) { out.push({ userId, kind }); continue; }
+      /* 注意：只放**实际存在**的字段（稀疏位姿）。增量帧只带脏字段，
+         缺失字段绝不能填默认值——填了 p:[0,0,0] 会把远端形象瞬移到原点。 */
+      const pose = {};
+      if (mask & P_DIRTY_POS) {
+        pose.p = [
+          dv.getInt16(o, true) / PRESENCE_PACK_POS,
+          dv.getInt16(o + 2, true) / PRESENCE_PACK_POS,
+          dv.getInt16(o + 4, true) / PRESENCE_PACK_POS,
+        ];
+        o += 6;
+      }
+      if (mask & P_DIRTY_ORIENT) {
+        pose.yaw = dv.getInt16(o, true) / PRESENCE_PACK_ANGLE;
+        pose.pitch = dv.getInt16(o + 2, true) / PRESENCE_PACK_ANGLE;
+        o += 4;
+      }
+      if (mask & P_DIRTY_HANDS) {
+        const n = dv.getUint8(o); o += 1;
+        pose.hands = [];
+        for (let h = 0; h < n; h++) {
+          pose.hands.push({
+            p: [
+              dv.getInt16(o, true) / PRESENCE_PACK_POS,
+              dv.getInt16(o + 2, true) / PRESENCE_PACK_POS,
+              dv.getInt16(o + 4, true) / PRESENCE_PACK_POS,
+            ],
+            q: [
+              dv.getInt16(o + 6, true) / 32767, dv.getInt16(o + 8, true) / 32767,
+              dv.getInt16(o + 10, true) / 32767, dv.getInt16(o + 12, true) / 32767,
+            ],
+          });
+          o += 14;
+        }
+      }
+      if (mask & P_DIRTY_STATE) {
+        const len = dv.getUint8(o); o += 1;
+        try {
+          pose.state = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, o, len)));
+        } catch (err) { pose.state = null; }
+        o += len;
+      }
+      out.push({ userId, kind: 0, pose });
+    }
+    return out;
+  }
+
+  /* 按距离本地限频：近处每帧都应用；远处最多 2Hz（服务端也已按距离裁掉了手与状态） */
+  function presenceApplyLod(username, pose) {
+    const sp = pose && pose.p;
+    if (!sp) return true;
+    const me = new THREE.Vector3();
+    camera.getWorldPosition(me);
+    const dist = Math.hypot(sp[0] - me.x, sp[2] - me.z);
+    if (dist < PRESENCE_MID_M) { presenceFarAt.delete(username); return true; }
+    const now = performance.now();
+    if (now - (presenceFarAt.get(username) || 0) < PRESENCE_FAR_APPLY_MS) return false;
+    presenceFarAt.set(username, now);
+    return true;
+  }
+
+  /* 把增量里的脏字段并入该成员的完整位姿，返回合并后的结果 */
+  function presenceMergePose(username, ev) {
+    const cur = presencePoses.get(username) || { p: [0, 1.6, 0], yaw: 0, pitch: 0, hands: [], state: null };
+    const d = ev.pose || {};
+    if (d.p) cur.p = d.p;
+    if (d.yaw !== undefined) cur.yaw = d.yaw;
+    if (d.pitch !== undefined) cur.pitch = d.pitch;
+    if (d.hands !== undefined) cur.hands = d.hands;
+    if (d.state !== undefined) cur.state = d.state;
+    presencePoses.set(username, cur);
+    return cur;
+  }
+
   async function presencePoll() {
     const room = presenceRoom();
     if (presenceOff || disposed || presenceBusy || !room) return;
@@ -259,32 +396,47 @@ export async function createXR(ctx) {
     const me = ctx.username && ctx.username();
     try {
       if (!presenceCursor) {
-        /* 全量：首次进入 3D，或游标过期/落后太多后重取 */
+        /* 全量：首次进入 3D，或游标过期/落后太多后重取（JSON，字段齐全） */
         const snap = await ctx.api(`/api/rooms/${room}/presence`);
-        presenceCursor = snap.serverTime || null;
+        presenceCursor = (snap && snap.logId != null) ? snap.logId : null;
         for (const u of snap.users || []) {
           if (!u.username || u.username === me) continue;
           if (!avatars.setRemotePose(u.username, u.pose)) ensurePresenceMember(u.username, u.pose);
           else applyRemoteState(u.username, u.state);
         }
       } else {
-        const data = await ctx.api(
-          `/api/rooms/${room}/presence/delta?since=${encodeURIComponent(presenceCursor)}`
+        const { cursor, reset, buf } = await presenceFetchBin(
+          `/api/rooms/${room}/presence/delta?sinceId=${encodeURIComponent(presenceCursor)}`
+            + `&hold=${PRESENCE_HOLD_MS}&fmt=bin`
         );
-        if (data.serverTime) presenceCursor = data.serverTime;
-        if (data.reset) {
-          presenceCursor = null; /* 下一轮走全量重取 */
-        } else {
-          for (const ev of data.events || []) {
-            if (!ev.username || ev.username === me) continue;
-            if (ev.kind === "leave") { avatars.removeRemote(ev.username); continue; }
-            if (!avatars.setRemotePose(ev.username, ev.pose)) ensurePresenceMember(ev.username, ev.pose);
-            else applyRemoteState(ev.username, ev.state);
+        if (reset) { presenceCursor = null; return; }   /* 下一轮走全量重取 */
+        if (cursor) presenceCursor = cursor;
+        for (const ev of presenceDecodeFrame(buf)) {
+          const username = presenceIdNames.get(ev.userId);
+          if (!username || username === me) continue;
+          if (ev.kind === 1) {
+            avatars.removeRemote(username);
+            presencePoses.delete(username);
+            presenceFarAt.delete(username);
+            continue;
           }
+          const merged = presenceMergePose(username, ev);
+          if (!presenceApplyLod(username, merged)) continue;
+          if (!avatars.setRemotePose(username, merged)) ensurePresenceMember(username, merged);
+          else applyRemoteState(username, merged.state);
         }
       }
     } catch (err) {
       if (err && err.status === 404) presenceOff = true;
+      else if (err && err.status === 422) {
+        /* 协议不匹配（例如游标类型不对）：重置回全量自愈，并只警告一次——
+           422 既不触发 presenceOff 也不重试的话，位姿流会静默卡死。 */
+        if (!presenceWarned) {
+          presenceWarned = true;
+          console.warn("[xr] presence 增量请求被拒（422），已重置游标改走全量");
+        }
+        presenceCursor = null;
+      }
     } finally {
       presenceBusy = false;
     }
@@ -1671,6 +1823,7 @@ export async function createXR(ctx) {
     try {
       if (info && info.closed) { doExit(); return; }
       applyRoomScene((info && info.scene) || null); /* 房主改场景后房内热切换 */
+      presenceLearnIds(info);  /* 二进制位姿帧只带数字 id，先学会 id→用户名 */
       avatars.applyRoom(info); /* 形象随在线成员增量同步（需求 4.1） */
     } catch (err) {}
   });
@@ -1802,6 +1955,14 @@ export async function createXR(ctx) {
     seatOf: (name) => avatars.positionOf(name),
     files: () => files, /* 共同文件系统（验证用：isOpen/内部状态） */
     mem: () => ({ geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }),
+    /* 位姿流的内部状态（排查「远端形象不动」时最有用：游标/是否关闭/id 映射/已累积的成员） */
+    presence: () => ({
+      cursor: presenceCursor,
+      off: presenceOff,
+      busy: presenceBusy,
+      ids: Array.from(presenceIdNames.keys()),
+      poses: Array.from(presencePoses.keys()),
+    }),
     render: () => { renderer.render(scene, camera); return renderer.info.render.frame; }, /* 验证用：rAF 被遮挡暂停时手动驱动一帧 */
   };
 

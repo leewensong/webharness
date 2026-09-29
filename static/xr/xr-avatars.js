@@ -242,6 +242,13 @@ export function createAvatarSystem(opts) {
         rec.breathBone = hb.getNormalizedBoneNode("chest") || hb.getNormalizedBoneNode("spine");
         rec.armBone = hb.getNormalizedBoneNode("rightUpperArm");
         rec.foreArm = hb.getNormalizedBoneNode("rightLowerArm");
+        /* 走路循环要用的骨骼（见 update）：腿与另一侧手臂。素材里没有动画剪辑，
+           全靠这里的程序化驱动——所以「内嵌行走动画」在这里等价于摆动这些骨骼。 */
+        rec.leftArm = hb.getNormalizedBoneNode("leftUpperArm");
+        rec.legL = hb.getNormalizedBoneNode("leftUpperLeg");
+        rec.legR = hb.getNormalizedBoneNode("rightUpperLeg");
+        rec.shinL = hb.getNormalizedBoneNode("leftLowerLeg");
+        rec.shinR = hb.getNormalizedBoneNode("rightLowerLeg");
       }
       if (!vrm) {
         const morphs = new Map();
@@ -468,8 +475,11 @@ export function createAvatarSystem(opts) {
     const now = performance.now() / 1000;
     for (const [, rec] of avatars) {
       if (rec.disposed) continue;
-      /* 远端位姿插值（指数趋近，~6/s：0.5s 一次目标也能平滑移动） */
+      /* 远端位姿插值（指数趋近，~6/s：0.5s 一次目标也能平滑移动）+ 估算水平速度
+         （走路循环靠它驱动——不额外传输任何骨骼数据） */
       if (rec.hasPose && rec.poseTarget) {
+        const px = rec.root.position.x;
+        const pz = rec.root.position.z;
         const k = 1 - Math.exp(-dt * 6);
         rec.root.position.x += (rec.poseTarget.x - rec.root.position.x) * k;
         rec.root.position.z += (rec.poseTarget.z - rec.root.position.z) * k;
@@ -477,6 +487,28 @@ export function createAvatarSystem(opts) {
         while (dr > Math.PI) dr -= Math.PI * 2;
         while (dr < -Math.PI) dr += Math.PI * 2;
         rec.root.rotation.y += dr * k;
+        if (dt > 0) {
+          const dx = rec.root.position.x - px;
+          const dz = rec.root.position.z - pz;
+          const inst = Math.hypot(dx, dz) / dt;
+          rec.speed = (rec.speed || 0) * 0.8 + inst * 0.2;   /* 平滑，避免单帧抖动误判为走动 */
+          if (inst > 0.05) {
+            /* 把位移分解到形象本地坐标：前进分量决定步幅，横向分量收小步幅并加一点侧倾。
+               人只传头/手，腿是固定算法，所以「朝向与移动方向不一致」（横移/倒退）时
+               要看得出来——否则横着飘却迈正步。世界前向 = (-sin ry, -cos ry)。 */
+            const sinY = Math.sin(rec.root.rotation.y);
+            const cosY = Math.cos(rec.root.rotation.y);
+            const fwd = (dx * -sinY + dz * -cosY) / inst;
+            const lat = (dx * -cosY + dz * sinY) / inst;
+            rec.moveFwd = (rec.moveFwd || 0) * 0.8 + fwd * 0.2;
+            rec.moveLat = (rec.moveLat || 0) * 0.8 + lat * 0.2;
+          } else {
+            rec.moveFwd = (rec.moveFwd || 0) * 0.9;
+            rec.moveLat = (rec.moveLat || 0) * 0.9;
+          }
+        }
+      } else {
+        rec.speed = (rec.speed || 0) * 0.9;
       }
       /* 双手 6DoF 标记（头显用户才有；直接世界坐标，挂在 group 下） */
       if (rec.handMeshes.length) {
@@ -499,6 +531,39 @@ export function createAvatarSystem(opts) {
         rec.root.position.y = Math.abs(Math.sin(now * 1.5)) * 0.03;
       } else if (rec.vrm) {
         if (rec.breathBone) rec.breathBone.rotation.x = Math.sin(now * 1.1) * 0.02; /* 待机呼吸 */
+        /* 走路循环：素材里没有动画剪辑，所以「行走动画」= 摆动腿与另一侧手臂。
+           速度来自收到位姿的位移，摆幅与频率随速度增大；停下后把腿复位，
+           否则会卡在跨步姿势。挥手时不动手臂，免得两路驱动打架。 */
+        const speed = rec.speed || 0;
+        const wantWalk = speed > 0.15;
+        rec.walkMix = (rec.walkMix || 0) + ((wantWalk ? 1 : 0) - (rec.walkMix || 0)) * (1 - Math.exp(-dt * 5));
+        if (rec.walkMix > 0.02) {
+          const fwd = Math.abs(rec.moveFwd || 0);
+          const lat = rec.moveLat || 0;
+          /* 步幅按「沿朝向前进」的程度缩放：横移时收小（腿是固定算法，横着走不该迈正步） */
+          const amp = 0.55 * rec.walkMix * Math.min(1, speed / 1.2) * (0.35 + 0.65 * fwd);
+          rec.walkPhase = (rec.walkPhase || 0) + dt * (2.0 + speed * 2.4) * Math.PI;
+          const sw = Math.sin(rec.walkPhase);
+          if (rec.legL) rec.legL.rotation.x = sw * amp;
+          if (rec.legR) rec.legR.rotation.x = -sw * amp;
+          if (rec.shinL) rec.shinL.rotation.x = Math.max(0, -sw) * amp * 0.9;
+          if (rec.shinR) rec.shinR.rotation.x = Math.max(0, sw) * amp * 0.9;
+          if (rec.waveT == null) {
+            if (rec.leftArm) rec.leftArm.rotation.x = -sw * amp * 0.7;
+            if (rec.armBone) rec.armBone.rotation.x = sw * amp * 0.7;
+          }
+          /* 横移时上身轻微侧倾，让动作不像纯滑行（呼吸用的是 .x，这里用 .z 不打架） */
+          if (rec.breathBone) rec.breathBone.rotation.z = -lat * 0.12 * rec.walkMix;
+          rec.root.position.y = Math.abs(sw) * 0.022 * rec.walkMix;  /* 轻微上下起伏 */
+        } else {
+          for (const bone of [rec.legL, rec.legR, rec.shinL, rec.shinR]) if (bone) bone.rotation.x = 0;
+          if (rec.waveT == null) {
+            if (rec.leftArm) rec.leftArm.rotation.x = 0;
+            if (rec.armBone) rec.armBone.rotation.x = 0;
+          }
+          if (rec.breathBone) rec.breathBone.rotation.z = 0;
+          rec.root.position.y = 0;
+        }
         if (rec.waveT != null) {
           rec.waveT += dt;
           const k = rec.waveT;
@@ -524,5 +589,22 @@ export function createAvatarSystem(opts) {
     inFlight = 0;
   }
 
-  return { group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats, setRemotePose, removeRemote, clearLeft };
+  /* 走路循环的调试快照（验证/排查用）：速度、混合权重、腿的当前摆角 */
+  function debugWalk(username) {
+    const rec = avatars.get(String(username));
+    if (!rec || rec.disposed) return null;
+    return {
+      humanoid: !!rec.humanoidOn,
+      speed: +(rec.speed || 0).toFixed(3),
+      mix: +(rec.walkMix || 0).toFixed(3),
+      phase: +(rec.walkPhase || 0).toFixed(2),
+      legL: rec.legL ? +rec.legL.rotation.x.toFixed(3) : null,
+      legR: rec.legR ? +rec.legR.rotation.x.toFixed(3) : null,
+      fwd: +(rec.moveFwd || 0).toFixed(2),
+      lat: +(rec.moveLat || 0).toFixed(2),
+      y: +rec.root.position.y.toFixed(3),
+    };
+  }
+
+  return { group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats, setRemotePose, removeRemote, clearLeft, debugWalk };
 }

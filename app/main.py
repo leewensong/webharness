@@ -9,6 +9,8 @@ import mimetypes
 import os
 import re
 import sqlite3
+import struct
+import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from html import escape
@@ -244,8 +246,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.25.0",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。",
+    version="2.26.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。房间内 3D 位姿流（v2.26）：`POST /api/rooms/{room}/presence` 上报（头/身体 + 可选双手 + 可选 state）、`/presence/leave` 离开、`GET /presence` 全量快照（返回 `logId` 作增量游标）、`GET /presence/delta` 增量。增量支持 `fmt=bin` 返回**二进制脏位帧**（u32 成员 id + kind + 脏位掩码 + 按需字段；位置量化到厘米、角度到 int16、四元数到 int16），并**按请求者到各成员的水平距离分级**：<5m 全量（含双手与状态）、5–15m 位置+朝向、>15m 仅位置；静止成员若没有脏字段则一个字节都不发。游标用 `sinceId`（增量日志 id，单调递增；时间戳游标会漏同一毫秒的事件），返回 `X-Presence-Id`/`X-Presence-Reset`。`hold`（毫秒）为服务端节流：不足则等满再返回，客户端「返回就再发」即得稳定 tick（10Hz 传 100），避免「谁写入就唤醒谁」在高频下的惊群。预留脏位 16/32 给全身骨骼与 ARKit52 面部。",
     lifespan=lifespan,
 )
 
@@ -846,6 +848,8 @@ def _online_users(conn, room) -> list[dict]:
     return [
         {
             "username": row["username"],
+            # 3D 位姿的二进制帧用数字 id 指代成员，客户端据此把 id 映射回用户名（2D 忽略此键）
+            "userId": row["uid"],
             "lastSeenAt": row["lastSeenAt"],
             **_profile_fields(row),
             "canSpeak": row["uid"] in gov_ids
@@ -4157,12 +4161,122 @@ PRESENCE_RETENTION = "-10 minutes"
 PRESENCE_RETENTION_SECS = 600.0      # 与上面 SQL 窗口保持一致（超窗的游标一律让客户端全量重取）
 PRESENCE_WALK_SPEED = 2.2            # 允许的最大水平速度（米/秒，略高于人类快走）
 PRESENCE_SPEED_SLACK = 0.8           # 速度校验容差（米）：抖动/丢包重传不至于被拒
-PRESENCE_COALESCE_MS = 250           # 同人两次增量事件的合并间隔：更密只刷新最新位姿、不再追加事件
+PRESENCE_COALESCE_MS = 100           # 同人两次增量事件的合并间隔：与 10Hz 上报对齐（更密只刷新最新位姿）
 PRESENCE_RADIUS_LIMIT = 40.0         # 位置绝对值上限（米）：远超房间尺寸即判非法
 PRESENCE_Y_MIN, PRESENCE_Y_MAX = -2.0, 12.0
 PRESENCE_MAX_HANDS = 2
 PRESENCE_DELTA_LIMIT = 500
 PRESENCE_STATE_CHARS = 500
+
+# ---------- 位姿流升级（v2.26）：二进制脏位增量 + 按距离分级 + 长轮询 ----------
+# 目标：12 人房 10Hz 下每人下行约 5–6 KB/s（位置+朝向+双手+状态），并为将来的全身骨骼与
+# ARKit52 面部预留脏位——加字段只改编解码，协议骨架不动。分级在**服务端**做：请求者的
+# 最新位姿就在库里，按到各成员的水平距离决定这一帧给他带哪些字段（省的是真实带宽，
+# 而不是只省客户端 CPU）。
+PRESENCE_BIN_MAGIC = 0xB1              # 二进制帧首字节；客户端据此区分二进制与降级 JSON
+PRESENCE_BIN_VERSION = 1
+PRESENCE_LOD_NEAR_M = 5.0              # <5m 全量；5–15m 位置+朝向；>15m 仅位置
+PRESENCE_LOD_MID_M = 15.0
+PRESENCE_POS_EPS = 0.01                # 位置脏判定阈值（米）
+PRESENCE_ANGLE_EPS = 0.02              # 朝向脏判定阈值（弧度，约 1.1°）
+PRESENCE_HANDS_EPS = 0.005             # 手部脏判定阈值（米 / 四元数分量）
+PRESENCE_PACK_POS = 100.0              # 位置量化：厘米（int16 → ±327m）
+PRESENCE_PACK_ANGLE = 65536.0 / (2 * math.pi)   # 角度量化：int16 满量程 = 2π
+PRESENCE_MAX_ENTRIES = 200             # 单帧成员上限
+
+P_DIRTY_POS = 1
+P_DIRTY_ORIENT = 2
+P_DIRTY_HANDS = 4
+P_DIRTY_STATE = 8
+# 预留：16 = 全身骨骼块、32 = ARKit52 面部块。本期编码器不产生，客户端忽略未知位。
+
+
+def _presence_hands_dirty(ph, ch) -> bool:
+    """手部是否变化：数量不同算变；任一分量超阈值也算变（避免每帧都发手）。"""
+    ph, ch = ph or [], ch or []
+    if len(ph) != len(ch):
+        return True
+    for a, b in zip(ph, ch):
+        for key in ("p", "q"):
+            va, vb = (a.get(key) or []), (b.get(key) or [])
+            for i in range(min(len(va), len(vb))):
+                if abs(va[i] - vb[i]) > PRESENCE_HANDS_EPS:
+                    return True
+    return False
+
+
+def _presence_dirty(prev: dict | None, cur: dict) -> int:
+    """对比上一次位姿得出脏位掩码；没有上一次（首次/全量重来）视为全脏。"""
+    if not prev:
+        return P_DIRTY_POS | P_DIRTY_ORIENT | P_DIRTY_HANDS | P_DIRTY_STATE
+    bits = 0
+    pp, cp = (prev.get("p") or [0.0, 0.0, 0.0]), (cur.get("p") or [0.0, 0.0, 0.0])
+    if any(abs(cp[i] - pp[i]) > PRESENCE_POS_EPS for i in range(3)):
+        bits |= P_DIRTY_POS
+    if (abs(cur.get("yaw", 0.0) - prev.get("yaw", 0.0)) > PRESENCE_ANGLE_EPS
+            or abs(cur.get("pitch", 0.0) - prev.get("pitch", 0.0)) > PRESENCE_ANGLE_EPS):
+        bits |= P_DIRTY_ORIENT
+    if _presence_hands_dirty(prev.get("hands"), cur.get("hands")):
+        bits |= P_DIRTY_HANDS
+    if json.dumps(prev.get("state"), sort_keys=True) != json.dumps(cur.get("state"), sort_keys=True):
+        bits |= P_DIRTY_STATE
+    return bits
+
+
+def _presence_lod_bits(dist: float) -> int:
+    """按距离给出这一帧允许携带的字段。"""
+    if dist < PRESENCE_LOD_NEAR_M:
+        return P_DIRTY_POS | P_DIRTY_ORIENT | P_DIRTY_HANDS | P_DIRTY_STATE
+    if dist < PRESENCE_LOD_MID_M:
+        return P_DIRTY_POS | P_DIRTY_ORIENT
+    return P_DIRTY_POS
+
+
+def _q16_pos(v: float) -> int:
+    return max(-32768, min(32767, int(round(v * PRESENCE_PACK_POS))))
+
+
+def _q16_angle(a: float) -> int:
+    """角度量化到 int16（满量程 2π），并绕回 int16 range 避免跨周跳变。"""
+    return ((int(round(a * PRESENCE_PACK_ANGLE)) + 32768) % 65536) - 32768
+
+
+def _presence_entry_bytes(user_id: int, kind: int, mask: int, pose: dict | None) -> bytes:
+    """一个成员的一条增量：u32 用户 id + u8 kind（0=位姿 1=离开）+ u8 脏位 + 字段。
+
+    kind 单独占一字节而不是拿 mask=0 表示离开——否则「这一帧什么都没变」与「人走了」
+    无法区分。
+    """
+    out = bytearray()
+    out += struct.pack("<IBB", user_id, kind, mask & 0xFF)
+    if kind != 0 or not pose:
+        return bytes(out)
+    if mask & P_DIRTY_POS:
+        p = pose.get("p") or [0.0, 0.0, 0.0]
+        out += struct.pack("<3h", _q16_pos(p[0]), _q16_pos(p[1]), _q16_pos(p[2]))
+    if mask & P_DIRTY_ORIENT:
+        out += struct.pack("<2h", _q16_angle(pose.get("yaw", 0.0)), _q16_angle(pose.get("pitch", 0.0)))
+    if mask & P_DIRTY_HANDS:
+        hands = (pose.get("hands") or [])[:PRESENCE_MAX_HANDS]
+        out += struct.pack("<B", len(hands))
+        for h in hands:
+            hp = h.get("p") or [0.0, 0.0, 0.0]
+            out += struct.pack("<3h", _q16_pos(hp[0]), _q16_pos(hp[1]), _q16_pos(hp[2]))
+            q = (h.get("q") or [0.0, 0.0, 0.0, 1.0])[:4]
+            out += struct.pack("<4h", *[max(-32768, min(32767, int(round(v * 32767)))) for v in q])
+    if mask & P_DIRTY_STATE:
+        raw = json.dumps(pose.get("state"), ensure_ascii=False, separators=(",", ":")).encode("utf-8")[:255]
+        out += struct.pack("<B", len(raw)) + raw
+    return bytes(out)
+
+
+def _presence_frame_bytes(entries) -> bytes:
+    """整帧：magic + version + 成员数，随后逐条成员增量。"""
+    out = bytearray()
+    out += struct.pack("<BBB", PRESENCE_BIN_MAGIC, PRESENCE_BIN_VERSION, min(len(entries), 255))
+    for user_id, kind, mask, pose in entries[:PRESENCE_MAX_ENTRIES]:
+        out += _presence_entry_bytes(user_id, kind, mask, pose)
+    return bytes(out)
 
 
 class PresenceHand(BaseModel):
@@ -4223,8 +4337,20 @@ def _presence_validate(body: PresenceUpdate) -> dict:
     return {"p": p, "yaw": float(body.yaw), "pitch": float(body.pitch), "hands": hands, "state": state}
 
 
+_presence_purge_at = 0.0
+
+
 def _presence_purge(conn) -> None:
-    """增量表滚动清理（走 idx_room_presence_log_time）。"""
+    """增量表滚动清理（走 idx_room_presence_log_time）。
+
+    10Hz 上报下「每次写都清一次」会变成每秒上百次 DELETE，故节流到最多每 5 秒一次。
+    清理是滚动的，晚几秒不影响正确性——超窗的游标本来就一律让客户端全量重取。
+    """
+    global _presence_purge_at
+    now = time.monotonic()
+    if now - _presence_purge_at < 5.0:
+        return
+    _presence_purge_at = now
     conn.execute("DELETE FROM room_presence_log WHERE created_at < datetime('now', ?)", (PRESENCE_RETENTION,))
 
 
@@ -4232,7 +4358,7 @@ def _presence_purge(conn) -> None:
 def update_presence(room_name: str, body: PresenceUpdate, user: CurrentUser):
     """上报自己的 3D 位姿（头/身体 + 可选双手 6DoF）。
 
-    全量表更新为该用户最新位姿；增量表按时间追加一条事件（同人 250ms 内合并）。
+    全量表更新为该用户最新位姿；增量表按时间追加一条事件（同人 PRESENCE_COALESCE_MS 内合并）。
     **自然运动兜底**：与上一次位姿的水平位移超过「允许速度 × 间隔 + 容差」时，按上限
     **裁剪**（不是拒绝——硬拒会让滚轮快走的人类永久卡住）；别人永远看不到瞬移，
     响应带 `clamped: true` 与原位姿，Agent 据此按步行速度改正。
@@ -4271,6 +4397,9 @@ def update_presence(room_name: str, body: PresenceUpdate, user: CurrentUser):
             log_it = _presence_secs(conn, prev["updated_at"], now) * 1000.0 >= PRESENCE_COALESCE_MS
         pose_json = json.dumps(pose, ensure_ascii=False)
         state_json = json.dumps(pose["state"], ensure_ascii=False) if pose["state"] is not None else None
+        # 脏位：这次相比上次动了哪些字段。静止的人（位置/朝向/手/状态都没变）在增量帧里
+        # 一个字节都不占，这是二进制帧省带宽的主要来源。
+        dirty = _presence_dirty(prev_pose, pose)
         conn.execute(
             """
             INSERT INTO room_presence (room_id, user_id, pose, state, updated_at)
@@ -4283,13 +4412,15 @@ def update_presence(room_name: str, body: PresenceUpdate, user: CurrentUser):
         if log_it:
             conn.execute(
                 """
-                INSERT INTO room_presence_log (room_id, user_id, kind, pose, state, created_at)
-                VALUES (?, ?, 'pose', ?, ?, ?)
+                INSERT INTO room_presence_log (room_id, user_id, kind, pose, state, dirty, created_at)
+                VALUES (?, ?, 'pose', ?, ?, ?, ?)
                 """,
-                (room["id"], user["id"], pose_json, state_json, now),
+                (room["id"], user["id"], pose_json, state_json, dirty, now),
             )
             _presence_purge(conn)
-    return {"ok": True, "serverTime": now, "logged": log_it, "clamped": clamped, "pose": pose}
+    # 注意：这里**不** notify_room——增量端点用服务端节流（见 presence_delta 的 hold），
+    # 靠事件唤醒会让 10Hz × N 人的写入把等待者唤醒得比轮询还频繁（惊群）。
+    return {"ok": True, "serverTime": now, "logged": log_it, "clamped": clamped, "pose": pose, "dirty": dirty}
 
 
 @app.post("/api/rooms/{room_name}/presence/leave")
@@ -4313,6 +4444,10 @@ def presence_snapshot(room_name: str, user: CurrentUser):
     with get_db() as conn:
         room, _member = _require_membership(conn, room_name, user["id"])
         now = _db_now(conn)
+        # 增量日志的当前最大 id：客户端拿它当 id 游标（比时间戳稳，见 presence_delta）
+        log_id = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS m FROM room_presence_log WHERE room_id = ?", (room["id"],)
+        ).fetchone()["m"]
         rows = conn.execute(
             """
             SELECT u.username, p.pose, p.state, p.updated_at
@@ -4339,58 +4474,142 @@ def presence_snapshot(room_name: str, user: CurrentUser):
         }
         for r in rows
     ]
-    return {"roomName": room["name"], "serverTime": now, "users": users}
+    return {"roomName": room["name"], "serverTime": now, "logId": log_id, "users": users}
 
 
 @app.get("/api/rooms/{room_name}/presence/delta")
-def presence_delta(room_name: str, user: CurrentUser, since: str | None = Query(default=None)):
-    """增量：since（服务端时间戳）之后的变更事件。
+async def presence_delta(
+    room_name: str,
+    user: CurrentUser,
+    since: str | None = Query(default=None),
+    since_id: Annotated[int | None, Query(alias="sinceId", ge=0)] = None,
+    hold: Annotated[int, Query(ge=0, le=500)] = 0,
+    fmt: Annotated[str, Query(pattern="^(json|bin)$")] = "json",
+):
+    """增量：since（服务端时间戳）或 sinceId（增量日志的单调 id）之后的变更事件。
 
-    since 早于增量保留窗口（或缺失/异常）时返回 reset=true，客户端须重新拉全量快照。
+    **优先用 sinceId**：时间戳游标有毫秒级碰撞——与游标同一毫秒写入的事件因为
+    `created_at > since` 不成立会被永久漏掉（10Hz 下撞毫秒很常见）；日志 id 单调递增，
+    没有这个问题，而且比较更便宜。
+
+    `hold`（毫秒）是**服务端节流**：不足 hold 毫秒就先等满再返回。客户端「返回就再发一次」
+    即可拿到稳定 tick（10Hz 传 100），而服务端每 tick 只查一次库——这比「谁写入就唤醒谁」
+    的事件长轮询更稳：10Hz × N 人的写入会把等待者唤醒到比纯轮询还频繁（惊群）。
+
+    `fmt=bin` 返回二进制帧（脏位增量 + 按到请求者的距离分级），游标在 `X-Presence-Id`
+    （与 `X-Presence-Cursor`）响应头、`X-Presence-Reset` 表示需要重拉全量；
+    不带 fmt 时保持原 JSON 形状不变（Agent/调试仍可用）。
     """
+    if hold:
+        await asyncio.sleep(min(hold, 500) / 1000.0)
+    use_id = since_id is not None
     with get_db() as conn:
         room, _member = _require_membership(conn, room_name, user["id"])
         now = _db_now(conn)
+        room_id, room_label = room["id"], room["name"]
+        max_id = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS m FROM room_presence_log WHERE room_id = ?", (room_id,)
+        ).fetchone()["m"]
         reset = False
-        if not since:
-            reset = True
-        else:
-            age = _presence_secs(conn, since, now)
-            if age > PRESENCE_RETENTION_SECS or age < -5.0:
+        if not use_id:
+            if not since:
                 reset = True
-        events = []
+            else:
+                age = _presence_secs(conn, since, now)
+                if age > PRESENCE_RETENTION_SECS or age < -5.0:
+                    reset = True
+        rows = []
+        requester_pose = None
         if not reset:
-            rows = conn.execute(
-                """
-                SELECT u.username, l.kind, l.pose, l.state, l.created_at
-                FROM room_presence_log l
-                JOIN users u ON u.id = l.user_id
-                WHERE l.room_id = ? AND l.created_at > ?
-                  -- 被封禁者的增量事件也不下发（否则 XR 端会凭事件重建其化身）
-                  AND NOT EXISTS (
-                      SELECT 1 FROM room_bans b
-                      WHERE b.room_id = l.room_id AND b.user_id = l.user_id
-                        AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
-                  )
-                ORDER BY l.id ASC
-                LIMIT ?
-                """,
-                (room["id"], since, PRESENCE_DELTA_LIMIT),
-            ).fetchall()
-            events = [
-                {
-                    "username": r["username"],
-                    "kind": r["kind"],
-                    "pose": json.loads(r["pose"]) if r["pose"] else None,
-                    "state": json.loads(r["state"]) if r["state"] else None,
-                    "at": r["created_at"],
-                }
-                for r in rows
-            ]
+            if use_id:
+                rows = conn.execute(
+                    """
+                    SELECT l.id, l.user_id, u.username, l.kind, l.pose, l.state, l.dirty, l.created_at
+                    FROM room_presence_log l
+                    JOIN users u ON u.id = l.user_id
+                    WHERE l.room_id = ? AND l.id > ? AND l.user_id != ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM room_bans b
+                          WHERE b.room_id = l.room_id AND b.user_id = l.user_id
+                            AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                      )
+                    ORDER BY l.id ASC
+                    LIMIT ?
+                    """,
+                    (room_id, since_id, user["id"], PRESENCE_DELTA_LIMIT),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT l.id, l.user_id, u.username, l.kind, l.pose, l.state, l.dirty, l.created_at
+                    FROM room_presence_log l
+                    JOIN users u ON u.id = l.user_id
+                    WHERE l.room_id = ? AND l.created_at > ? AND l.user_id != ?
+                      -- 被封禁者的增量事件也不下发（否则 XR 端会凭事件重建其化身）
+                      AND NOT EXISTS (
+                          SELECT 1 FROM room_bans b
+                          WHERE b.room_id = l.room_id AND b.user_id = l.user_id
+                            AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                      )
+                    ORDER BY l.id ASC
+                    LIMIT ?
+                    """,
+                    (room_id, since, user["id"], PRESENCE_DELTA_LIMIT),
+                ).fetchall()
             if len(rows) >= PRESENCE_DELTA_LIMIT:
                 reset = True      # 落后太多：直接全量重取，避免分页追赶
-                events = []
-    return {"roomName": room["name"], "serverTime": now, "reset": reset, "events": events}
+                rows = []
+            # 请求者自己的最新位姿：服务端据此给每个成员定细节档（近/中/远）
+            me = conn.execute(
+                "SELECT pose FROM room_presence WHERE room_id = ? AND user_id = ?",
+                (room_id, user["id"]),
+            ).fetchone()
+            if me and me["pose"]:
+                try:
+                    requester_pose = json.loads(me["pose"])
+                except ValueError:
+                    requester_pose = None
+    if fmt == "bin":
+        entries = []
+        for r in rows:
+            if r["kind"] != "pose" or not r["pose"]:
+                entries.append((r["user_id"], 1, 0, None))     # kind=1：离开
+                continue
+            try:
+                pose = json.loads(r["pose"])
+            except ValueError:
+                continue
+            mask = int(r["dirty"] or 0)
+            if requester_pose:
+                rp = requester_pose.get("p") or []
+                mp = pose.get("p") or []
+                if len(rp) >= 3 and len(mp) >= 3:
+                    mask &= _presence_lod_bits(math.hypot(mp[0] - rp[0], mp[2] - rp[2]))
+            if not mask:
+                continue        # 远处且什么都没变：这一帧不占字节
+            entries.append((r["user_id"], 0, mask, pose))
+        return Response(
+            content=_presence_frame_bytes(entries),
+            media_type="application/octet-stream",
+            headers={
+                # 下一轮的游标：有行就用最后一行（若中途还有更新，宁可多收不可漏收）
+                "X-Presence-Id": str(rows[-1]["id"] if rows else max_id),
+                "X-Presence-Cursor": now,
+                "X-Presence-Reset": "1" if reset else "0",
+                "Cache-Control": "no-store",
+            },
+        )
+    events = [
+        {
+            "username": r["username"],
+            "kind": r["kind"],
+            "pose": json.loads(r["pose"]) if r["pose"] else None,
+            "state": json.loads(r["state"]) if r["state"] else None,
+            "at": r["created_at"],
+        }
+        for r in rows
+    ]
+    return {"roomName": room_label, "serverTime": now, "reset": reset, "events": events}
 
 
 @app.get("/api/archives/{room_id}/files")
