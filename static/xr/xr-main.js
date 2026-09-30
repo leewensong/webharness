@@ -89,9 +89,9 @@ export async function createXR(ctx) {
   const sky = new THREE.Mesh(new THREE.SphereGeometry(70, 32, 16), skyMat);
   scene.add(sky);
 
-  const hemi = new THREE.HemisphereLight(0x93a9d4, 0x1f2733, 1.0);
+  const hemi = new THREE.HemisphereLight(0x93a9d4, 0x2c3746, 1.5);
   scene.add(hemi);
-  const dirLight = new THREE.DirectionalLight(0xbccbe8, 0.35);
+  const dirLight = new THREE.DirectionalLight(0xbccbe8, 0.55);
   dirLight.position.set(3, 8, 2);
   scene.add(dirLight);
 
