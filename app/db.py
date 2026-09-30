@@ -156,6 +156,9 @@ def init_db() -> None:
                 can_view_history INTEGER NOT NULL DEFAULT 1,
                 first_visible_msg_id INTEGER NOT NULL DEFAULT 0,
                 last_read_msg_id INTEGER NOT NULL DEFAULT 0,
+                -- 「我参与的更新时间」（v2.27）：我在房间里看到的最新一条可见消息的时间。
+                -- 只增不减；没进过、或进去时没人说话就保持旧值，房间列表据此排序。
+                my_update_at TEXT,
                 PRIMARY KEY (room_id, user_id),
                 FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -403,6 +406,9 @@ def init_db() -> None:
                 )
                 """
             )
+        # 「我参与的更新时间」（v2.27）：不回填。老库一律 NULL，房间列表先沿旧的
+        # 创建时间序显示，随各人进房而逐个补齐，不会突然乱序。
+        _add_column_if_missing(conn, "room_members", "my_update_at", "TEXT")
         _add_column_if_missing(conn, "messages", "msg_type", "TEXT NOT NULL DEFAULT 'text'")
         _add_column_if_missing(conn, "messages", "whisper_to", "INTEGER REFERENCES users(id)")
         _add_column_if_missing(conn, "messages", "whisper_to_ids", "TEXT")

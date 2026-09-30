@@ -904,7 +904,7 @@
     <p class="msg-status" id="settingsStatus"></p>
     </div>
     <div class="dialog-actions">
-      <button class="btn danger" onclick="archiveRoom()" data-i18n="archiveRoom">归档房间</button>
+      <button class="btn danger hidden" id="archiveBtn" onclick="archiveRoom()" data-i18n="archiveRoom">归档房间</button>
       <button class="btn ghost" id="clearPwdBtn" onclick="clearRoomPassword()" data-i18n="removePwd">取消密码</button>
       <button class="btn ghost" onclick="document.getElementById('settings').close()" data-i18n="close">关闭</button>
       <button class="btn" id="saveRoomBtn" onclick="saveRoom()" data-i18n="save">保存</button>
@@ -1247,7 +1247,7 @@
         foldExpand: "展开全部（{{n}} 字）", foldCollapse: "收起",
         whisperTag: "私聊",
         whisperTagN: "{{n}}人私聊",
-        membersReadOnly: "仅房主可改成员权限；你可以归档该房间。", noMembers: "暂无成员",
+        membersReadOnly: "仅房主、Room Agent 或建房的 Agent 主人可改成员权限与封禁名单。", noMembers: "暂无成员",
         memberCol: "成员", speakCol: "发言", attachCol: "附件", historyCol: "历史",
         kindAgent: "Agent", kindHuman: "人类", permUpdated: "已更新 {{name}} 的权限",
         banBtn: "封禁", banUnban: "解封", banPick: "选择封禁时长",
@@ -1552,7 +1552,7 @@
         foldExpand: "Expand all ({{n}} chars)", foldCollapse: "Collapse",
         whisperTag: "Whisper",
         whisperTagN: "{{n}}-person whisper",
-        membersReadOnly: "Only the owner can change permissions; you can archive this room.", noMembers: "No members",
+        membersReadOnly: "Only the owner, the Room Agent, or the Agent's master can change permissions and bans.", noMembers: "No members",
         memberCol: "Member", speakCol: "Speak", attachCol: "Files", historyCol: "History",
         kindAgent: "Agent", kindHuman: "Human", permUpdated: "Permissions updated for {{name}}",
         banBtn: "Ban", banUnban: "Unban", banPick: "Choose a ban duration",
@@ -1950,6 +1950,7 @@
       roomName: localStorage.getItem("webharness.roomName") || localStorage.getItem("chatroom.roomName") || "",
       isOwner: false,
       canArchive: false,
+      canManage: false,
       viewingArchive: false,
       archiveId: null,
       perms: { canSpeak: true, canUpload: true },
@@ -2948,6 +2949,7 @@
       exitXR();
       $("view3dBtn").classList.add("hidden");
       store.token = ""; store.username = ""; store.roomName = ""; store.isOwner = false;
+      store.canArchive = false; store.canManage = false;
       store.avatarUrl = "";
       lastId = 0;
       lastUpdatedAt = "";
@@ -3098,6 +3100,7 @@
       store.archiveId = store.viewingArchive ? info.roomId : null;
       store.isOwner = !!info.isOwner;
       store.canArchive = !!info.canArchive;
+      store.canManage = !!info.canManage;
       store.perms = info.myPermissions || { canSpeak: true, canUpload: true };
       store.roomAgent = info.roomAgent || "";
       store.scene = info.scene || null;
@@ -3110,11 +3113,13 @@
         + (store.viewingArchive ? t("archivedSuffix") : "");
       $("roomTitle").textContent = title;
       renderRoomTemplate(info);
-      $("manageBtn").classList.toggle("hidden", store.viewingArchive || (!store.isOwner && !store.canArchive));
+      // 治理者（房主 / roomAgent / 建房的 Agent 主人）可开管理面板；归档另看 canArchive（roomAgent 不能归档）
+      $("manageBtn").classList.toggle("hidden", store.viewingArchive || !store.canManage);
       $("composer").classList.toggle("hidden", store.viewingArchive);
-      $("ownerSettings").classList.toggle("hidden", !store.isOwner);
-      $("clearPwdBtn").classList.toggle("hidden", !store.isOwner);
-      $("saveRoomBtn").classList.toggle("hidden", !store.isOwner);
+      $("ownerSettings").classList.toggle("hidden", !store.canManage);
+      $("clearPwdBtn").classList.toggle("hidden", !store.canManage);
+      $("saveRoomBtn").classList.toggle("hidden", !store.canManage);
+      $("archiveBtn").classList.toggle("hidden", !store.canArchive);
       const settings = $("settings");
       if (!settings.open) {
         $("editName").value = info.roomName;
@@ -3125,15 +3130,15 @@
       }
       renderOnline(store.viewingArchive ? [] : (info.onlineUsers || []));
       if (store.viewingArchive) $("onlineCount").textContent = t("archivedReadOnly");
-      const muted = !store.isOwner && !store.perms.canSpeak;
+      const muted = !store.canManage && !store.perms.canSpeak;
       // 被禁言不再锁死输入框：私聊（@@用户名）与群组（#群名）仍可用，公开发送由服务端拦
       $("sendBtn").disabled = store.viewingArchive;
       $("content").disabled = store.viewingArchive;
       $("content").placeholder = store.viewingArchive
         ? t("archivePlaceholder")
         : (muted ? t("mutedWhisperPlaceholder") : t("composerPlaceholder"));
-      $("attachBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
-      $("imageBtn").disabled = store.viewingArchive || (!store.isOwner && !store.perms.canUpload);
+      $("attachBtn").disabled = store.viewingArchive || (!store.canManage && !store.perms.canUpload);
+      $("imageBtn").disabled = store.viewingArchive || (!store.canManage && !store.perms.canUpload);
       $("micBtn").disabled = store.viewingArchive;
       renderMicUI();
       $("view3dBtn").classList.toggle("hidden", !store.roomName || store.viewingArchive);
@@ -3577,7 +3582,7 @@
       clearWhisper();
       clearReply();
       stopVoicePlay();
-      store.roomName = ""; store.isOwner = false; store.canArchive = false;
+      store.roomName = ""; store.isOwner = false; store.canArchive = false; store.canManage = false;
       store.viewingArchive = false; store.archiveId = null; lastId = 0; lastUpdatedAt = "";
       msgIndex.clear(); msgArrival.clear(); pendingVoiceIds.clear();
       saveSession();
@@ -4439,7 +4444,7 @@
       $("editPassword").value = "";
       $("settingsStatus").textContent = "";
       $("settings").showModal();
-      if (!store.isOwner) {
+      if (!store.canManage) {
         $("membersBox").textContent = t("membersReadOnly");
         $("bansBox").textContent = t("membersReadOnly");
         return;
@@ -4525,8 +4530,8 @@
     }
 
     function memberBanCell(m) {
-      /* 治理者（房主/roomAgent）不可被封禁；已封禁显示到期与解封，未封禁给时长菜单 */
-      if (m.isOwner || m.isRoomAgent) return "";
+      /* 治理者（房主/roomAgent/建房的 Agent 主人）不可被封禁；已封禁显示到期与解封，未封禁给时长菜单 */
+      if (m.isOwner || m.isRoomAgent || m.isAgentMaster) return "";
       if (m.banned) {
         const until = m.banExpiresAt
           ? `${t("banUntil")} ${m.banExpiresAt.slice(0, 16)} UTC`
@@ -4713,7 +4718,7 @@
 
     function filesCanEdit() {
       if (!store.roomName || store.viewingArchive) return false;
-      if (store.isOwner || (store.roomAgent && store.username === store.roomAgent)) return true;
+      if (store.canManage) return true;
       if (store.files && store.files.locked) return false;
       return store.perms.canEditFiles !== false;
     }
@@ -5837,7 +5842,7 @@
       if (!hasRecApi) { voiceToast(t("noRecApi")); return; }
       if (recStarting || recListening) return;
       if (!store.roomName || store.viewingArchive) return;
-      if (!store.isOwner && !store.perms.canSpeak) { voiceToast(t("mutedPlaceholder")); return; }
+      if (!store.canManage && !store.perms.canSpeak) { voiceToast(t("mutedPlaceholder")); return; }
       recStarting = true;
       recCancelled = false;
       recSilentCancel = false;

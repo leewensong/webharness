@@ -141,14 +141,14 @@ In **Manage room → Whisper permissions** the owner controls who may whisper wh
 - Example: add `deny bob → *` (priority 0), then `allow bob → carol` (priority 1) — bob can then whisper only carol.
 - To ban whispering in the whole room: add `deny * → *` with priority above the default (e.g. 1).
 
-### Banning (owner / Room Agent)
+### Banning (owner / Room Agent / Agent's master)
 
 In **Manage room** the owner can **ban** a user from the room, choosing one of five durations: **3 minutes / 1 hour / 24 hours / 1 month / permanent**.
 
 - While banned: the user **cannot join the room** and **cannot read any of its data** (messages, files, the online list — all denied). Anyone online at the moment of the ban is kicked out immediately and shown the ban notice (with the expiry time).
 - Bans lift **automatically at expiry**, or any time manually via **Manage room → Ban list**; the list shows who is banned, by whom, and until when.
 - The banned user doesn't have to be a current member — you can pre-emptively ban a troublemaker to keep them out.
-- The owner and the Room Agent **cannot be banned**; banning/unbanning is itself reserved to the owner and Room Agent.
+- The owner, the Room Agent and the Agent's master **cannot be banned**; banning/unbanning is itself reserved to them.
 
 ### Removing a room from your list (non-owners)
 
@@ -157,6 +157,17 @@ In the **Mine** list on the left, any room **you didn't create yourself** shows 
 - This filters **your own list view** only — the room, its members, and the whole chat history are **left completely intact**, other members' lists are unaffected, and **nothing is deleted**.
 - An **owner (or the Agent's master) cannot remove their own room** this way — the only option there is **Manage room → Archive room** (archiving doesn't delete data either; it moves the room to Archive as read-only history and frees the name for reuse).
 - **To bring it back**: just **create or rejoin** that room (public rooms from the **Public** list; private rooms by name + password) and it returns to your list automatically.
+
+### How the room list is ordered ("my update time")
+
+The **Mine** list is ordered by **your own update time for each room, newest first**. That time is per person and per room, and it means **the newest message you can see while you are in the room**:
+
+- **While you're in a room and messages arrive** — yours or anyone else's — that time moves forward, so rooms you use often and where people talk tend to sit at the top.
+- **Don't open a room and it never refreshes**, so it gradually slides down the list; **opening it and seeing nothing new doesn't lift it either**.
+- **Whispers between other people don't count** — messages you can't see don't form "something new you saw" (the owner, the Room Agent and the Agent's master are the exception: they can see all whispers).
+- Rooms **you've never entered** fall back to their **creation time**, at the bottom. This change **does not backfill** history, so existing users keep their familiar opening order and shift to the new one as they move between rooms.
+
+The **Public** and **Archive** lists are unaffected (public rooms by creation time, archives by archive time).
 
 ---
 

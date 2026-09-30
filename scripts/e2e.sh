@@ -325,6 +325,38 @@ check "移除后房主列表不受影响" "$(curl -sS "$URL/api/rooms" -H "Autho
 check "移除后房间与记录仍在（非删除）" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$HIDE_ROOM/messages?limit=1" -H "Authorization: Bearer $OTOK")" "200"
 curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d @"$TMP/hide_room.json" >/dev/null
 check "重新加入自动恢复" "$(curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK")" "$HIDE_ROOM"
+
+echo "== 「我参与的更新时间」排序（v2.27） =="
+# 房间列表缺省按「我在房里看到的最新可见消息时间」降序；没进过/没人说话的保持旧值。
+mkroom() { # mkroom <token> <房间名>  → 建/加入一个公开房
+  curl -sS "$URL/api/rooms" -H "Authorization: Bearer $1" -H 'Content-Type: application/json' \
+    -d "$(python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"visibility":"public"}))' "$2")" >/dev/null
+}
+sort_order() { # sort_order <token> <房间名前缀> → 该人列表里这些房间的先后顺序
+  curl -sS "$URL/api/rooms" -H "Authorization: Bearer $1" \
+    | python3 -c "import sys,json;p=sys.argv[1];print(','.join(r['roomName'] for r in json.load(sys.stdin)['rooms'] if r['roomName'].startswith(p)))" "$2"
+}
+SORT_A="e2e-sortx-a-$SUF"; SORT_B="e2e-sortx-b-$SUF"; SORT_C="e2e-sortx-c-$SUF"
+mkroom "$HTOK" "$SORT_A"; mkroom "$HTOK" "$SORT_B"; mkroom "$HTOK" "$SORT_C"
+check "没进过的房间按创建时间倒序" "$(sort_order "$HTOK" e2e-sortx-)" "$SORT_C,$SORT_B,$SORT_A"
+sleep 1
+mkroom "$OTOK" "$SORT_B"   # 别人进 B 说话，房主 HUMAN 并未进过 B
+curl -sS "$URL/api/rooms/$SORT_B/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"content":"排序-别人发言"}' >/dev/null
+check "没读过的房不因别人发言上浮" "$(sort_order "$HTOK" e2e-sortx-)" "$SORT_C,$SORT_B,$SORT_A"
+curl -sS "$URL/api/rooms/$SORT_B/messages?limit=5" -H "Authorization: Bearer $HTOK" >/dev/null
+check "进房看过新消息后上浮到第一" "$(sort_order "$HTOK" e2e-sortx-)" "$SORT_B,$SORT_C,$SORT_A"
+curl -sS "$URL/api/rooms/$SORT_A/messages?limit=5" -H "Authorization: Bearer $HTOK" >/dev/null
+check "进空房看一眼不上浮" "$(sort_order "$HTOK" e2e-sortx-)" "$SORT_B,$SORT_C,$SORT_A"
+# 可见级口径：别人之间的私聊我看不到，不算「我看到的新消息」（用成员 OTHER 验）
+SORT_D="e2e-sortv-d-$SUF"; SORT_E="e2e-sortv-e-$SUF"
+for r in "$SORT_D" "$SORT_E"; do mkroom "$HTOK" "$r"; mkroom "$OTOK" "$r"; mkroom "$ETOK" "$r"; done
+sleep 1
+curl -sS "$URL/api/rooms/$SORT_E/messages" -H "Authorization: Bearer $ETOK" -H 'Content-Type: application/json' -d '{"content":"公开消息"}' >/dev/null
+sleep 1   # 让私聊晚一秒：若私聊被误算作「我看到的」，D 的时间戳会比 E 新、顺序就会翻过来
+curl -sS "$URL/api/rooms/$SORT_D/messages" -H "Authorization: Bearer $ETOK" -H 'Content-Type: application/json' -d "{\"content\":\"@@$HUMAN 悄悄话\"}" >/dev/null
+curl -sS "$URL/api/rooms/$SORT_D/messages?limit=5" -H "Authorization: Bearer $OTOK" >/dev/null
+curl -sS "$URL/api/rooms/$SORT_E/messages?limit=5" -H "Authorization: Bearer $OTOK" >/dev/null
+check "看不见的私聊不算我看到的（D 不上浮）" "$(sort_order "$OTOK" e2e-sortv-)" "$SORT_E,$SORT_D"
 check "roomAgent 加 deny */*" "$(curl -sS "$URL/api/rooms/$GOV_ROOM/whisper-rules" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d '{"listType":"deny","priority":0,"sender":"*","receiver":"*"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['listType'])")" "deny"
 curl -sS "$URL/api/rooms/$GOV_ROOM/whisper-rules" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
@@ -645,6 +677,35 @@ check "纯空白文本 422" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH 
   -H 'Content-Type: application/json' -d '{"text":"   "}')" "422"
 check "作者本人补写空文本 200" "$(curl -sS -X PATCH "$URL/api/rooms/$PUB_ROOM/voice/$VIDC/text" -H "Authorization: Bearer $OTOK" \
   -H 'Content-Type: application/json' -d '{"text":"作者自己"}')" '"content":"作者自己"'
+
+echo "== Agent 主人与房主同级（v2.28） =="
+MROOM="e2e-master-$SUF"
+python3 -c 'import json,sys;print(json.dumps({"roomName":sys.argv[1],"visibility":"public"}))' "$MROOM" > "$TMP/mroom.json"
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d @"$TMP/mroom.json" >/dev/null
+# 管理不需要成员身份，但读房间数据需要：主人先加入（治理者加入免密）
+check "主人可加入自己 Agent 建的房" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d @"$TMP/mroom.json")" "200"
+check "主人 canManage 真、isOwner 假" "$(curl -sS "$URL/api/rooms/$MROOM" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["isOwner"], d["canManage"])')" "False True"
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d @"$TMP/mroom.json" >/dev/null
+check "普通成员 canManage 假" "$(curl -sS "$URL/api/rooms/$MROOM" -H "Authorization: Bearer $OTOK" | python3 -c 'import sys,json;print(json.load(sys.stdin)["canManage"])')" "False"
+check "非成员读不到房间详情 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$MROOM" -H "Authorization: Bearer $ETOK")" "403"
+check "主人改房间设置 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$MROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"rules":"主人设的规则"}')" "200"
+check "普通成员改房间设置 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$MROOM" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d '{"rules":"成员改的"}')" "403"
+check "主人设成员权限 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/rooms/$MROOM/permissions/$OTHER" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"canSpeak":false}')" "200"
+check "普通成员读成员列表 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$MROOM/members" -H "Authorization: Bearer $OTOK")" "403"
+check "主人读成员列表 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$MROOM/members" -H "Authorization: Bearer $HTOK")" "200"
+check "主人封禁他人 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$MROOM/bans" -X POST -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d "$(ban_body "$EXTRA" 1h)")" "200"
+check "主人解封 200" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$MROOM/bans/$EXTRA" -X DELETE -H "Authorization: Bearer $HTOK")" "200"
+check "主人把建房 Agent 设为 roomAgent" "$(curl -sS -X PATCH "$URL/api/rooms/$MROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"roomAgent":sys.argv[1]}))' "$AGENT")" | J "['roomAgent']")" "$AGENT"
+check "治理者之间互不可封禁：roomAgent 封主人 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$MROOM/bans" -X POST -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$(ban_body "$HUMAN" 1h)")" "403"
+check "治理者之间互不可限制：roomAgent 限主人 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/rooms/$MROOM/permissions/$HUMAN" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"canSpeak":false}')" "403"
+# 注：本房是 AGENT 自己建的，它作为「创建者」本来就能归档；「roomAgent 不能归档」由
+# roomAgent 治理权那一段（房主另建的 GOV_ROOM，roomAgent ≠ 创建者）覆盖，这里不重复。
+# 主人按治理者口径可见「别人之间」的私聊；普通成员看不到内容
+curl -sS "$URL/api/rooms/$MROOM/messages" -H "Authorization: Bearer $OTOK" -H 'Content-Type: application/json' -d "{\"content\":\"@@$AGENT 只有治理者看得见\"}" >/dev/null
+curl -sS "$URL/api/rooms" -H "Authorization: Bearer $ETOK" -H 'Content-Type: application/json' -d @"$TMP/mroom.json" >/dev/null
+check "主人可见他人之间的私聊" "$(curl -sS "$URL/api/rooms/$MROOM/messages?limit=5" -H "Authorization: Bearer $HTOK" | python3 -c 'import sys,json;print(any("只有治理者看得见" in m["content"] for m in json.load(sys.stdin)["messages"]))')" "True"
+check "普通成员看不到该私聊" "$(curl -sS "$URL/api/rooms/$MROOM/messages?limit=5" -H "Authorization: Bearer $ETOK" | python3 -c 'import sys,json;print(any("只有治理者看得见" in m["content"] for m in json.load(sys.stdin)["messages"]))')" "False"
+check "主人可归档自己 Agent 建的房" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$MROOM/archive" -X POST -H "Authorization: Bearer $HTOK")" "200"
 
 echo "== Agent 停用 =="
 curl -sS -X PATCH "$URL/api/agents/$AGENT" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"status":"disabled"}' >/dev/null

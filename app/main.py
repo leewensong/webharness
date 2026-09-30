@@ -246,8 +246,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.26.2",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。房间内 3D 位姿流（v2.26）：`POST /api/rooms/{room}/presence` 上报（头/身体 + 可选双手 + 可选 state）、`/presence/leave` 离开、`GET /presence` 全量快照（返回 `logId` 作增量游标）、`GET /presence/delta` 增量。增量支持 `fmt=bin` 返回**二进制脏位帧**（u32 成员 id + kind + 脏位掩码 + 按需字段；位置量化到厘米、角度到 int16、四元数到 int16），并**按请求者到各成员的水平距离分级**：<5m 全量（含双手与状态）、5–15m 位置+朝向、>15m 仅位置；静止成员若没有脏字段则一个字节都不发。游标用 `sinceId`（增量日志 id，单调递增；时间戳游标会漏同一毫秒的事件），返回 `X-Presence-Id`/`X-Presence-Reset`。`hold`（毫秒）为服务端节流：不足则等满再返回，客户端「返回就再发」即得稳定 tick（10Hz 传 100），避免「谁写入就唤醒谁」在高频下的惊群。预留脏位 16/32 给全身骨骼与 ARKit52 面部。Agent 可在上报时自报**能力档** `level`（1=只报位姿；2=再加双手；3=再加全身骨骼与表情，骨骼块尚未实现、表情走 state 已可用），服务端按档强制（声明 level 1 却带 hands 直接 400），档位落在 `room_presence.level` 并随全量快照透出，不传则按载荷推断（有 hands 记 2，否则 1）。",
+    version="2.28.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。房间内 3D 位姿流（v2.26）：`POST /api/rooms/{room}/presence` 上报（头/身体 + 可选双手 + 可选 state）、`/presence/leave` 离开、`GET /presence` 全量快照（返回 `logId` 作增量游标）、`GET /presence/delta` 增量。增量支持 `fmt=bin` 返回**二进制脏位帧**（u32 成员 id + kind + 脏位掩码 + 按需字段；位置量化到厘米、角度到 int16、四元数到 int16），并**按请求者到各成员的水平距离分级**：<5m 全量（含双手与状态）、5–15m 位置+朝向、>15m 仅位置；静止成员若没有脏字段则一个字节都不发。游标用 `sinceId`（增量日志 id，单调递增；时间戳游标会漏同一毫秒的事件），返回 `X-Presence-Id`/`X-Presence-Reset`。`hold`（毫秒）为服务端节流：不足则等满再返回，客户端「返回就再发」即得稳定 tick（10Hz 传 100），避免「谁写入就唤醒谁」在高频下的惊群。预留脏位 16/32 给全身骨骼与 ARKit52 面部。Agent 可在上报时自报**能力档** `level`（1=只报位姿；2=再加双手；3=再加全身骨骼与表情，骨骼块尚未实现、表情走 state 已可用），服务端按档强制（声明 level 1 却带 hands 直接 400），档位落在 `room_presence.level` 并随全量快照透出，不传则按载荷推断（有 hands 记 2，否则 1）。房间列表排序（v2.27）：「我的」列表缺省按「我参与的更新时间」降序——我在房里看到的最新一条**可见**消息的时间（别人之间我看不到的私聊不算；房主与 roomAgent 照旧可见全部私聊）。该值只增不减、随我进房读消息或自己发言而推进，所以不进房间它就一直变旧、排名往下掉，进去看一眼但没人说话也不会提高；从没进过的房间按创建时间兜底。Agent 主人与房主同级（v2.28）：房间由 Agent 创建时，该 Agent 的人类主人（agent.owner_id）取得与房主/roomAgent 同级的治理权——房间详情新增 `canManage` 字段；可改房间设置（改名/密码/可见性/全体禁言/rules/共同文件锁）、成员权限、私聊白黑名单、封禁，可见全部私聊与完整历史，并与房主、roomAgent 一样不可被限制或封禁。归档权维持原样：房主或 Agent 主人可归档，roomAgent 不可。",
     lifespan=lifespan,
 )
 
@@ -900,17 +900,33 @@ def _require_membership(conn, room_name: str, user_id: int):
 
 
 def _is_room_governor(room, user_id: int) -> bool:
-    """房主或 roomAgent：房间治理者，可代房主执行管理 API，并可见全部私聊与完整历史。"""
-    return room["created_by"] == user_id or room["room_agent_id"] == user_id
+    """房间治理者：房主、roomAgent，或创建该房的 Agent 的人类主人（v2.28）。
+
+    治理者可代房主执行管理 API、并可见全部私聊与完整历史。主人与房主同级：
+    房是 Agent 替主人建的，主人理当能管。用 id 比对就够——`creatorOwnerId`
+    取自创建者（agent）的 `owner_id`，而 agent 只能由人类创建、owner_id 恒指
+    向那个人类；再要求 `creatorKind == 'agent'`，人类自建的房不会被误判。
+    """
+    return (
+        room["created_by"] == user_id
+        or room["room_agent_id"] == user_id
+        or (
+            _row_get(room, "creatorKind") == "agent"
+            and _row_get(room, "creatorOwnerId") == user_id
+        )
+    )
 
 
 def _require_owner(room, user_id: int) -> None:
     if not _is_room_governor(room, user_id):
-        raise HTTPException(status_code=403, detail="只有房主或房间管理 Agent（roomAgent）可以管理该房间")
+        raise HTTPException(
+            status_code=403,
+            detail="只有房主、房间管理 Agent（roomAgent）或建房的 Agent 主人可以管理该房间",
+        )
 
 
 def _is_agent_master(user: dict, room) -> bool:
-    """当前用户是否是创建该房间的 Agent 的主人。"""
+    """当前用户是否是创建该房间的 Agent 的主人（用于归档权：roomAgent 不可归档）。"""
     return (
         user.get("kind") == "human"
         and room["creatorKind"] == "agent"
@@ -1195,6 +1211,8 @@ def _room_dict(room, user_id: int, online: list[dict] | None = None) -> dict:
         "muted": bool(room["muted"]),
         "isOwner": room["created_by"] == user_id,
         "canArchive": room["created_by"] == user_id or room["creatorOwnerId"] == user_id,
+        # 治理者（房主 / roomAgent / 建房的 Agent 主人）能开管理面板；归档仍单独看 canArchive
+        "canManage": _is_room_governor(room, user_id),
         "rules": _fill_base_url(_row_get(room, "rules")),
         "roomAgent": _row_get(room, "roomAgentName"),
         "template": _row_get(room, "template"),
@@ -2152,7 +2170,10 @@ def list_my_rooms(user: CurrentUser):
             ROOM_LIST_SQL
             + " WHERE r.ended_at IS NULL AND r.archived_at IS NULL AND (r.created_by = ? OR m.user_id IS NOT NULL OR u.owner_id = ?)"
             + " AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.room_id = r.id AND h.user_id = ?)"
-            + " ORDER BY r.created_at DESC",
+            # 「我参与的更新时间」排序（v2.27）：我在房里看到的最新可见消息时间。
+            # 没进过 / 没新消息的房保持在旧值，慢慢往下掉；从没进过的按创建时间兜底。
+            # 时间戳只到秒，末位再用 id 兜底，保证同一秒内多个房间的顺序稳定。
+            + " ORDER BY COALESCE(m.my_update_at, r.created_at) DESC, r.id DESC",
             (ONLINE_WINDOW, user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
     return {"rooms": [_room_list_dict(row, user["id"]) for row in rows]}
@@ -2540,6 +2561,10 @@ def list_members(room_name: str, user: CurrentUser):
             item = _member_dict(row)
             item["isOwner"] = row["user_id"] == room["created_by"]
             item["isRoomAgent"] = row["user_id"] == room["room_agent_id"]
+            item["isAgentMaster"] = (
+                _row_get(room, "creatorKind") == "agent"
+                and _row_get(room, "creatorOwnerId") == row["user_id"]
+            )
             members.append(item)
     return {"roomName": room["name"], "members": members}
 
@@ -2559,8 +2584,8 @@ def set_permissions(room_name: str, username: str, body: PermissionUpdate, user:
         target = _get_user(conn, username)
         if not target:
             raise HTTPException(status_code=404, detail="用户不存在")
-        if target["id"] == room["created_by"] or target["id"] == room["room_agent_id"]:
-            raise HTTPException(status_code=403, detail="房主与房间管理 Agent 不可被限制")
+        if _is_room_governor(room, target["id"]):
+            raise HTTPException(status_code=403, detail="房主、房间管理 Agent 与建房的 Agent 主人不可被限制")
         member = _member(conn, room["id"], target["id"])
         if not member:
             raise HTTPException(status_code=404, detail="该用户尚未加入房间")
@@ -2638,8 +2663,8 @@ def ban_member(room_name: str, body: BanCreate, user: CurrentUser):
         target = _get_user(conn, body.username)
         if not target:
             raise HTTPException(status_code=404, detail="用户不存在")
-        if target["id"] == room["created_by"] or target["id"] == room["room_agent_id"]:
-            raise HTTPException(status_code=403, detail="房主与房间管理 Agent 不可被封禁")
+        if _is_room_governor(room, target["id"]):
+            raise HTTPException(status_code=403, detail="房主、房间管理 Agent 与建房的 Agent 主人不可被封禁")
         modifier = BAN_DURATION_MODIFIERS[body.duration]
         expires = (
             None
@@ -3073,17 +3098,35 @@ def _finalize_stale_streams(conn, room_id: int) -> None:
     )
 
 
+def _whisper_visible(row, room, user_id: int) -> bool:
+    """私聊可见性判据：发送者、全部接收者、房主与 roomAgent 可见，其余不可见。
+
+    公开发言（无接收者）对全房可见。消息渲染（_visible_rows）与「我参与的
+    更新时间」（_newest_visible_at）共用这一处，避免两处判据各自漂移。
+    """
+    recipients = _whisper_ids(row)
+    return (
+        not recipients
+        or user_id in (row["user_id"], *recipients)
+        or _is_room_governor(room, user_id)
+    )
+
+
 def _visible_rows(rows, room, user_id: int) -> list[dict]:
     """私聊可见性：只有发送者、全部接收者、房主与 roomAgent 能看到内容。
 
     其余请求者拿到的行被抹成“空行”——保留 id 让增量游标（afterId）不乱，
     但不泄露发送者、内容与引用目标；UI 端忽略空行不渲染。
+
+    抹掉的行会打上内标 `_blanked`：抹掉后 `_whisper_ids` 已空、光看内容判不出
+    可见性，`_newest_visible_at` 靠这个标记把它排除在「我看到的新消息」之外。
+    `_blanked` 只在内部流转，`_message_dict` 逐字段组装响应，不会外泄。
     """
     result = []
     for row in rows:
         item = dict(row)
-        recipients = _whisper_ids(item)
-        if recipients and user_id not in (item["user_id"], *recipients) and not _is_room_governor(room, user_id):
+        if not _whisper_visible(item, room, user_id):
+            item["_blanked"] = True
             item["content"] = ""
             item["username"] = ""
             item["avatarV"] = None
@@ -3096,6 +3139,39 @@ def _visible_rows(rows, room, user_id: int) -> list[dict]:
             item["reply_to"] = None
         result.append(item)
     return result
+
+
+def _newest_visible_at(room, user_id: int, rows) -> str | None:
+    """rows 里此刻我能看到的最新一条消息的 created_at（可见性同 _whisper_visible）。
+
+    没有可见消息时返回 None——别人的私聊对我不可见，不构成「我看到的新消息」。
+    """
+    best = None
+    for row in rows:
+        if _row_get(row, "_blanked") or not _whisper_visible(row, room, user_id):
+            continue
+        if best is None or row["id"] > best["id"]:
+            best = row
+    if best is None:
+        return None
+    return _row_get(best, "createdAt") or _row_get(best, "created_at")
+
+
+def _bump_my_update(conn, room, user_id: int, created_at: str | None) -> None:
+    """把「我参与的更新时间」推进到我此刻能看到的最新消息时间（只增不减）。
+
+    没进过房、或进去时没人说话，值就不动，房间在列表里自然往下掉。老库的
+    存量成员没有该值（NULL），排序时回落到房间创建时间，不会突然乱序。
+    """
+    if not created_at:
+        return
+    conn.execute(
+        """
+        UPDATE room_members SET my_update_at = MAX(COALESCE(my_update_at, ''), ?)
+        WHERE room_id = ? AND user_id = ?
+        """,
+        (created_at, room["id"], user_id),
+    )
 
 
 def _require_file_visible(row, room, user_id: int) -> None:
@@ -3196,6 +3272,7 @@ async def recent_messages(
             stream_ids=wanted_ids, since_updated=since,
         )
         _mark_room_read(conn, room["id"], user["id"])
+        _bump_my_update(conn, room, user["id"], _newest_visible_at(room, user["id"], rows))
         items = _message_dicts(conn, rows, room["name"], room=room, user_id=user["id"])
         room_id = room["id"]
         room_label = room["name"]
@@ -3212,6 +3289,7 @@ async def recent_messages(
                 stream_ids=wanted_ids, since_updated=since,
             )
             _mark_room_read(conn, room["id"], user["id"])
+            _bump_my_update(conn, room, user["id"], _newest_visible_at(room, user["id"], rows))
             items = _message_dicts(conn, rows, room["name"], room=room, user_id=user["id"])
             room_label = room["name"]
     return {"roomName": room_label, "messages": items}
@@ -3235,6 +3313,7 @@ def send_message(room_name: str, body: MessageCreate, user: CurrentUser):
             (room["id"], user["id"], body.content, whisper_to, whisper_to_ids, reply_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
+        _bump_my_update(conn, room, user["id"], _newest_visible_at(room, user["id"], [row]))
         item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
     notify_room(room_id)
@@ -3261,6 +3340,7 @@ def start_stream(room_name: str, user: CurrentUser, body: StreamStart = StreamSt
             (room["id"], user["id"], payload.content or "", whisper_to, whisper_to_ids, reply_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
+        _bump_my_update(conn, room, user["id"], _newest_visible_at(room, user["id"], [row]))
         item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
     notify_room(room_id)
@@ -3468,6 +3548,7 @@ async def upload_attachment(room_name: str, user: CurrentUser, file: UploadFile 
         dest.write_bytes(data)
         conn.execute("UPDATE messages SET attachment_path = ? WHERE id = ?", (rel_path, message_id))
         row = _load_message(conn, message_id)
+        _bump_my_update(conn, room, user["id"], _newest_visible_at(room, user["id"], [row]))
         item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
     notify_room(room_id)
@@ -3522,6 +3603,7 @@ async def send_voice(
         dest.write_bytes(data)
         conn.execute("UPDATE messages SET attachment_path = ? WHERE id = ?", (rel_path, message_id))
         row = _load_message(conn, message_id)
+        _bump_my_update(conn, room, user["id"], _newest_visible_at(room, user["id"], [row]))
         item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
         room_id = room["id"]
     notify_room(room_id)
