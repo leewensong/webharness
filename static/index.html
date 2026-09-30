@@ -960,6 +960,9 @@
       <input type="checkbox" id="vAutoRead" style="width:auto;margin:0" /> <span data-i18n="vAutoReadLabel">自动朗读新消息（他人的，流式结束后读一次）</span>
     </label>
     <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+      <input type="checkbox" id="vAutoPlayVoice" style="width:auto;margin:0" /> <span data-i18n="vAutoPlayVoiceLabel">进入 3D 后自动播放他人的语音消息（像同处一室）</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
       <input type="checkbox" id="vAutoSend" style="width:auto;margin:0" /> <span data-i18n="vAutoSendLabel">语音识别完自动发送（说完即发，无需再点发送）</span>
     </label>
     <label for="vVoice" data-i18n="voiceLabel">发音人</label>
@@ -1221,6 +1224,7 @@
         agentNamePlaceholder: "例如 wilson-bot", agentKeyLabel: "公钥（PEM 或 ssh-ed25519）",
         cancelEdit: "取消编辑", create: "创建",
         vAutoReadLabel: "自动朗读新消息（他人的，流式结束后读一次）",
+        vAutoPlayVoiceLabel: "进入 3D 后自动播放他人的语音消息（像同处一室）",
         vAutoSendLabel: "语音消息说完即发（识别自然结束时自动发送）",
         voiceLabel: "发音人", rateLabel: "语速", langLabel: "识别 / 朗读语言",
         followBrowser: "跟随浏览器", stopReading: "停止朗读",
@@ -1525,6 +1529,7 @@
         agentNamePlaceholder: "e.g. wilson-bot", agentKeyLabel: "Public key (PEM or ssh-ed25519)",
         cancelEdit: "Cancel edit", create: "Create",
         vAutoReadLabel: "Auto-read new messages (others'; read once after streaming)",
+        vAutoPlayVoiceLabel: "Auto-play others' voice messages in 3D (as if in the same room)",
         vAutoSendLabel: "Voice messages send as soon as speech ends (auto-send)",
         voiceLabel: "Voice", rateLabel: "Speed", langLabel: "Recognition / reading language",
         followBrowser: "Follow browser", stopReading: "Stop reading",
@@ -4174,6 +4179,14 @@
         if (!replace && voiceCfg.autoRead && m.username !== store.username && isText && !m.streaming && displayContent(m)) {
           speakText(displayContent(m), true, m.id);
         }
+        /* 3D 内自动播放他人的语音消息（缺省开）：进了 3D 就像同处一室，别人的语音直接放出来。
+           播放复用同一条 toggleVoicePlay → 此时 voiceSpatialHook 已挂上，音频会变成绑在发送者
+           形象上的空间声源；先停掉正在朗读的 TTS，免得两种声音叠在一起。 */
+        if (!replace && xrSession && voiceCfg.autoPlayVoice && m.msgType === "voice"
+            && m.username !== store.username && m.downloadUrl) {
+          const vbtn = el.querySelector(".voice-play");
+          if (vbtn) { stopSpeaking(); toggleVoicePlay(vbtn, m.downloadUrl, m); }
+        }
       }
       if (pin) scrollLogToBottom();
     }
@@ -5631,11 +5644,13 @@
     const FEMALE_HINT = /ting|mei|hui|yao|xiao|sin|jiao|qian|female|samantha|victoria|karen|moira|tessa|fiona|zoe|ava|allison|kathy|susan|婷婷|美|慧|雅|瑶|晓|倩|丽|娜|芳|莉|静|娇|茜/i;
 
     const voiceCfg = (() => {
-      const d = { autoRead: true, autoSend: false, rate: 1, lang: "", voiceURI: "" };
+      const d = { autoRead: true, autoSend: false, autoPlayVoice: true, rate: 1, lang: "", voiceURI: "" };
       try {
         const c = JSON.parse(localStorage.getItem(VOICE_CFG_KEY) || "{}") || {};
         if (typeof c.autoRead === "boolean") d.autoRead = c.autoRead;
         if (typeof c.autoSend === "boolean") d.autoSend = c.autoSend;
+        /* 3D 内自动播放他人语音：缺省开 */
+        if (typeof c.autoPlayVoice === "boolean") d.autoPlayVoice = c.autoPlayVoice;
         const r = Number(c.rate); if (r >= 0.5 && r <= 2) d.rate = r;
         if (c.lang) d.lang = c.lang;
         if (c.voiceURI) d.voiceURI = c.voiceURI;
@@ -6070,6 +6085,7 @@
         sel.innerHTML = '<option value="">' + t("noTTS") + "</option>";
       }
       $("vAutoRead").checked = voiceCfg.autoRead;
+      $("vAutoPlayVoice").checked = voiceCfg.autoPlayVoice;
       $("vAutoSend").checked = voiceCfg.autoSend;
       $("vRate").value = voiceCfg.rate;
       $("vRateVal").textContent = Number(voiceCfg.rate).toFixed(1);
@@ -6080,6 +6096,7 @@
 
     function saveVoiceSettings() {
       voiceCfg.autoRead = $("vAutoRead").checked;
+      voiceCfg.autoPlayVoice = $("vAutoPlayVoice").checked;
       voiceCfg.autoSend = $("vAutoSend").checked;
       voiceCfg.rate = Math.min(2, Math.max(0.5, Number($("vRate").value) || 1));
       voiceCfg.lang = $("vLang").value;
