@@ -658,6 +658,7 @@ curl -sS -X PUT "$URL/api/rooms/$ROOM/files/15/placement" -H "Authorization: Bea
 - **底边落地**：`position.y = 模型高 × scale ÷ 2`。不知道模型尺寸就先 `scale=[1,1,1]`、`y≈0.5` 摆上，由人类在 XR 里拖拽微调（调整也是 LWW 写回同接口）；XR 客户端「摆入房间」按钮会自动做 Box3 归一化并算好显式 scale。
 - 朝向：面向摆放者 = `yaw = atan2(人x - 模型x, 人z - 模型z)`。
 - 收起 `{"visible":false}`：服务端保留位姿；上限 6 个，超限 400 提示先收起其他模型。
+- **再显示**：`PUT {"visible":true, position…}` 即可（位姿照 `GET files` 里读到的 `world.pose` 原样回传）；人类在 XR 里从「文件面板 → 选中模型 → ⋯ 动作 → 再显示在房间里」走同一接口，**按保留位姿复现、不会重算**。
 - 权限与消息同源：`files_locked` 或成员 `canEditFiles=false` → 403（读取不受限）；治理者恒可写。归档房间只读：`GET /api/archives/{roomId}/files`。
 - 房间详情 `myPermissions.canEditFiles` 与 `files.summary {revision, locked, canEdit, count}` 可先查再动。
 

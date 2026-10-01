@@ -12,6 +12,8 @@ const EDITABLE_KINDS = new Set(["markdown", "text", "svg"]);
 const POLL_MS = 2500;
 const SAVE_THROTTLE_MS = 500;
 const MAX_WORLD_SCALE = 20;
+/* 调整条画布高（按钮行 96 高 + 下面一条闪讯行，沉浸式里没有 DOM 状态栏可用） */
+const ADJ_BAR_H = 168;
 const MEASURE_FONT = "13px 'SF Pro Text','PingFang SC','Noto Sans SC',sans-serif";
 
 /* 列表面板（CSS px；纹理 ×2 设备像素） */
@@ -200,8 +202,24 @@ export function createXRFiles(opts) {
     g2.strokeStyle = "rgba(120,160,220,0.45)";
     g2.stroke();
     hotspots = [];
+    menuHotspots = [];
     if (view === "list") drawList(wCss, hCss);
     else drawPreview(wCss, hCss);
+    if (menu) drawActionMenu(wCss); /* 浮层最后画，盖在面板内容之上 */
+    /* 闪讯（撤销/收起/再显示的反馈；沉浸式看不到 DOM 状态栏） */
+    const fmsg = performance.now() < flashUntil ? flashMsg : "";
+    if (fmsg) {
+      const fy = hCss - (view === "list" ? 14 : PV_BAR + 12);
+      g2.font = "13px system-ui, sans-serif";
+      const tw = Math.min(wCss - 40, g2.measureText(fmsg).width + 28);
+      g2.fillStyle = "rgba(20,30,46,0.95)";
+      roundRect(g2, (wCss - tw) / 2, fy - 20, tw, 26, 13);
+      g2.fill();
+      g2.fillStyle = "#9fc4ff";
+      g2.textAlign = "center";
+      g2.fillText(fmsg, wCss / 2, fy);
+      g2.textAlign = "left";
+    }
     g2.restore();
     if (mat.map !== tex) { mat.map = tex; mat.needsUpdate = true; }
     tex.needsUpdate = true;
@@ -259,7 +277,8 @@ export function createXRFiles(opts) {
       g2.fillStyle = "#eef3f9";
       g2.font = "14px system-ui, sans-serif";
       let name = f.name || "";
-      while (g2.measureText(name).width > wCss - (f.world && f.world.visible ? 210 : 130) && name.length > 2) name = name.slice(0, -2);
+      const hasWorld = f.kind === "model" && f.world;
+      while (g2.measureText(name).width > wCss - (hasWorld ? 210 : 130) && name.length > 2) name = name.slice(0, -2);
       g2.fillText(name, 46, y + 18);
       g2.fillStyle = "#7c90aa";
       g2.font = "11px system-ui, sans-serif";
@@ -269,6 +288,13 @@ export function createXRFiles(opts) {
         g2.font = "11px system-ui, sans-serif";
         g2.textAlign = "right";
         g2.fillText("🧊 " + t("filePlaced"), wCss - 16, y + 18);
+        g2.textAlign = "left";
+      } else if (f.kind === "model" && f.world && f.world.pose) {
+        /* 摆过但已收起：标出来，便于知道哪些能在动作菜单里「再显示」 */
+        g2.fillStyle = "#7c90aa";
+        g2.font = "11px system-ui, sans-serif";
+        g2.textAlign = "right";
+        g2.fillText(t("xrFileHidden"), wCss - 16, y + 18);
         g2.textAlign = "left";
       }
     });
@@ -298,6 +324,7 @@ export function createXRFiles(opts) {
     if (curFile && curFile.kind === "model") {
       if (canEdit()) btns.push({ act: "togglePlace", label: curFile.world && curFile.world.visible ? t("xrFileUnplace") : t("xrFilePlace") });
       if (!curFile.world || !curFile.world.visible) btns.push({ act: "temp", label: t("xrFileTemp") });
+      btns.push({ act: "menu", label: "⋯ " + t("xrFileActions") }); /* 再显示/收起/撤销的集中入口 */
     }
     if (editable) btns.push({ act: "edit", label: t("xrFileEdit") });
     btns.push({ act: "close", label: t("xrFileClose") });
@@ -392,6 +419,76 @@ export function createXRFiles(opts) {
     else drawButtons();
   }
 
+  /* ---------- 动作菜单（预览页右上角的浮层，类似右键菜单）----------
+     选中一个物体后在这里做「再显示 / 收起 / 临时预览 / 撤销」这类动作；
+     点菜单外或 Esc 关闭。热点单独一列，判定优先于面板本身的热点。 */
+  let menu = null;           /* { items: [{act,label,dim}] } */
+  let menuHotspots = [];
+
+  function menuItems() {
+    const items = [];
+    if (curFile && curFile.kind === "model") {
+      const placed = !!(curFile.world && curFile.world.visible);
+      if (canEdit()) items.push({ act: "menuReshow", label: placed ? t("xrFileUnplace") : t("xrFileReshow") });
+      if (!placed && placeChatModel) items.push({ act: "menuTemp", label: t("xrFileTemp") });
+    }
+    items.push({ act: "menuUndo", label: t("xrAdjUndo"), dim: undoStack.length === 0 });
+    items.push({ act: "menuClose", label: t("xrFileClose") });
+    return items;
+  }
+  function openMenu() {
+    if (!curFile) return;
+    menu = { items: menuItems() };
+    drawPanel();
+  }
+  function closeMenu() {
+    if (!menu) return;
+    menu = null;
+    menuHotspots = [];
+    drawPanel();
+  }
+
+  const MENU_W = 230, MENU_ROW = 40, MENU_TITLE = 30, MENU_PAD = 10;
+  function drawActionMenu(wCss) {
+    const items = menu.items;
+    const h = MENU_TITLE + items.length * MENU_ROW + MENU_PAD;
+    const x = Math.max(8, wCss - MENU_W - 12), y = 50;
+    g2.fillStyle = "rgba(14,20,32,0.97)";
+    roundRect(g2, x, y, MENU_W, h, 12);
+    g2.fill();
+    g2.lineWidth = 2;
+    g2.strokeStyle = "rgba(120,160,220,0.55)";
+    g2.stroke();
+    g2.fillStyle = "#8fa3bd";
+    g2.font = "12px system-ui, sans-serif";
+    let title = (curFile && curFile.name) || "";
+    while (g2.measureText(title).width > MENU_W - 24 && title.length > 2) title = title.slice(0, -2);
+    g2.fillText(title, x + 12, y + 20);
+    items.forEach((it, i) => {
+      const ry = y + MENU_TITLE + i * MENU_ROW;
+      g2.fillStyle = it.dim ? "rgba(46,64,96,0.30)" : "rgba(46,64,96,0.7)";
+      roundRect(g2, x + 8, ry + 2, MENU_W - 16, MENU_ROW - 6, 9);
+      g2.fill();
+      g2.fillStyle = it.dim ? "#61708a" : "#dfe8f4";
+      g2.font = "14px system-ui, sans-serif";
+      g2.fillText(it.label, x + 20, ry + MENU_ROW / 2 + 4);
+      menuHotspots.push({ x: x + 8, y: ry + 2, w: MENU_W - 16, h: MENU_ROW - 6, act: it.act, dim: !!it.dim });
+    });
+  }
+  async function runMenuAct(act) {
+    const f = curFile;
+    closeMenu();
+    if (!f) return;
+    if (act === "menuReshow") {
+      if (f.world && f.world.visible) await unplaceFile(f);
+      else await placeFile(f);
+    } else if (act === "menuTemp") {
+      if (placeChatModel) placeChatModel("file:" + f.id, { downloadUrl: f.contentUrl });
+    } else if (act === "menuUndo") {
+      await undoLast();
+    }
+  }
+
   /* ---------- 打开 / 关闭 ---------- */
 
   function openPanel() {
@@ -401,6 +498,8 @@ export function createXRFiles(opts) {
     curFile = null;
     pv = null;
     listScroll = 0;
+    menu = null;
+    menuHotspots = [];
     computeAnchor();
     placePanel();
     uiMesh.visible = true;
@@ -409,6 +508,8 @@ export function createXRFiles(opts) {
   function closePanel() {
     if (!open) return;
     open = false;
+    menu = null;
+    menuHotspots = [];
     uiMesh.visible = false;
     closePreviewContent();
     placePanel();
@@ -417,6 +518,8 @@ export function createXRFiles(opts) {
   function isOpen() { return open; }
 
   function closePreviewContent() {
+    menu = null;            /* 换文件/回列表时动作菜单一并收掉 */
+    menuHotspots = [];
     if (pv && pv.video) {
       try { pv.video.pause(); pv.video.removeAttribute("src"); pv.video.load(); } catch (e) {}
     }
@@ -726,10 +829,28 @@ export function createXRFiles(opts) {
     })();
   }
 
-  /* 摆入（任务 16）：模型就绪后客户端算初始位姿——摆放者面前空位 + 朝向摆放者 +
-     Box3 ~1m 归一化 scale + 底边落地——一次 PUT；服务端 400/403 即时撤占位 */
+  /* 摆入（任务 16）：**已收起过的**按服务端保留的位姿复现；只在从未摆过时才在摆放者
+     面前空位算一次初始位姿（Box3 ~1m 归一化 + 底边落地 + 朝向摆放者）。 */
   async function placeFile(file) {
     if (!canEdit()) { if (statusEl) statusEl.textContent = t("xrFileNoPerm"); return; }
+    const stored = file.world && file.world.pose;
+    if (stored && stored.position) {
+      pushUndo(file, "place", snapshotOf(file)); /* 再显示可撤销（撤销 = 又收起来） */
+      try {
+        await putPlacement(file.id, {
+          visible: true,
+          position: stored.position,
+          rotation: stored.rotation || [0, 0, 0],
+          scale: stored.scale || [1, 1, 1],
+          ...(stored.spin != null ? { spin: stored.spin } : {}),
+        });
+        flash(t("xrFilePoseRestored"));
+      } catch (err) {
+        undoStack.pop();
+        if (statusEl) statusEl.textContent = (err && err.message) || t("xrSendFail");
+      }
+      return;
+    }
     let rec = worldRecs.get(file.id);
     if (!rec) {
       rec = newRec(file);
@@ -756,6 +877,8 @@ export function createXRFiles(opts) {
     const size = rec.box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const s = THREE.MathUtils.clamp(1.0 / maxDim, 0.02, MAX_WORLD_SCALE);
+    const undoFile = filesCache.find((f) => f.id === rec.file.id);
+    if (undoFile && !(undoFile.world && undoFile.world.visible)) pushUndo(undoFile, "place", snapshotOf(undoFile));
     try {
       const payload = await api(`${base()}/${rec.file.id}/placement`, {
         method: "PUT",
@@ -768,7 +891,9 @@ export function createXRFiles(opts) {
       });
       if (disposed) return;
       applyFilePayload(payload.file, payload.revision);
+      flash(t("xrFilePlace"));
     } catch (err) {
+      undoStack.pop(); /* 没写成功就不该留在撤销栈里 */
       removeWorld(rec.file.id);
       if (statusEl) statusEl.textContent = (err && err.message) || t("xrSendFail");
     } finally {
@@ -789,11 +914,14 @@ export function createXRFiles(opts) {
 
   async function unplaceFile(file) {
     if (!canEdit()) { if (statusEl) statusEl.textContent = t("xrFileNoPerm"); return; }
+    pushUndo(file, "unplace", snapshotOf(file)); /* 收起可撤销：撤销时按保留位姿再显示 */
     try {
       const payload = await api(`${base()}/${file.id}/placement`, { method: "PUT", body: JSON.stringify({ visible: false }) });
       if (disposed) return;
       applyFilePayload(payload.file, payload.revision);
+      flash(t("xrFileUnplace"));
     } catch (err) {
+      undoStack.pop(); /* 没成功就不该留在撤销栈里 */
       if (statusEl) statusEl.textContent = (err && err.message) || t("xrSendFail");
     }
   }
@@ -833,13 +961,112 @@ export function createXRFiles(opts) {
     putPose(fileId);
   }
 
-  /* ---------- 调整模式（移动 / 旋转 / 缩放 / 收起 / 完成） ---------- */
+  /* ---------- 撤销（全局栈，20 步）----------
+     一条「操作」入栈一次：一次调整会话（进入调整 → 退出，且位姿确有变化）算一条；
+     收起 / 摆入（再显示）各算一条。撤销回退栈顶那条（可能是别的物体）并选中它；
+     调整中按撤销 = 放弃本次未提交的调整（回到进入调整时的位姿，不入栈）。 */
+  const UNDO_MAX = 20;
+  const undoStack = [];      /* { fileId, name, before, label } */
+  let adjBasis = null;       /* 本次调整会话开始时的快照 */
+  let flashMsg = "";
+  let flashUntil = 0;
+  const UNDO_LABEL_KEY = { move: "xrAdjMove", rotate: "xrAdjRotate", scale: "xrAdjScale", place: "xrFilePlace", unplace: "xrFileUnplace" };
+
+  let flashTimer = null;
+  /* 闪讯：画在调整条 / 面板画布上（沉浸式里没有 DOM 状态栏），到点再重绘一次清掉 */
+  function flash(text, ms) {
+    const hold = ms || 2500;
+    flashMsg = String(text || "");
+    flashUntil = performance.now() + hold;
+    redrawFlash();
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { flashTimer = null; redrawFlash(); }, hold + 60);
+  }
+  function redrawFlash() {
+    if (adjBarMesh && adjBarMesh.visible) drawAdjustBar();
+    if (open) drawPanel();
+  }
+
+  /* 位姿快照：收起后没有 rec，但 payload 里仍带着服务端保留的 world.pose */
+  function snapshotOf(file) {
+    const w = (file && file.world) || null;
+    const p = (w && w.pose) || {};
+    return {
+      visible: !!(w && w.visible),
+      position: p.position || null,
+      rotation: p.rotation || null,
+      scale: p.scale || null,
+      spin: p.spin == null ? null : p.spin,
+    };
+  }
+  function samePose(a, b) {
+    const vec = (v, d) => (Array.isArray(v) && v.length >= 3 ? v : d);
+    const A = [vec(a.position, [0, 0, 0]), vec(a.rotation, [0, 0, 0]), vec(a.scale, [1, 1, 1])];
+    const B = [vec(b.position, [0, 0, 0]), vec(b.rotation, [0, 0, 0]), vec(b.scale, [1, 1, 1])];
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) if (Math.abs(A[i][j] - B[i][j]) > 1e-3) return false;
+    }
+    return true;
+  }
+  function pushUndo(file, label, before) {
+    if (!file) return;
+    undoStack.push({ fileId: file.id, name: file.name || "", before, label });
+    while (undoStack.length > UNDO_MAX) undoStack.shift();
+  }
+  function placementBody(snap) {
+    const body = { visible: !!snap.visible };
+    if (snap.position) body.position = snap.position;
+    if (snap.rotation) body.rotation = snap.rotation;
+    if (snap.scale) body.scale = snap.scale;
+    if (snap.spin != null) body.spin = snap.spin;
+    return body;
+  }
+  async function putPlacement(fileId, body) {
+    const payload = await api(`${base()}/${fileId}/placement`, { method: "PUT", body: JSON.stringify(body) });
+    if (!disposed) applyFilePayload(payload.file, payload.revision);
+    return payload;
+  }
+
+  async function undoLast() {
+    /* 调整中：放弃本次未提交的调整 */
+    if (adjust && adjBasis && adjBasis.fileId === adjust.fileId) {
+      const before = adjBasis.before;
+      const rec = worldRecs.get(adjust.fileId);
+      if (rec && rec.state === "ready") {
+        const pos = before.position || [0, 0.5, 0];
+        rec.holder.position.set(pos[0], pos[1], pos[2]);
+        rec.holder.rotation.set(0, (before.rotation || [0, 0, 0])[1] || 0, 0);
+        const s = Math.max(0.01, Math.abs((before.scale || [1, 1, 1])[0]));
+        rec.holder.scale.set(s, s, s);
+      }
+      adjBasis = null;
+      flash(t("xrAdjDiscard"));
+      return;
+    }
+    const item = undoStack.pop();
+    if (!item) { flash(t("xrUndoEmpty")); return; }
+    const file = filesCache.find((f) => f.id === item.fileId);
+    if (!file) { flash(t("xrUndoGone")); return; }
+    try {
+      await putPlacement(file.id, placementBody(item.before));
+      const what = t(UNDO_LABEL_KEY[item.label] || "xrAdjMove");
+      flash(tf("xrUndoDone", { what: `${what} · ${item.name}` }));
+      /* 选中被撤销的对象：世界里在就进调整（顺手可再调），否则（已收起）打开它的预览页 */
+      const rec = worldRecs.get(file.id);
+      if (rec && rec.state === "ready" && !adjust) enterAdjust(file.id);
+      else if (open) openPreview(file);
+    } catch (err) {
+      flash((err && err.message) || t("xrSendFail"));
+    }
+  }
+
+  /* ---------- 调整模式（移动 / 旋转 / 缩放 / 收起 / 撤销 / 完成） ---------- */
 
   let adjust = null; // { fileId, submode }
 
   const adjBarMesh = (() => {
     const c = document.createElement("canvas");
-    c.width = 1000; c.height = 128;
+    c.width = 1000; c.height = ADJ_BAR_H;
     const gg = c.getContext("2d");
     const mesh = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
@@ -854,9 +1081,9 @@ export function createXRFiles(opts) {
 
   const ADJ_BTNS = [
     ["move", "xrAdjMove"], ["rotate", "xrAdjRotate"], ["scale", "xrAdjScale"],
-    ["unplace", "xrFileUnplace"], ["done", "xrAdjDone"],
+    ["unplace", "xrFileUnplace"], ["undo", "xrAdjUndo"], ["done", "xrAdjDone"],
   ];
-  const adjBtnRect = (i) => ({ x: 16 + i * 196, y: 16, w: 180, h: 96 });
+  const adjBtnRect = (i) => ({ x: 16 + i * 166, y: 16, w: 150, h: 96 });
 
   function drawAdjustBar() {
     const { c, g } = adjBarMesh.userData;
@@ -869,7 +1096,7 @@ export function createXRFiles(opts) {
     g.stroke();
     ADJ_BTNS.forEach(([act, key], i) => {
       const r = adjBtnRect(i);
-      const dim = act === "unplace" && !canEdit();
+      const dim = act === "unplace" ? !canEdit() : act === "undo" ? undoStack.length === 0 : false;
       g.fillStyle = dim ? "rgba(46,64,96,0.35)" : adjust && adjust.submode === act ? "rgba(91,140,255,0.9)" : "rgba(46,64,96,0.65)";
       roundRect(g, r.x, r.y, r.w, r.h, 20);
       g.fill();
@@ -879,6 +1106,15 @@ export function createXRFiles(opts) {
       g.textBaseline = "middle";
       g.fillText(t(key), r.x + r.w / 2, r.y + r.h / 2);
     });
+    /* 闪讯行（沉浸式里 statusEl 看不到，所以画在条上） */
+    const msg = performance.now() < flashUntil ? flashMsg : "";
+    if (msg) {
+      g.fillStyle = "#9fc4ff";
+      g.font = "26px system-ui, sans-serif";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(msg, c.width / 2, ADJ_BAR_H - 30);
+    }
     g.textAlign = "left";
     g.textBaseline = "alphabetic";
     adjBarMesh.material.map.needsUpdate = true;
@@ -888,6 +1124,9 @@ export function createXRFiles(opts) {
     if (!canEdit()) { if (statusEl) statusEl.textContent = t("xrFileNoPerm"); return; }
     const rec = worldRecs.get(fileId);
     if (!rec) return;
+    /* 记下会话开始时的位姿：退出时若确有变化，就作为一条可撤销操作入栈 */
+    const file = filesCache.find((f) => f.id === fileId);
+    adjBasis = file ? { fileId, before: snapshotOf(file) } : null;
     adjust = { fileId, submode: "move" };
     drawAdjustBar();
     adjBarMesh.visible = true;
@@ -896,11 +1135,20 @@ export function createXRFiles(opts) {
     const topY = wp.y + Math.max(0.35, (size.y * rec.holder.scale.y) / 2 + 0.3);
     adjBarMesh.position.set(wp.x, topY, wp.z);
     adjBarMesh.rotation.y = Math.atan2(camera.getWorldPosition(new THREE.Vector3()).x - wp.x, camera.getWorldPosition(new THREE.Vector3()).z - wp.z);
-    adjBarMesh.scale.set(1.05, 0.134, 1);
+    adjBarMesh.scale.set(1.05, 1.05 * (ADJ_BAR_H / 1000), 1);
     if (statusEl) statusEl.textContent = t("xrAdjHint");
   }
   function exitAdjust(save) {
-    if (adjust && save !== false) flushSave(adjust.fileId);
+    if (adjust && save !== false) {
+      flushSave(adjust.fileId);
+      const base = adjBasis;
+      const file = filesCache.find((f) => f.id === adjust.fileId);
+      const pose = poseOf(adjust.fileId);
+      if (base && base.fileId === adjust.fileId && file && pose && !samePose(base.before, pose)) {
+        pushUndo(file, adjust.submode, base.before); /* 一次调整会话 = 一条撤销 */
+      }
+    }
+    adjBasis = null;
     adjust = null;
     adjBarMesh.visible = false;
     if (statusEl && statusEl.textContent === t("xrAdjHint")) statusEl.textContent = "";
@@ -912,7 +1160,7 @@ export function createXRFiles(opts) {
     const hits = ray.intersectObject(adjBarMesh, false);
     if (!hits.length) return null;
     const uv = hits[0].uv;
-    const px = uv.x * 1000, py = (1 - uv.y) * 128;
+    const px = uv.x * 1000, py = (1 - uv.y) * ADJ_BAR_H;
     for (let i = 0; i < ADJ_BTNS.length; i++) {
       const r = adjBtnRect(i);
       if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return ADJ_BTNS[i][0];
@@ -948,7 +1196,18 @@ export function createXRFiles(opts) {
       if (act) {
         if (act === "move" || act === "rotate" || act === "scale") { adjust.submode = act; drawAdjustBar(); }
         else if (act === "done") exitAdjust();
+        else if (act === "undo") undoLast();
         else if (act === "unplace" && adjust) { const f = filesCache.find((x) => x.id === adjust.fileId); exitAdjust(false); if (f) unplaceFile(f); }
+        return true;
+      }
+    }
+    /* 动作菜单优先：点在菜单上就执行，点在菜单外则关掉菜单并吃掉这一次点击 */
+    if (menu) {
+      const mhit = uiHit(ray);
+      if (mhit) {
+        const spot = menuHotspots.find((h) => mhit.px >= h.x && mhit.px <= h.x + h.w && mhit.py >= h.y && mhit.py <= h.y + h.h);
+        if (spot && !spot.dim) runMenuAct(spot.act);
+        else closeMenu();
         return true;
       }
     }
@@ -965,6 +1224,7 @@ export function createXRFiles(opts) {
           }
         } else if (spot.act === "back") backToList();
         else if (spot.act === "close") { endEdit(); closePanel(); }
+        else if (spot.act === "menu") openMenu();
         else if (spot.act === "edit") startEdit();
         else if (spot.act === "togglePlace") { if (curFile) (curFile.world && curFile.world.visible ? unplaceFile(curFile) : placeFile(curFile)); }
         else if (spot.act === "temp") {
@@ -1160,10 +1420,11 @@ export function createXRFiles(opts) {
     return !!uiHit(ray);
   }
 
-  /* Esc 分级退出：编辑 → 调整 → 面板；都没命中返回 false（交给 3D 全局逻辑） */
+  /* Esc 分级退出：编辑 → 调整 → 动作菜单 → 面板；都没命中返回 false（交给 3D 全局逻辑） */
   function escStack() {
     if (edit) { endEdit(); return true; }
     if (adjust) { exitAdjust(); return true; }
+    if (menu) { closeMenu(); return true; }
     if (open) { closePanel(); return true; }
     return false;
   }
@@ -1216,6 +1477,15 @@ export function createXRFiles(opts) {
     videoMesh.material.dispose();
   }
 
+  /* 面板 CSS 坐标 → 射线（验证用；_dbg.rayAt / _dbg.click 共用）。PlaneGeometry(1,1)
+     的几何本地坐标就是 -0.5..0.5（缩放在 object 矩阵上），本地点直接用 CSS 比例 */
+  function dbgRayAt(px, py) {
+    const local = new THREE.Vector3(px / cssW() - 0.5, 0.5 - py / cssH(), 0.01);
+    const target = uiMesh.localToWorld(local);
+    const origin = camera.getWorldPosition(new THREE.Vector3());
+    return new THREE.Raycaster(origin, target.sub(origin).normalize());
+  }
+
   return {
     group, openPanel, closePanel, isOpen,
     handlePick, beginDrag, dragMove, dragEnd, xrJoystick,
@@ -1237,13 +1507,48 @@ export function createXRFiles(opts) {
         if (f) openPreview(f);
         return !!f;
       },
-      rayAt: (px, py) => {
-        /* PlaneGeometry(1,1) 的几何本地坐标就是 -0.5..0.5（缩放在 object 矩阵上），
-           本地点直接用 CSS 比例，别乘世界尺寸 */
-        const local = new THREE.Vector3(px / cssW() - 0.5, 0.5 - py / cssH(), 0.01);
-        const target = uiMesh.localToWorld(local);
-        const origin = camera.getWorldPosition(new THREE.Vector3());
-        return new THREE.Raycaster(origin, target.sub(origin).normalize());
+      rayAt: (px, py) => dbgRayAt(px, py),
+      click: (px, py) => handlePick(dbgRayAt(px, py)),
+      /* 撤销 / 动作菜单 / 闪讯（本轮新增功能的验证面） */
+      undoState: () => ({
+        n: undoStack.length,
+        top: undoStack.length
+          ? { name: undoStack[undoStack.length - 1].name, label: undoStack[undoStack.length - 1].label }
+          : null,
+        basis: adjBasis ? adjBasis.fileId : null,
+      }),
+      undo: () => undoLast(),
+      menuItems: () => (menu ? menu.items.map((i) => ({ act: i.act, label: i.label, dim: !!i.dim })) : null),
+      menuRects: () => menuHotspots.map((h) => ({ ...h })),
+      flash: () => (performance.now() < flashUntil ? flashMsg : ""),
+      /* 画布像素断言：某横带里「较亮的已绘制像素」数量（验证闪讯/文字真的画上去了） */
+      barPixels: (y0, y1) => {
+        const c = adjBarMesh.userData.c;
+        const ctx = c.getContext("2d");
+        const a = Math.max(0, Math.round(y0)), b = Math.min(c.height, Math.round(y1));
+        if (b <= a) return 0;
+        const d = ctx.getImageData(0, a, c.width, b - a).data;
+        let bright = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] > 40 && d[i] + d[i + 1] + d[i + 2] > 240) bright++;
+        }
+        return bright;
+      },
+      files: () => filesCache.map((f) => ({
+        id: f.id, name: f.name, kind: f.kind,
+        visible: !!(f.world && f.world.visible),
+        hasPose: !!(f.world && f.world.pose),
+        pose: (f.world && f.world.pose) || null,
+      })),
+      placeById: (id) => { const f = filesCache.find((x) => String(x.id) === String(id)); if (f) placeFile(f); return !!f; },
+      unplaceById: (id) => { const f = filesCache.find((x) => String(x.id) === String(id)); if (f) unplaceFile(f); return !!f; },
+      nudge: (dx, dy, dz) => {
+        const rec = adjust && worldRecs.get(adjust.fileId);
+        if (!rec) return null;
+        rec.holder.position.x += dx || 0;
+        rec.holder.position.y += dy || 0;
+        rec.holder.position.z += dz || 0;
+        return rec.holder.position.toArray().map((v) => +v.toFixed(3));
       },
       rayTo: (x, y, z) => {
         const origin = camera.getWorldPosition(new THREE.Vector3());

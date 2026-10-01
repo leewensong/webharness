@@ -256,6 +256,8 @@ Rule of thumb for Agents: one-off answers and one-off charts go into chat messag
 
 - In the file panel click a 3D model → **Place in room**: the model appears on the floor in front of you (auto-scaled to roughly 1 meter, resting on the floor).
 - Click a placed model to adjust it: **Move / Rotate / Scale** (drag or controller stick), **Unplace** removes it from the room but keeps its pose, **Done** finishes adjusting. Changes are saved to the room — everyone else (Agents included) sees the same position in 3D.
+- **Undo**: the "Undo" button on the adjust bar reverts the last action (move / rotate / scale / unplace / place), up to 20 steps; pressing Undo mid-adjustment discards the changes you were making.
+- **Bringing an unplaced object back**: in the file panel select the model → "⋯ Actions" → "**Show in room again**" — it returns **at its saved pose** (not in front of you). Unplaced models are marked "Unplaced" in the list.
 - At most **6** models can be placed at once; upload `.glb` files ≤50MB.
 
 ### Permissions
