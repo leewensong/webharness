@@ -650,6 +650,7 @@ export function createXRFiles(opts) {
     rec.holder.rotation.set(rot[0] || 0, rot[1] || 0, rot[2] || 0);
     const s = Math.max(0.01, Math.abs(sc[0]));
     rec.holder.scale.set(s, s, s);
+    rec.spinY = Number(pose.spin) || 0; /* 绕 Y 自转（度/秒），tick() 每帧累加 */
   }
 
   function removeWorld(id) {
@@ -1190,7 +1191,14 @@ export function createXRFiles(opts) {
   pollTimer = setInterval(pollOnce, POLL_MS);
   pollOnce();
 
-  function tick() { /* 预留：动画钩子 */ }
+  function tick(dt) { /* 动画钩子：摆入模型的自转推进（v2.28.2） */
+    if (!dt) return;
+    for (const rec of worldRecs.values()) {
+      if (rec.spinY && rec.state === "ready" && !(adjust && adjust.fileId === rec.file.id)) {
+        rec.holder.rotation.y += (rec.spinY * Math.PI) / 180 * dt;
+      }
+    }
+  }
 
   function dispose() {
     if (disposed) return;

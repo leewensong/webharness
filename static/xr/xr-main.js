@@ -1893,7 +1893,7 @@ export async function createXR(ctx) {
     if (presenceSendAcc >= PRESENCE_SEND_MS / 1000) { presenceSendAcc = 0; presenceSend(); }
     if (presencePollAcc >= PRESENCE_POLL_MS / 1000) { presencePollAcc = 0; presencePoll(); }
     updateSpatialVoices(); /* 语音声源跟随站位/面板位 + 口型推进（任务 9） */
-    try { files.tick(); } catch (err) {}
+    try { files.tick(dt); } catch (err) {}
     /* 接近已加载的最旧一端 → 向前分页回填（一次性拉全，需求 2.7） */
     const bandH = BAND_HI - FLOOR_Y;
     if (strip.length && !historyEnd && hArc + bandH > totalH - 1.2 && (totalH < bandH + 1 || hArc > 0)) {
