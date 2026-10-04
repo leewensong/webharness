@@ -12,6 +12,7 @@ import { createPanelSystem } from "./xr-panels.js";
 import { createNativeSystem } from "./xr-native.js";
 import { createAvatarSystem, ARKIT52, PRESENCE_BONES } from "./xr-avatars.js";
 import { createXRFiles } from "./xr-files.js";
+import { createXRWorldUI } from "./xr-world-ui.js";
 import { buildRoomScene, sceneKeyOf } from "./xr-rooms.js";
 
 const R = 6;             // 消息列半径（米）
@@ -41,10 +42,14 @@ export async function createXR(ctx) {
   }
 
   let disposed = false;
+  let worldUi = null;
 
   /* ---------- 渲染器与场景 ---------- */
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  /* alpha + 透明清屏是 immersive-ar 透传真实环境的必要条件；桌面模式仍由
+     渐变天空提供完整背景。 */
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+  renderer.setClearColor(0x000000, 0);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   /* cssText 会整块覆盖 setSize 刚写入的宽高：必须自带 100%×100%，否则 dpr>1 时
@@ -52,6 +57,7 @@ export async function createXR(ctx) {
      inset:0 不会拉伸它） */
   renderer.domElement.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;";
   renderer.xr.enabled = true; /* 沉浸式会话接入（任务 10）；无会话时为普通桌面渲染 */
+  renderer.xr.setReferenceSpaceType("local-floor");
   renderer.localClippingEnabled = true; /* scroll panel 视口裁剪（面板材质用 clippingPlanes） */
   ctx.root.classList.remove("hidden");
   ctx.root.appendChild(renderer.domElement);
@@ -149,7 +155,19 @@ export async function createXR(ctx) {
      推荐座位交给形象系统；无场景、未知 id、加载失败一律保持展厅原样，绝不影响 2D（需求 1.5）。
      只在描述符真的变了才重建——否则每次房间轮询都会重搭一遍几何。 */
   let roomSystem = null;
+  let xrPassthrough = false;
   let roomAppliedKey;   /* undefined = 还没应用过 */
+
+  function refreshShowroomVisuals() {
+    const hasRoomScene = !!roomSystem;
+    /* AR 下隐藏虚拟环境（包括房间场景的墙壁/地板），否则会盖住真实环境。
+       消息、成员形象、共同文件模型属于独立组，继续显示；座位/共享世界坐标不变。 */
+    sky.visible = !xrPassthrough;
+    ground.visible = !xrPassthrough;
+    grid.visible = !xrPassthrough && !hasRoomScene;
+    centerRing.visible = !xrPassthrough && !hasRoomScene;
+    if (roomSystem) roomSystem.group.visible = !xrPassthrough;
+  }
 
   function applyRoomScene(desc) {
     const key = sceneKeyOf(desc);
@@ -166,9 +184,8 @@ export async function createXR(ctx) {
     roomSystem = next && next.sceneId ? next : null;
     if (next && !roomSystem) next.dispose();   /* 空/未知场景：别留下垃圾组 */
     const on = !!roomSystem;
-    grid.visible = !on;
-    centerRing.visible = !on;
     ground.position.y = on ? -0.01 : 0;        /* 让位给场景地板，避免 z-fighting */
+    refreshShowroomVisuals();
     if (on) scene.add(roomSystem.group);
     try { avatars.setSeats(on ? roomSystem.seats : []); } catch (err) {}
   }
@@ -182,19 +199,21 @@ export async function createXR(ctx) {
      首次拉全量快照并记下服务端 serverTime 当游标，之后每 0.5s 拉增量；服务端返回
      reset=true（游标过期 / 落后太多）时退回全量重取。离开 3D 时发一条 leave，
      其他人立即移除其形象。旧服务端没有这些接口时静默关闭（404 → presenceOff）。 */
-  /* 位姿流（v2.26）：二进制脏位增量 + 服务端 hold 节流 + 按距离分级。
+  /* 位姿流：二进制脏位增量 + 服务端 hold 节流 + 按距离分级 + 关键帧动画命令。
      上报 10Hz（每 100ms 一次）；拉取的 tick 由服务端的 hold 决定，客户端只留一个下限
      防打点（服务端立刻就有数据时也不至于狂发）。分级阈值与服务端一致。 */
   const PRESENCE_SEND_MS = 100;
   const PRESENCE_POLL_MS = 60;         /* 客户端下限：真正节奏由服务端 hold 决定 */
   const PRESENCE_HOLD_MS = 100;        /* 传给服务端的节流窗口（毫秒）≈ 10Hz */
   const PRESENCE_BIN_MAGIC = 0xb1;     /* 与 app/main.py 的 PRESENCE_BIN_MAGIC 对应 */
+  const PRESENCE_BIN_VERSION = 3;      /* 版本 3：hands 带 left/right，供 Avatar IK */
   const P_DIRTY_POS = 1;
   const P_DIRTY_ORIENT = 2;
   const P_DIRTY_HANDS = 4;
   const P_DIRTY_STATE = 8;
   const P_DIRTY_BONES = 16;   /* level 3：Agent 上报的骨骼（只覆盖它报过的关节） */
   const P_DIRTY_FACE = 32;    /* level 3：Agent 上报的 ARKit52 表情权重（只覆盖报过的） */
+  const P_DIRTY_ANIMATION = 64; /* 一次性关键帧动画命令：replace/append/stop */
   const PRESENCE_NEAR_M = 5.0;
   const PRESENCE_MID_M = 15.0;
   const PRESENCE_FAR_APPLY_MS = 500;   /* 远处成员本地最多每 500ms 应用一次（2Hz） */
@@ -237,13 +256,25 @@ export async function createXR(ctx) {
     const e = new THREE.Euler().setFromQuaternion(q, "YXZ");
     const hands = [];
     if (xrInImmersive && renderer.xr.isPresenting) {
-      for (const c of xrControllers) {
+      for (let i = 0; i < xrControllers.length; i++) {
+        const c = xrControllers[i];
+        const grip = xrControllerGrips[i];
+        const hand = xrHandSpaces[i];
         const hp = new THREE.Vector3();
         const hq = new THREE.Quaternion();
-        c.getWorldPosition(hp);
-        c.getWorldQuaternion(hq);
+        /* 真实手柄使用 gripSpace；手势使用 wrist joint；两者都回退到 targetRaySpace。
+           之前只读 targetRaySpace，手柄尖端/射线并不等于手掌位置，导致 Avatar 手臂
+           没有稳定的 IK 目标，看到的白块也常常像“没跟手”。 */
+        const wrist = hand && hand.joints && hand.joints["wrist"];
+        const source = wrist && wrist.visible ? wrist : (grip && grip.visible ? grip : c);
+        source.updateMatrixWorld(true);
+        source.getWorldPosition(hp);
+        source.getWorldQuaternion(hq);
         if (![hp.x, hp.y, hp.z, hq.x, hq.y, hq.z, hq.w].every(Number.isFinite)) continue;
-        hands.push({ p: [hp.x, hp.y, hp.z], q: [hq.x, hq.y, hq.z, hq.w] });
+        hands.push({
+          handedness: c.userData.handedness || null,
+          p: [hp.x, hp.y, hp.z], q: [hq.x, hq.y, hq.z, hq.w],
+        });
       }
     }
     return { p: [p.x, p.y, p.z], yaw: e.y, pitch: e.x, hands };
@@ -275,6 +306,7 @@ export async function createXR(ctx) {
     try {
       const info = await ctx.api(`/api/rooms/${room}`);
       avatars.applyRoom(info);
+      if (pose && pose.animation) avatars.setAnimationCommand(username, pose.animation);
       if (username) avatars.setRemotePose(username, pose);
     } catch (err) { /* 拉不到就等下一次房间轮询 */ }
   }
@@ -306,10 +338,10 @@ export async function createXR(ctx) {
 
   /* 解一帧二进制增量（与 app/main.py 的 _presence_frame_bytes 严格对应）：
      帧头 3B（magic/version/count），条目为 u32 id + u8 kind + u8 脏位 + 按脏位排列的字段。
-     kind: 0=位姿 1=离开。预留脏位（16=骨骼 32=面部）本期不产生，遇到就忽略。 */
+     kind: 0=位姿 1=离开；version=3 包含 hands 左右标记与 64=关键帧动画 JSON 块。 */
   function presenceDecodeFrame(buf) {
     const dv = new DataView(buf);
-    if (dv.byteLength < 3 || dv.getUint8(0) !== PRESENCE_BIN_MAGIC) return [];
+    if (dv.byteLength < 3 || dv.getUint8(0) !== PRESENCE_BIN_MAGIC || dv.getUint8(1) !== PRESENCE_BIN_VERSION) return [];
     const count = dv.getUint8(2);
     const out = [];
     let o = 3;
@@ -338,7 +370,9 @@ export async function createXR(ctx) {
         const n = dv.getUint8(o); o += 1;
         pose.hands = [];
         for (let h = 0; h < n; h++) {
+          const side = dv.getUint8(o); o += 1;
           pose.hands.push({
+            handedness: side === 1 ? "left" : side === 2 ? "right" : null,
             p: [
               dv.getInt16(o, true) / PRESENCE_PACK_POS,
               dv.getInt16(o + 2, true) / PRESENCE_PACK_POS,
@@ -379,6 +413,15 @@ export async function createXR(ctx) {
           pose.face[ARKIT52[idx]] = val / 255;
         }
       }
+      if (mask & P_DIRTY_ANIMATION) {
+        if (o + 4 > dv.byteLength) return [];
+        const len = dv.getUint32(o, true); o += 4;
+        if (len > dv.byteLength - o) return [];
+        try {
+          pose.animation = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, o, len)));
+        } catch (err) { pose.animation = null; }
+        o += len;
+      }
       out.push({ userId, kind: 0, pose });
     }
     return out;
@@ -410,6 +453,7 @@ export async function createXR(ctx) {
     /* 骨骼/表情也是稀疏的：只把报过的并进去，未报的保持上一次的值 */
     if (d.bones !== undefined) cur.bones = Object.assign({}, cur.bones, d.bones);
     if (d.face !== undefined) cur.face = Object.assign({}, cur.face, d.face);
+    if (d.animation !== undefined) cur.animation = d.animation;
     presencePoses.set(username, cur);
     return cur;
   }
@@ -426,6 +470,9 @@ export async function createXR(ctx) {
         presenceCursor = (snap && snap.logId != null) ? snap.logId : null;
         for (const u of snap.users || []) {
           if (!u.username || u.username === me) continue;
+          if (u.pose && u.pose.animation) {
+            try { avatars.setAnimationCommand(u.username, u.pose.animation); } catch (err) {}
+          }
           if (!avatars.setRemotePose(u.username, u.pose)) ensurePresenceMember(u.username, u.pose);
           else applyRemoteState(u.username, u.state);
         }
@@ -456,6 +503,9 @@ export async function createXR(ctx) {
             for (const [ename, weight] of Object.entries(ev.pose.face)) {
               try { avatars.setExpression(username, ename, weight); } catch (err) {}
             }
+          }
+          if (ev.pose && ev.pose.animation) {
+            try { avatars.setAnimationCommand(username, ev.pose.animation); } catch (err) {}
           }
           if (!presenceApplyLod(username, merged)) continue;
           if (!avatars.setRemotePose(username, merged)) ensurePresenceMember(username, merged);
@@ -598,8 +648,17 @@ export async function createXR(ctx) {
       border: 1px solid #2c3d58; border-radius: 999px; background: rgba(16, 22, 34, 0.82);
       color: #dfe8f4; outline: none; }
     #xrRoot .xr-send-input:focus { border-color: #5b8cff; }
-    /* dom-overlay 沉浸式：桌面键鼠操作提示不适用，隐藏（其余 HUD 复用） */
-    #xrRoot .xr-hud.xr-immersive .xr-hint { display: none; }`;
+    /* 沉浸式由世界内 CanvasTexture UI 接管顶部和底部操作栏；DOM 仍保留一个
+       透明、可聚焦的输入框，用于唤起系统键盘。无论设备是否授予 dom-overlay，
+       都隐藏 DOM 视觉层，避免同一组按钮在视野里出现两份。 */
+    #xrRoot .xr-hud.xr-immersive .xr-hint,
+    #xrRoot .xr-hud.xr-immersive .xr-top { display: none; }
+    #xrRoot .xr-hud.xr-immersive .xr-send {
+      position: fixed; left: -10000px; bottom: 0; width: 1px; height: 1px;
+      opacity: 0; pointer-events: none; transform: none;
+    }
+    #xrRoot .xr-hud.xr-immersive .xr-send-input { width: 1px; height: 1px; padding: 0; }
+    `;
   ctx.root.appendChild(hudStyle);
 
   const hud = document.createElement("div");
@@ -607,7 +666,8 @@ export async function createXR(ctx) {
   hud.innerHTML = `
     <div class="xr-top">
       <button type="button" class="xr-btn" data-act="exit">‹ ${t("xrExit")}</button>
-      <button type="button" class="xr-btn" data-act="vr"></button>
+      <button type="button" class="xr-btn" data-act="immersive"></button>
+      <button type="button" class="xr-btn" data-act="switchImmersive"></button>
       <button type="button" class="xr-btn" data-act="follow"></button>
       <button type="button" class="xr-btn" data-act="native"></button>
       <button type="button" class="xr-btn" data-act="files"></button>
@@ -622,7 +682,8 @@ export async function createXR(ctx) {
     </div>`;
   ctx.root.appendChild(hud);
   const exitBtn = hud.querySelector('[data-act="exit"]');
-  const vrBtn = hud.querySelector('[data-act="vr"]');
+  const immersiveBtn = hud.querySelector('[data-act="immersive"]');
+  const switchImmersiveBtn = hud.querySelector('[data-act="switchImmersive"]');
   const followBtn = hud.querySelector('[data-act="follow"]');
   const nativeBtn = hud.querySelector('[data-act="native"]');
   const titleEl = hud.querySelector(".xr-title");
@@ -663,16 +724,46 @@ export async function createXR(ctx) {
   filesBtn.addEventListener("click", () => {
     try { files.isOpen() ? files.closePanel() : files.openPanel(); } catch (err) {}
   });
-  /* 沉浸式入口（需求 1.2）：仅当浏览器报告支持 immersive-vr 时显示 */
-  function refreshVRBtn() {
-    if (!ctx.immersible || !ctx.immersible()) { vrBtn.style.display = "none"; return; }
-    vrBtn.style.display = "";
-    vrBtn.textContent = xrInImmersive ? t("xrExitVR") : t("xrEnterVR");
+  function availableImmersiveModes() {
+    const modes = ctx.immersiveModes ? ctx.immersiveModes() : null;
+    if (modes) return { ar: !!modes.ar, vr: !!modes.vr };
+    const mode = ctx.immersiveMode ? ctx.immersiveMode() : null;
+    return { ar: mode === "ar", vr: mode === "vr" };
   }
-  vrBtn.addEventListener("click", () => {
+  function canSwitchImmersive() {
+    const modes = availableImmersiveModes();
+    return modes.ar && modes.vr;
+  }
+  function currentImmersiveMode() {
+    return activeImmersiveMode || retryImmersiveMode
+      || (ctx.immersiveMode ? ctx.immersiveMode() : "ar");
+  }
+  function switchTargetMode() {
+    return currentImmersiveMode() === "ar" ? "vr" : "ar";
+  }
+  /* 沉浸式入口：优先 AR 透视；AR/VR 都支持时，另提供一个切换按钮。 */
+  function refreshImmersiveBtn() {
+    if (!ctx.immersible || !ctx.immersible()) {
+      immersiveBtn.style.display = "none";
+      switchImmersiveBtn.style.display = "none";
+      return;
+    }
+    const mode = currentImmersiveMode();
+    immersiveBtn.style.display = "";
+    immersiveBtn.disabled = xrStarting;
+    immersiveBtn.textContent = xrInImmersive
+      ? t(mode === "vr" ? "xrExitVR" : "xrExitAR")
+      : t(mode === "vr" ? "xrEnterVR" : "xrEnterAR");
+    const switchable = xrInImmersive && canSwitchImmersive();
+    switchImmersiveBtn.style.display = switchable ? "" : "none";
+    switchImmersiveBtn.disabled = xrStarting;
+    switchImmersiveBtn.textContent = t(switchTargetMode() === "vr" ? "xrSwitchToVR" : "xrSwitchToAR");
+  }
+  immersiveBtn.addEventListener("click", () => {
     if (xrInImmersive) exitImmersive();
     else enterImmersive();
   });
+  switchImmersiveBtn.addEventListener("click", () => switchImmersiveMode());
 
   /* ---------- 3D 内发送（需求 6.3 最小入口）：纯文本走 2D 的 POST（ctx.sendText），
      发出后经 msgEvents.add 自动回流 3D 墙。私聊/引用/附件等复杂编辑引导回 2D。
@@ -686,11 +777,13 @@ export async function createXR(ctx) {
     if (!text) return;
     if (!ctx.sendText) { statusEl.textContent = t("xrSendFail"); return; }
     sendInput.value = "";
+    if (worldUi) worldUi.refresh();
     try {
       await ctx.sendText(text);
       statusEl.textContent = "";
     } catch (err) {
       sendInput.value = text; /* 发送失败还原输入 */
+      if (worldUi) worldUi.refresh();
       statusEl.textContent = err && err.message ? err.message : t("xrSendFail");
     }
   }
@@ -701,6 +794,7 @@ export async function createXR(ctx) {
     else if (e.key === "Escape") sendInput.blur();
   });
   sendInput.addEventListener("keyup", (e) => e.stopPropagation());
+  sendInput.addEventListener("input", () => { if (worldUi) worldUi.refresh(); });
 
   /* ---------- 语音识别输入（桌面与沉浸式 dom-overlay 通用）：SpeechRecognition 实时转写
      进输入框，再点一次停止，文本留在框内由用户确认发送。错误在状态栏提示。
@@ -712,7 +806,10 @@ export async function createXR(ctx) {
   let asrBase = "";
   let asrOn = false;
   let asrRestarts = 0;
-  function micLabel() { micBtn.textContent = asrOn ? t("xrMicStop") : t("xrMic"); }
+  function micLabel() {
+    micBtn.textContent = asrOn ? t("xrMicStop") : t("xrMic");
+    if (worldUi) worldUi.refresh();
+  }
   micLabel();
   function stopAsr() {
     asrOn = false;
@@ -781,8 +878,37 @@ export async function createXR(ctx) {
   nativeBtn.addEventListener("click", () => {
     native.setEnabled(!native.isEnabled());
     refreshNativeBtn();
+    if (worldUi) worldUi.refresh();
   });
   refreshNativeBtn();
+
+  /* 沉浸式世界控制台：DOM overlay 不可用时仍可用手柄射线操作；有 overlay 时
+     视觉上也只保留这一套，避免浏览器 UI 与世界 UI 重叠。输入框点击后复用
+     DOM input 唤起系统键盘，输入结果实时画回世界面板。 */
+  worldUi = createXRWorldUI({
+    scene, camera, t,
+    roomName: () => ctx.roomName && ctx.roomName(),
+    messageCount: () => strip.length,
+    hint: () => t("xrVRHint"),
+    immersiveMode: () => currentImmersiveMode(),
+    canSwitchImmersive: () => xrInImmersive && canSwitchImmersive(),
+    isFollowing: () => follow,
+    isNative: () => native.isEnabled(),
+    inputValue: () => sendInput.value,
+    isAsrOn: () => asrOn,
+    onExit: () => doExit(),
+    onFollow: () => toggleFollow(),
+    onNative: () => { native.setEnabled(!native.isEnabled()); refreshNativeBtn(); worldUi.refresh(); },
+    onSwitchImmersive: () => switchImmersiveMode(),
+    onFiles: () => { try { files.isOpen() ? files.closePanel() : files.openPanel(); } catch (err) {} },
+    onMic: () => { if (asrOn) stopAsr(); else startAsr(); worldUi.refresh(); },
+    onSend: () => xrSend(),
+    focusInput: () => { try { sendInput.focus({ preventScroll: true }); } catch (e) { sendInput.focus(); } },
+    logLeft: LOG_L, logWidth: LOG_W, logZ: -R, bandTop: BAND_HI, floorY: FLOOR_Y,
+  });
+
+  sendInput.addEventListener("focus", () => { if (worldUi) worldUi.setFocusedInput(true); });
+  sendInput.addEventListener("blur", () => { if (worldUi) worldUi.setFocusedInput(false); });
 
   /* ---------- 消息条带（最旧 → 最新） ---------- */
 
@@ -859,6 +985,7 @@ export async function createXR(ctx) {
   function refreshTitle() {
     titleEl.textContent = `${ctx.roomName() || ""} · ${tf("xrMsgCount", { n: strip.length })}`;
     statusEl.textContent = strip.length ? statusEl.textContent : t("xrRoomEmpty");
+    if (worldUi) worldUi.refresh();
   }
 
   /* ---------- 布局（2D 直列式）：面板按各自高度自下而上堆叠成单列，最新在列底
@@ -1007,7 +1134,7 @@ export async function createXR(ctx) {
   const MODEL_CAP = 6;
   const chatModels = new Map();  // msgId → THREE.Group（已归一化）
   const modelOrder = [];
-  const placingModels = new Set();
+  const placingModels = new Map(); // id → 本次加载票据；隐藏/关闭后旧回调作废
   const gltfLoader = new GLTFLoader();
 
   function disposeObjectTree(obj) {
@@ -1026,8 +1153,10 @@ export async function createXR(ctx) {
   }
 
   function removeChatModel(id) {
+    const pending = placingModels.delete(id);
+    if (pending && !placingModels.size && !disposed) statusEl.textContent = "";
     const obj = chatModels.get(id);
-    if (!obj) return false;
+    if (!obj) return pending;
     scene.remove(obj);
     disposeObjectTree(obj);
     chatModels.delete(id);
@@ -1037,8 +1166,10 @@ export async function createXR(ctx) {
   }
 
   async function placeChatModel(id, msg) {
-    if (placingModels.has(id) || disposed) return;
-    placingModels.add(id);
+    if (disposed) return false;
+    if (chatModels.has(id) || placingModels.has(id)) return true;
+    const ticket = {};
+    placingModels.set(id, ticket);
     statusEl.textContent = t("xrModelLoading");
     let objUrl = null;
     try {
@@ -1051,8 +1182,10 @@ export async function createXR(ctx) {
         objUrl = URL.createObjectURL(await resp.blob());
         src = objUrl;
       }
+      if (disposed || placingModels.get(id) !== ticket) return false;
       const gltf = await gltfLoader.loadAsync(src);
       const model = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+      if (disposed || placingModels.get(id) !== ticket) { if (model) disposeObjectTree(model); return false; }
       if (!model) throw new Error("empty model");
       /* 外框包围盒归一化到 ~1m，底边落地，放在面板正前方地面 */
       const box = new THREE.Box3().setFromObject(model);
@@ -1074,16 +1207,18 @@ export async function createXR(ctx) {
       chatModels.set(id, holder);
       modelOrder.push(id);
       statusEl.textContent = "";
+      return true;
     } catch (err) {
-      if (!disposed) statusEl.textContent = t("xrModelLoadFail");
+      if (!disposed && placingModels.get(id) === ticket) statusEl.textContent = t("xrModelLoadFail");
+      return false;
     } finally {
       if (objUrl) URL.revokeObjectURL(objUrl);
-      placingModels.delete(id);
+      if (placingModels.get(id) === ticket) placingModels.delete(id);
     }
   }
 
   function toggleChatModel(id, msg) {
-    if (chatModels.has(id)) {
+    if (chatModels.has(id) || placingModels.has(id)) {
       removeChatModel(id);
       statusEl.textContent = "";
       return;
@@ -1092,6 +1227,8 @@ export async function createXR(ctx) {
   }
 
   function handlePick(pickRay) {
+    /* 沉浸式顶部/底部控制台优先于消息墙和文件面板。 */
+    try { if (worldUi && worldUi.handlePick(pickRay)) return; } catch (err) {}
     /* 共同文件 UI/世界模型优先（未开面板且无摆放时是廉价的 no-op） */
     try { if (files.handlePick(pickRay)) return; } catch (err) {}
     /* 饼图扇区点击 → 名称/数值/百分比浮签（需求 3.2） */
@@ -1199,6 +1336,7 @@ export async function createXR(ctx) {
   function toggleFollow() {
     follow = !follow;
     refreshFollowBtn();
+    if (worldUi) worldUi.refresh();
   }
   followBtn.addEventListener("click", toggleFollow);
 
@@ -1477,12 +1615,14 @@ export async function createXR(ctx) {
   /* ---------- WebXR 沉浸式会话：renderer.xr + 手柄射线拾取 + 摇杆平移/转向。
      输入抽象层三动作：确认（trigger→射线拾取，桌面=鼠标点击）、移动（左摇杆平移，
      桌面=滚轮/WASD）、旋转（右摇杆转向，桌面=拖拽环视）。无手柄时头向环视天然可用。
-     无 3D HUD：设置/返回/发送走 dom-overlay——会话以 optional feature 请求 dom-overlay
-     并把 DOM HUD（.xr-hud）作为 overlay 根，支持的头显（如 Quest Browser）内直接
-     可见可点，聚焦输入框弹系统虚拟键盘；不支持的浏览器照常进入，仅看不到 overlay。
+     世界内 CanvasTexture 控制台是主入口；dom-overlay 只保留给输入框唤起系统键盘。
      真机行为留用户抽查。 */
 
   let xrInImmersive = false;
+  let xrStarting = false;
+  let activeImmersiveMode = null;
+  let retryImmersiveMode = null;
+  let pendingSwitchMode = null;
   const _xrV1 = new THREE.Vector3();
   const _xrV2 = new THREE.Vector3();
   const _xrQ1 = new THREE.Quaternion();
@@ -1490,8 +1630,12 @@ export async function createXR(ctx) {
 
   /* 手柄：targetRaySpace（射线）挂 rig——rig 即用户载体，传送/转向随体 */
   const xrControllers = [];
+  const xrControllerGrips = [];
+  const xrHandSpaces = [];
   for (let i = 0; i < 2; i++) {
     const c = renderer.xr.getController(i);
+    const grip = renderer.xr.getControllerGrip(i);
+    const hand = renderer.xr.getHand(i);
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]),
       new THREE.LineBasicMaterial({ color: 0x6ea8ff, transparent: true, opacity: 0.85 })
@@ -1500,48 +1644,103 @@ export async function createXR(ctx) {
     line.visible = false;
     c.add(line);
     c.userData.xrLine = line;
+    c.userData.handedness = null;
+    c.addEventListener("connected", (ev) => {
+      c.userData.handedness = ev && ev.data && (ev.data.handedness || null);
+    });
+    c.addEventListener("disconnected", () => { c.userData.handedness = null; });
     c.addEventListener("selectstart", () => onXRSelect(c));
     c.addEventListener("selectend", () => onXRSelectEnd(c));
     /* 侧握键按住说话（松开发送）——沉浸式下的快捷语音入口 */
     c.addEventListener("squeezestart", () => startVRRec());
     c.addEventListener("squeezeend", () => stopVRRec());
     rig.add(c);
+    rig.add(grip);
+    rig.add(hand);
     xrControllers.push(c);
+    xrControllerGrips.push(grip);
+    xrHandSpaces.push(hand);
   }
   renderer.xr.addEventListener("sessionstart", () => {
     xrInImmersive = true;
+    xrPassthrough = activeImmersiveMode === "ar";
+    ctx.root.classList.toggle("xr-ar", xrPassthrough);
+    refreshShowroomVisuals();
     for (const c of xrControllers) c.userData.xrLine.visible = true;
-    const s = renderer.xr.getSession();
-    if (s && s.domOverlayState) hud.classList.add("xr-immersive");
-    refreshVRBtn();
-    vrBar.visible = true;
+    hud.classList.add("xr-immersive");
+    if (worldUi) worldUi.setVisible(true);
+    refreshImmersiveBtn();
+    /* 世界控制台已经包含返回/跟随/原生图表/文件/输入/语音/发送。
+       旧的脚边控制条仅作为世界 UI 初始化失败时的后备，避免沉浸式里重复显示。 */
+    vrBar.visible = !worldUi;
     refreshVrBar();
     vrHintText(t("xrVRHint"), 9000); /* 入场提示几秒后自动淡出 */
   });
   renderer.xr.addEventListener("sessionend", () => {
+    const nextMode = pendingSwitchMode;
+    pendingSwitchMode = null;
     xrInImmersive = false;
+    activeImmersiveMode = null;
+    xrPassthrough = false;
+    ctx.root.classList.remove("xr-ar");
+    refreshShowroomVisuals();
     for (const c of xrControllers) c.userData.xrLine.visible = false;
     hud.classList.remove("xr-immersive");
-    refreshVRBtn();
+    if (worldUi) worldUi.setVisible(false);
     killVRRec(); /* 会话结束即停录音（防麦克风指示灯残留） */
     vrBar.visible = false;
     vrHint.visible = false;
     if (xrDrag) { dragEnd(xrDrag); xrDrag = null; } /* 会话结束丢弃未完成的拖动 */
+    if (nextMode && !disposed) {
+      /* WebXR 不支持在同一个 XRSession 内把 immersive-ar 改成 immersive-vr，
+         所以先结束旧会话，再创建目标模式的新会话。保留目标模式以便授权失败后重试。 */
+      xrStarting = false;
+      void enterImmersive(nextMode);
+    } else {
+      retryImmersiveMode = null;
+      xrStarting = false;
+      refreshImmersiveBtn();
+    }
   });
 
-  async function enterImmersive() {
-    if (disposed || xrInImmersive) return;
-    if (!navigator.xr || !navigator.xr.requestSession) { statusEl.textContent = t("xrVRFail"); return; }
+  async function enterImmersive(requestedMode = null) {
+    if (disposed || xrInImmersive || xrStarting) return;
+    const mode = requestedMode || retryImmersiveMode
+      || (ctx.immersiveMode ? ctx.immersiveMode() : "ar");
+    const modes = availableImmersiveModes();
+    if (!modes[mode]) {
+      statusEl.textContent = t(mode === "vr" ? "xrVRFail" : "xrARFail");
+      return;
+    }
+    if (!mode || !navigator.xr || !navigator.xr.requestSession) {
+      statusEl.textContent = t(mode === "vr" ? "xrVRFail" : "xrARFail");
+      return;
+    }
+    xrStarting = true;
+    retryImmersiveMode = null;
+    activeImmersiveMode = mode;
+    refreshImmersiveBtn();
+    let session = null;
     try {
-      /* dom-overlay 为 optional：不支持时请求仍成功，只是没有 domOverlayState */
-      const session = await navigator.xr.requestSession("immersive-vr", {
-        optionalFeatures: ["local-floor", "bounded-floor", "dom-overlay"],
+      /* 房间坐标约定 y=0 是地面，必须具备 local-floor；dom-overlay 为 optional，
+         不支持时仍可通过世界内控制条交互。AR 授权失败不能偷偷退到不透视的 VR。 */
+      session = await navigator.xr.requestSession(mode === "ar" ? "immersive-ar" : "immersive-vr", {
+        requiredFeatures: ["local-floor"],
+        optionalFeatures: ["bounded-floor", "dom-overlay"],
         domOverlay: { root: hud },
       });
+      if (disposed) { await session.end(); return; } /* 用户在授权期间已返回 2D */
       await renderer.xr.setSession(session);
-      refreshVRBtn();
+      if (disposed) { await session.end(); return; }
+      statusEl.textContent = "";
     } catch (err) {
-      statusEl.textContent = t("xrVRFail");
+      if (session) { try { await session.end(); } catch (e) {} } /* 初始化失败也释放设备会话 */
+      retryImmersiveMode = mode;
+      if (!disposed) statusEl.textContent = t(mode === "vr" ? "xrVRFail" : "xrARFail");
+    } finally {
+      xrStarting = false;
+      if (!xrInImmersive) activeImmersiveMode = null;
+      if (!disposed) refreshImmersiveBtn();
     }
   }
   function exitImmersive() {
@@ -1549,11 +1748,40 @@ export async function createXR(ctx) {
     if (s) { try { s.end().catch(() => {}); } catch (err) {} }
   }
 
-  /* ---------- 世界内 VR 控制条 + 语音消息（沉浸式专用，不跟头） ----------
-     Quest 等浏览器不给 dom-overlay，头显里就没有任何 DOM 入口；这里把「必要设置」
-     做成一排钉在消息列底部前方的小面板（世界内固定，不是浮在眼前），手柄射线可点：
-     语音（点一下开始/再点结束，等价于按住侧握键）· 跟随最新 · 返回 2D。
-     语音消息只发音频、不依赖 ASR——人类能听，Agent 侧自己调 ASR（用户确认可行）。 */
+  function switchImmersiveMode() {
+    if (disposed || !xrInImmersive || xrStarting || !canSwitchImmersive()) return false;
+    const target = switchTargetMode();
+    const session = renderer.xr.getSession();
+    if (!session) return false;
+    pendingSwitchMode = target;
+    retryImmersiveMode = target;
+    xrStarting = true;
+    refreshImmersiveBtn();
+    try {
+      const ending = session.end();
+      if (ending && typeof ending.catch === "function") {
+        ending.catch(() => {
+          if (pendingSwitchMode !== target || disposed) return;
+          pendingSwitchMode = null;
+          xrStarting = false;
+          statusEl.textContent = t(target === "vr" ? "xrVRFail" : "xrARFail");
+          refreshImmersiveBtn();
+          if (worldUi) worldUi.refresh();
+        });
+      }
+    } catch (err) {
+      pendingSwitchMode = null;
+      xrStarting = false;
+      statusEl.textContent = t(target === "vr" ? "xrVRFail" : "xrARFail");
+      refreshImmersiveBtn();
+      if (worldUi) worldUi.refresh();
+    }
+    return true;
+  }
+
+  /* ---------- 世界内 VR 后备控制条 + 语音消息（沉浸式专用，不跟头） ----------
+     正常情况下顶部/底部由 worldUi 接管；这里保留一条精简后备入口，供世界 UI
+     初始化失败时使用。手柄侧握键仍可直接录制语音消息，不依赖 ASR。 */
 
   const vrBar = new THREE.Group();
   vrBar.visible = false;
@@ -1819,7 +2047,7 @@ export async function createXR(ctx) {
 
   /* DOM HUD 按钮初始文字（避免与 refreshNativeBtn 等声明顺序依赖） */
   refreshFollowBtn();
-  refreshVRBtn();
+  refreshImmersiveBtn();
 
   /* ---------- 2D 事件订阅（3D 只读，不写共享状态） ---------- */
 
@@ -1968,6 +2196,7 @@ export async function createXR(ctx) {
     snapTurn: (ax) => { xrSnapTurn(ax); return { armed: snapArmed, t: +snapT.toFixed(2), yaw: +rig.rotation.y.toFixed(3) }; },
     snapState: () => ({ armed: snapArmed, t: +snapT.toFixed(2), yaw: +rig.rotation.y.toFixed(3), deg: +(rig.rotation.y * 180 / Math.PI).toFixed(1) }),
     nativeGroup: () => native.group,
+    nativeOn: () => native.isEnabled(),
     avatarGroup: () => avatars.group,
     avatarApi: () => avatars, /* setExpression/wave/positionOf（ARKit52 驱动接口验证用） */
     /* VR 控制条与语音（无头显时验证用：显示控制条 + 直接驱动同一批处理器） */
@@ -1990,6 +2219,32 @@ export async function createXR(ctx) {
     roomGroup: () => (roomSystem ? roomSystem.group : null),
     seatOf: (name) => avatars.positionOf(name),
     files: () => files, /* 共同文件系统（验证用：isOpen/内部状态） */
+    worldUi: () => worldUi ? {
+      visible: worldUi.group.visible,
+      top: worldUi.top.position.toArray().map((v) => +v.toFixed(3)),
+      send: worldUi.send.position.toArray().map((v) => +v.toFixed(3)),
+      inputFocused: !!worldUi.state.focusedInput,
+      topHotspots: worldUi.state.topHotspots.map((h) => h.act),
+      sendHotspots: worldUi.state.sendHotspots.map((h) => h.act),
+    } : null,
+    worldUiSetVisible: (on) => { if (worldUi) worldUi.setVisible(!!on); },
+    worldUiClick: (act) => {
+      if (!worldUi) return false;
+      const topActs = new Set(["exit", "follow", "native", "switchImmersive", "files"]);
+      const mesh = topActs.has(act) ? worldUi.top : worldUi.send;
+      const list = topActs.has(act) ? worldUi.state.topHotspots : worldUi.state.sendHotspots;
+      const spot = list.find((r) => r.act === act);
+      if (!spot) return false;
+      const w = mesh.userData.canvas.width, h = mesh.userData.canvas.height;
+      const p = mesh.localToWorld(new THREE.Vector3(
+        ((spot.x + spot.w / 2) / w - 0.5) * mesh.geometry.parameters.width,
+        (0.5 - (spot.y + spot.h / 2) / h) * mesh.geometry.parameters.height,
+        0.01
+      ));
+      const o = camera.getWorldPosition(new THREE.Vector3());
+      const ray = new THREE.Raycaster(o, p.sub(o).normalize());
+      return worldUi.handlePick(ray);
+    },
     mem: () => ({ geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }),
     /* 位姿流的内部状态（排查「远端形象不动」时最有用：游标/是否关闭/id 映射/已累积的成员） */
     presence: () => ({
@@ -2030,6 +2285,8 @@ export async function createXR(ctx) {
     for (const id of Array.from(spatialVoices.keys())) dropSpatialVoice(id); /* 空间音频摘除（需求 7.4） */
     try { ctx.setVoiceSpatial(null); } catch (e) {}
     for (const id of Array.from(chatModels.keys())) removeChatModel(id);
+    for (const id of Array.from(placingModels.keys())) removeChatModel(id);
+    if (worldUi) { worldUi.dispose(); worldUi = null; }
     if (roomSystem) { try { roomSystem.dispose(); } catch (e) {} roomSystem = null; }
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);
@@ -2046,6 +2303,7 @@ export async function createXR(ctx) {
     try { renderer.forceContextLoss(); } catch (e) {}
     ctx.clearStaged();
     ctx.root.innerHTML = "";
+    ctx.root.classList.remove("xr-ar");
     ctx.root.classList.add("hidden");
     delete window.__xrDebug;
   }

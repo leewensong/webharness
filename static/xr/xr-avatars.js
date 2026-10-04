@@ -17,6 +17,13 @@ const PLATE_W = 1.1;       // 名牌精灵宽（米）
    认不出的 id 会走加载失败路径，静默回退胶囊，不影响 2D。 */
 const BUILTIN_AVATAR_PREFIX = "builtin:";
 const BUILTIN_AVATAR_DIR = "/static/avatars/";
+/* 人类客户端上报的 yaw 采用相机朝向，但人类 Avatar 的模型前向与此约定相差
+   180°。Agent 已在自己的上报侧补过这个偏移，因此不能对所有账号统一加 π。 */
+const HUMAN_FACING_OFFSET = Math.PI;
+
+function facingYawFor(rec, yaw) {
+  return Number(yaw || 0) + (rec && rec.isAgent ? 0 : HUMAN_FACING_OFFSET);
+}
 
 /* ---------- ARKit 52 表情接口（需求 4.3） ----------
    驱动优先级：模型自带 ARKit 命名 morph target（部分 GLB 直接支持）→ 逐 mesh 驱动；
@@ -58,6 +65,18 @@ export const PRESENCE_BONES = [
   "rightLittleProximal", "rightLittleIntermediate", "rightLittleDistal",
 ];
 const _handQ = new THREE.Quaternion();   /* 手部四元数插值临时值 */
+const _ikJointPos = new THREE.Vector3();
+const _ikEndPos = new THREE.Vector3();
+const _ikToEnd = new THREE.Vector3();
+const _ikToGoal = new THREE.Vector3();
+const _ikGoal = new THREE.Vector3();
+const _ikParentQ = new THREE.Quaternion();
+const _ikDeltaQ = new THREE.Quaternion();
+const _ikLocalDeltaQ = new THREE.Quaternion();
+const _ikWorldQ = new THREE.Quaternion();
+const _ikTmpQ = new THREE.Quaternion();
+const _headPitchQ = new THREE.Quaternion();
+const _headAxisX = new THREE.Vector3(1, 0, 0);
 
 const ARKIT_TO_VRM = {
   jawOpen: [["aa", 1]],
@@ -189,6 +208,55 @@ export function createAvatarSystem(opts) {
     root.position.y -= box.min.y;
   }
 
+  /* 创建人类双臂的两段 IK 链。目标是 world-space 的手掌/手腕位置；
+     upperArm + lowerArm 用 CCD 逼近目标，hand 再跟随手柄/手势的世界旋转。 */
+  function buildArmIK(rec) {
+    if (!rec || !rec.vrm || !rec.vrm.humanoid) return null;
+    if (rec.armIK) return rec.armIK;
+    const hb = rec.vrm.humanoid;
+    const out = {};
+    rec.appliedModel && rec.appliedModel.updateMatrixWorld(true);
+    for (const side of ["left", "right"]) {
+      const upper = hb.getNormalizedBoneNode(`${side}UpperArm`);
+      const lower = hb.getNormalizedBoneNode(`${side}LowerArm`);
+      const hand = hb.getNormalizedBoneNode(`${side}Hand`);
+      if (!upper || !lower || !hand) continue;
+      const up = upper.getWorldPosition(new THREE.Vector3());
+      const elbow = lower.getWorldPosition(new THREE.Vector3());
+      const wrist = hand.getWorldPosition(new THREE.Vector3());
+      out[side] = {
+        upper, lower, hand,
+        upperLen: Math.max(0.05, up.distanceTo(elbow)),
+        lowerLen: Math.max(0.05, elbow.distanceTo(wrist)),
+        target: new THREE.Vector3(), goal: new THREE.Vector3(),
+        targetQ: new THREE.Quaternion(),
+        restUpper: upper.quaternion.clone(),
+        restLower: lower.quaternion.clone(),
+        restHand: hand.quaternion.clone(),
+        initialized: false, active: false, qInitialized: false,
+      };
+    }
+    rec.armIK = out;
+    return out;
+  }
+
+  function buildHeadTracking(rec) {
+    if (!rec || !rec.vrm || !rec.vrm.humanoid) return null;
+    if (rec.headTracking) return rec.headTracking;
+    const hb = rec.vrm.humanoid;
+    const neck = hb.getNormalizedBoneNode("neck");
+    const head = hb.getNormalizedBoneNode("head");
+    if (!neck && !head) return null;
+    rec.headTracking = {
+      neck, head,
+      restNeck: neck ? neck.quaternion.clone() : null,
+      restHead: head ? head.quaternion.clone() : null,
+      pitch: 0,
+      initialized: false,
+    };
+    return rec.headTracking;
+  }
+
   /* 摘掉已套用的模型（换装/重建时用）：VRM 走 deepDispose，其余按材质遍历释放 */
   function removeAppliedModel(rec) {
     if (!rec.appliedModel) return;
@@ -213,6 +281,17 @@ export function createAvatarSystem(opts) {
     rec.humanoidOn = false;
     rec.breathBone = rec.armBone = rec.foreArm = null;
     rec.waveT = null;
+    rec.remoteBoneTargets.clear();
+    rec.handTargetsBySide = { left: null, right: null };
+    rec.armIK = null;
+    rec.headTracking = null;
+    rec.ikBones.clear();
+    rec.animationQueue.length = 0;
+    rec.animationClip = null;
+    rec.animationTime = 0;
+    rec.animationBoneNames.clear();
+    rec.animationFaceNames.clear();
+    rec.agentBones.clear();
     rec.plate.position.y = CAP_H + 0.32;
   }
 
@@ -256,6 +335,8 @@ export function createAvatarSystem(opts) {
       /* 能力捕获（需求 4.3/4.4）：VRM 表情管理器 + Humanoid 待机动画骨骼；
          非 VRM 模型扫描 ARKit 命名的 morph target 直接驱动 */
       rec.vrm = vrm || null;
+      buildArmIK(rec);
+      buildHeadTracking(rec);
       rec.humanoidOn = !!(vrm && vrm.humanoid && rec.humanoidFlag);
       if (rec.humanoidOn) {
         const hb = vrm.humanoid;
@@ -269,6 +350,7 @@ export function createAvatarSystem(opts) {
         rec.legR = hb.getNormalizedBoneNode("rightUpperLeg");
         rec.shinL = hb.getNormalizedBoneNode("leftLowerLeg");
         rec.shinR = hb.getNormalizedBoneNode("rightLowerLeg");
+        buildArmIK(rec);
       }
       if (!vrm) {
         const morphs = new Map();
@@ -334,12 +416,12 @@ export function createAvatarSystem(opts) {
     const seat = idx === undefined ? null : seats[idx];
     if (seat) {
       rec.root.position.set(seat.x, 0, seat.z);
-      rec.root.rotation.y = seat.ry != null ? seat.ry : Math.atan2(-seat.x, -seat.z);
+      rec.root.rotation.y = facingYawFor(rec, seat.ry != null ? seat.ry : Math.atan2(-seat.x, -seat.z));
       return;
     }
     const ang = ((hashStr(username) % SLOTS) / SLOTS) * Math.PI * 2;
     rec.root.position.set(RING_R * Math.sin(ang), 0, RING_R * Math.cos(ang));
-    rec.root.rotation.y = Math.atan2(-rec.root.position.x, -rec.root.position.z); /* 面向中央 */
+    rec.root.rotation.y = facingYawFor(rec, Math.atan2(-rec.root.position.x, -rec.root.position.z)); /* 面向中央 */
   }
 
   /* roomEvents.onlineUsers → 同步成员形象（增/换名牌/移除离线）。 */
@@ -355,12 +437,22 @@ export function createAvatarSystem(opts) {
       if (!rec) {
         const root = new THREE.Group();
         rec = {
+          username: u.username,
           root, plate: null, capMesh: null, baseY: 0, disposed: false, modelApplied: false,
           modelUrl: u.model3dUrl || null, appliedModel: null,
-          isOwner: !!u.isRoomOwner, humanoidFlag: !!u.model3dHumanoid, arkitFlag: !!u.model3dArkit,
+          isOwner: !!u.isRoomOwner, isAgent: u.kind === "agent",
+          humanoidFlag: !!u.model3dHumanoid, arkitFlag: !!u.model3dArkit,
           vrm: null, arkitMorphs: null, humanoidOn: false, breathBone: null, armBone: null,
           foreArm: null, waveT: null,
           poseTarget: null, hasPose: false, handTargets: null, handMeshes: [],
+          handTargetsBySide: { left: null, right: null },
+          armIK: null, headTracking: null, headPitchTarget: 0, headPoseSeen: false, ikBones: new Set(),
+          /* Agent 逐拍骨骼：保留最新目标，渲染帧里 quaternion.slerp 趋近。 */
+          remoteBoneTargets: new Map(),
+          /* Agent 关键帧动画：当前 clip + 等待播放的 clip 队列。 */
+          animationQueue: [], animationClip: null, animationTime: 0,
+          animationBoneNames: new Set(), animationFaceNames: new Set(),
+          agentBones: new Set(),
         };
         buildCapsule(rec, u.username, rec.isOwner);
         rec.plate = buildNamePlate(u.username, rec.isOwner, t("xrOwnerTag"));
@@ -380,6 +472,8 @@ export function createAvatarSystem(opts) {
         rec.plate.position.y = rec.modelApplied ? AVATAR_H + 0.32 : CAP_H + 0.32;
         rec.root.add(rec.plate);
       }
+      /* 旧服务端没有 kind 时按人类处理；有 kind 时保留 Agent 的既有朝向约定。 */
+      rec.isAgent = u.kind === "agent";
       /* 能力标志可能随后台设置更新；已加载模型即时生效 */
       if (rec.humanoidFlag !== !!u.model3dHumanoid) {
         rec.humanoidFlag = !!u.model3dHumanoid;
@@ -409,8 +503,7 @@ export function createAvatarSystem(opts) {
   /* ---------- ARKit 52 驱动接口（需求 4.3）：口型/表情统一入口。
      VRM → 映射表转预设表情；GLB（带 ARKit morph）→ 直接驱动 morph target。
      任务 9 语音口型、任务 10 手柄触发都走这里。 */
-  function setExpression(username, name, weight) {
-    const rec = avatars.get(String(username));
+  function applyExpressionRec(rec, name, weight) {
     if (!rec || rec.disposed || !ARKIT_SET.has(String(name))) return false;
     const w = THREE.MathUtils.clamp(Number(weight) || 0, 0, 1);
     if (rec.vrm && rec.vrm.expressionManager) {
@@ -425,6 +518,10 @@ export function createAvatarSystem(opts) {
       return true;
     }
     return false;
+  }
+
+  function setExpression(username, name, weight) {
+    return applyExpressionRec(avatars.get(String(username)), name, weight);
   }
 
   /* 挥手（需求 4.4 内置动画之二）：进入 2.4s 挥手窗口，update() 逐帧推进。 */
@@ -460,7 +557,7 @@ export function createAvatarSystem(opts) {
     if (!rec || rec.disposed) return false;
     if (pose && Array.isArray(pose.p) && pose.p.length === 3 && pose.p.every(Number.isFinite)) {
       const [x, y, z] = pose.p;
-      const ry = Number.isFinite(pose.yaw) ? pose.yaw : rec.root.rotation.y;
+      const ry = Number.isFinite(pose.yaw) ? facingYawFor(rec, pose.yaw) : rec.root.rotation.y;
       rec.poseTarget = { x, y, z, ry };
       if (!rec.hasPose) {          /* 首次：直接就位，避免从座位慢慢飘过去 */
         rec.hasPose = true;
@@ -469,10 +566,203 @@ export function createAvatarSystem(opts) {
         rec.root.rotation.y = ry;
       }
     }
+    if (pose && Number.isFinite(pose.pitch)) {
+      rec.headPitchTarget = THREE.MathUtils.clamp(Number(pose.pitch), -Math.PI / 2, Math.PI / 2);
+      rec.headPoseSeen = true;
+    }
     const hands = Array.isArray(pose && pose.hands) ? pose.hands.filter((h) => h && Array.isArray(h.p)).slice(0, 2) : [];
     rec.handTargets = hands;
+    rec.handTargetsBySide = { left: null, right: null };
+    hands.forEach((h, i) => {
+      /* 新客户端带 handedness；旧 Agent/客户端没有时保留 left→right 的兼容顺序。 */
+      const side = h.handedness === "left" || h.handedness === "right"
+        ? h.handedness : (i === 0 ? "left" : "right");
+      if (!rec.handTargetsBySide[side]) rec.handTargetsBySide[side] = h;
+    });
+    if (hands.length) {
+      enableHumanoidProcedurals(rec); /* 人类手势也要能驱动未勾选程序动画的 VRM */
+      buildArmIK(rec);
+    }
     const meshes = hands.length ? ensureHands(rec) : rec.handMeshes;
     meshes.forEach((m, i) => { m.visible = i < hands.length; });
+    return true;
+  }
+
+  /* ---------- 远端长序列动画 ----------
+     Agent 不必每 100ms 重发骨骼：一次 presence 可以携带一个稀疏关键帧序列，
+     渲染端在 XR 帧里按自己的刷新率采样。animation action:
+       replace = 立即中断当前与排队动画并播放本段；
+       append  = 当前段结束后排到队尾；
+       stop    = 清空当前与排队动画，交还本地程序动画（若仍有 live bones 则继续跟随）。 */
+  function refreshAgentBones(rec) {
+    const keys = new Set(rec.remoteBoneTargets ? rec.remoteBoneTargets.keys() : []);
+    for (const name of rec.animationBoneNames || []) keys.add(name);
+    rec.agentBones = keys;
+  }
+
+  function compileAnimation(raw) {
+    if (!raw || (raw.action !== "replace" && raw.action !== "append")) return null;
+    const frames = Array.isArray(raw.keyframes) ? raw.keyframes : [];
+    if (!frames.length) return null;
+    const boneTracks = new Map();
+    const faceTracks = new Map();
+    let duration = 0;
+    for (const frame of frames) {
+      const at = Number(frame && frame.t);
+      if (!Number.isFinite(at) || at < 0) continue;
+      duration = Math.max(duration, at);
+      for (const [name, q] of Object.entries((frame && frame.bones) || {})) {
+        if (!Array.isArray(q) || q.length !== 4) continue;
+        const node = new THREE.Quaternion(q[0], q[1], q[2], q[3]).normalize();
+        if (!boneTracks.has(name)) boneTracks.set(name, []);
+        boneTracks.get(name).push({ t: at, q: node, tmp: new THREE.Quaternion() });
+      }
+      for (const [name, weight] of Object.entries((frame && frame.face) || {})) {
+        const w = THREE.MathUtils.clamp(Number(weight) || 0, 0, 1);
+        if (!faceTracks.has(name)) faceTracks.set(name, []);
+        faceTracks.get(name).push({ t: at, w });
+      }
+    }
+    if (!boneTracks.size && !faceTracks.size) return null;
+    return {
+      id: raw.id || null,
+      loop: !!raw.loop,
+      duration,
+      boneTracks,
+      faceTracks,
+      boneNames: new Set(boneTracks.keys()),
+      faceNames: new Set(faceTracks.keys()),
+    };
+  }
+
+  function sampleQuatTrack(track, time, out) {
+    if (!track || !track.length) return null;
+    /* 稀疏轨道在自己的第一关键帧之前保持进入动画时的姿势，而不是提前跳到
+       第一关键帧；这样「每帧只写变化的骨骼」才有正确语义。 */
+    if (time < track[0].t) return null;
+    if (time === track[0].t) return out.copy(track[0].q);
+    const last = track.length - 1;
+    if (time >= track[last].t) return out.copy(track[last].q);
+    let lo = 0, hi = last;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >> 1;
+      if (track[mid].t <= time) lo = mid;
+      else hi = mid;
+    }
+    const a = track[lo], b = track[hi];
+    const span = b.t - a.t;
+    const alpha = span > 1e-6 ? (time - a.t) / span : 1;
+    return out.copy(a.q).slerp(b.q, THREE.MathUtils.clamp(alpha, 0, 1));
+  }
+
+  function sampleNumberTrack(track, time) {
+    if (!track || !track.length) return 0;
+    if (time < track[0].t) return null;
+    if (time === track[0].t) return track[0].w;
+    const last = track.length - 1;
+    if (time >= track[last].t) return track[last].w;
+    let lo = 0, hi = last;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >> 1;
+      if (track[mid].t <= time) lo = mid;
+      else hi = mid;
+    }
+    const a = track[lo], b = track[hi];
+    const span = b.t - a.t;
+    const alpha = span > 1e-6 ? (time - a.t) / span : 1;
+    return THREE.MathUtils.lerp(a.w, b.w, THREE.MathUtils.clamp(alpha, 0, 1));
+  }
+
+  function startNextAnimation(rec) {
+    if (rec.animationClip || !rec.animationQueue.length) return;
+    rec.animationClip = rec.animationQueue.shift();
+    rec.animationTime = 0;
+    rec.animationBoneNames = new Set(rec.animationClip.boneNames);
+    rec.animationFaceNames = new Set(rec.animationClip.faceNames);
+    enableHumanoidProcedurals(rec);
+    refreshAgentBones(rec);
+  }
+
+  function clearAnimation(rec) {
+    rec.animationQueue.length = 0;
+    rec.animationClip = null;
+    rec.animationTime = 0;
+    rec.animationBoneNames.clear();
+    rec.animationFaceNames.clear();
+    refreshAgentBones(rec);
+  }
+
+  function applyAnimationSample(rec, time) {
+    const clip = rec.animationClip;
+    if (!clip || !rec.vrm || !rec.vrm.humanoid) return;
+    const hb = rec.vrm.humanoid;
+    for (const [name, track] of clip.boneTracks) {
+      const node = hb.getNormalizedBoneNode(name);
+      if (!node) continue;
+      if (sampleQuatTrack(track, time, track[0].tmp)) node.quaternion.copy(track[0].tmp);
+    }
+    for (const [name, track] of clip.faceTracks) {
+      const weight = sampleNumberTrack(track, time);
+      if (weight != null) applyExpressionRec(rec, name, weight);
+    }
+  }
+
+  function finishAnimationClip(rec) {
+    rec.animationClip = null;
+    rec.animationTime = 0;
+    rec.animationBoneNames.clear();
+    rec.animationFaceNames.clear();
+    refreshAgentBones(rec);
+    startNextAnimation(rec);
+  }
+
+  function advanceAnimation(rec, dt) {
+    if (!rec.animationClip) startNextAnimation(rec);
+    let remaining = Math.max(0, Number(dt) || 0);
+    for (let guard = 0; guard < 32; guard++) {
+      const clip = rec.animationClip;
+      if (!clip) return;
+      if (clip.duration <= 1e-6) {
+        applyAnimationSample(rec, 0);
+        if (clip.loop) return; /* 单帧 loop 动画 = 持续保持该姿势 */
+        finishAnimationClip(rec);
+        continue;
+      }
+      const available = Math.max(0, clip.duration - rec.animationTime);
+      if (clip.loop) {
+        rec.animationTime = (rec.animationTime + remaining) % clip.duration;
+        applyAnimationSample(rec, rec.animationTime);
+        return;
+      }
+      if (remaining <= available) {
+        rec.animationTime += remaining;
+        applyAnimationSample(rec, rec.animationTime);
+        return;
+      }
+      rec.animationTime = clip.duration;
+      applyAnimationSample(rec, rec.animationTime);
+      remaining -= available;
+      finishAnimationClip(rec);
+      if (remaining <= 1e-6 && rec.animationClip) {
+        applyAnimationSample(rec, rec.animationTime);
+        return;
+      }
+    }
+  }
+
+  function setAnimationCommand(username, command) {
+    const rec = avatars.get(String(username));
+    if (!rec || rec.disposed || !command || typeof command !== "object") return false;
+    const action = command.action;
+    if (action === "stop") {
+      clearAnimation(rec);
+      return true;
+    }
+    const clip = compileAnimation(command);
+    if (!clip) return false;
+    if (action === "replace") clearAnimation(rec);
+    rec.animationQueue.push(clip);
+    startNextAnimation(rec);
     return true;
   }
 
@@ -547,10 +837,12 @@ export function createAvatarSystem(opts) {
           }
         }
       }
+      /* 逐拍 bones 是目标值，先在渲染帧里平滑趋近；当前长序列占用的关节跳过，
+         由 advanceAnimation() 在同一帧按关键帧时间轴写入。 */
+      updateRemoteBoneTargets(rec, dt);
       if (!rec.humanoidOn) {
         /* 未开启 humanoid 程序动画也要推进 VRM：Agent 远端骨骼/表情只有走
            vrm.update 才会写进渲染骨骼（账号 humanoid 开关只管程序动画本身） */
-        if (rec.vrm) rec.vrm.update(dt);
         rec.root.position.y = Math.abs(Math.sin(now * 1.5)) * 0.03;
       } else if (rec.vrm) {
         if (rec.breathBone) rec.breathBone.rotation.x = Math.sin(now * 1.1) * 0.02; /* 待机呼吸 */
@@ -562,7 +854,9 @@ export function createAvatarSystem(opts) {
         rec.walkMix = (rec.walkMix || 0) + ((wantWalk ? 1 : 0) - (rec.walkMix || 0)) * (1 - Math.exp(-dt * 5));
         /* Agent 接管过的关节不许我们碰——包括下面「停下复位」那条路径，
            否则一停步就会把 Agent 摆好的姿势清零（rotation 与 quaternion 是联动的）。 */
-        const ours = (bone) => !rec.agentBones || !rec.agentBones.has(bone);
+        const ours = (bone) => !(rec.agentBones && rec.agentBones.has(bone))
+          && !(rec.ikBones && rec.ikBones.has(bone))
+          && !(rec.animationBoneNames && rec.animationBoneNames.has(bone));
         if (rec.walkMix > 0.02) {
           const fwd = Math.abs(rec.moveFwd || 0);
           const lat = rec.moveLat || 0;
@@ -598,14 +892,19 @@ export function createAvatarSystem(opts) {
           const k = rec.waveT;
           if (k >= 2.4) {
             rec.waveT = null;
-            if (rec.armBone) rec.armBone.rotation.z = 0;
-            if (rec.foreArm) rec.foreArm.rotation.z = 0;
+            if (rec.armBone && ours("rightUpperArm")) rec.armBone.rotation.z = 0;
+            if (rec.foreArm && ours("rightLowerArm")) rec.foreArm.rotation.z = 0;
           } else {
             const raise = Math.min(1, k / 0.4) * (1 - Math.max(0, (k - 1.8) / 0.6));
-            if (rec.armBone) rec.armBone.rotation.z = -2.1 * raise;
-            if (rec.foreArm) rec.foreArm.rotation.z = (-0.5 + Math.sin(k * 12) * 0.5) * raise;
+            if (rec.armBone && ours("rightUpperArm")) rec.armBone.rotation.z = -2.1 * raise;
+            if (rec.foreArm && ours("rightLowerArm")) rec.foreArm.rotation.z = (-0.5 + Math.sin(k * 12) * 0.5) * raise;
           }
         }
+      }
+      if (rec.vrm) {
+        advanceAnimation(rec, dt);
+        applyHandIK(rec, dt);
+        applyHeadTracking(rec, dt);
         rec.vrm.update(dt);
       }
     }
@@ -632,6 +931,7 @@ export function createAvatarSystem(opts) {
     rec.shinL = hb.getNormalizedBoneNode("leftLowerLeg");
     rec.shinR = hb.getNormalizedBoneNode("rightLowerLeg");
     rec.humanoidOn = true;
+    buildArmIK(rec);
   }
 
   /* Agent 上报的骨骼（level 3）：**只覆盖它报过的关节**，未报的继续走本地程序化动画
@@ -641,18 +941,149 @@ export function createAvatarSystem(opts) {
     if (!rec || rec.disposed || !rec.vrm || !rec.vrm.humanoid) return false;
     if (!bones) return false;
     enableHumanoidProcedurals(rec);
-    if (!rec.agentBones) rec.agentBones = new Set();
     const hb = rec.vrm.humanoid;
     let applied = 0;
     for (const [name, q] of Object.entries(bones)) {
       if (!Array.isArray(q) || q.length !== 4) continue;
       const node = hb.getNormalizedBoneNode(name);
       if (!node) continue;                       /* 该模型没有这根骨头：静默跳过 */
-      node.quaternion.set(q[0], q[1], q[2], q[3]);
-      rec.agentBones.add(name);
+      const target = rec.remoteBoneTargets.get(name) || node.quaternion.clone();
+      target.set(q[0], q[1], q[2], q[3]).normalize();
+      rec.remoteBoneTargets.set(name, target);
       applied++;
     }
+    refreshAgentBones(rec);
     return applied > 0;
+  }
+
+  function updateRemoteBoneTargets(rec, dt) {
+    if (!rec.vrm || !rec.vrm.humanoid || !rec.remoteBoneTargets.size) return;
+    const k = 1 - Math.exp(-Math.max(0, Number(dt) || 0) * 14);
+    const hb = rec.vrm.humanoid;
+    for (const [name, target] of rec.remoteBoneTargets) {
+      if (rec.animationBoneNames.has(name)) continue; /* 长序列动画在当前片段期间优先 */
+      const node = hb.getNormalizedBoneNode(name);
+      if (node) node.quaternion.slerp(target, k);
+    }
+  }
+
+  function setBoneWorldQuaternion(node, worldQ) {
+    if (!node.parent) {
+      node.quaternion.copy(worldQ).normalize();
+      return;
+    }
+    node.parent.getWorldQuaternion(_ikParentQ);
+    _ikTmpQ.copy(_ikParentQ).invert().multiply(worldQ);
+    node.quaternion.copy(_ikTmpQ).normalize();
+  }
+
+  function rotateIKJointToward(rec, joint, end, goal) {
+    joint.getWorldPosition(_ikJointPos);
+    end.getWorldPosition(_ikEndPos);
+    _ikToEnd.subVectors(_ikEndPos, _ikJointPos);
+    _ikToGoal.subVectors(goal, _ikJointPos);
+    if (_ikToEnd.lengthSq() < 1e-8 || _ikToGoal.lengthSq() < 1e-8) return;
+    _ikToEnd.normalize();
+    _ikToGoal.normalize();
+    _ikDeltaQ.setFromUnitVectors(_ikToEnd, _ikToGoal);
+    if (joint.parent) {
+      joint.parent.getWorldQuaternion(_ikParentQ);
+      _ikLocalDeltaQ.copy(_ikParentQ).invert().multiply(_ikDeltaQ).multiply(_ikParentQ);
+      joint.quaternion.premultiply(_ikLocalDeltaQ).normalize();
+    } else {
+      joint.quaternion.premultiply(_ikDeltaQ).normalize();
+    }
+    if (rec.appliedModel) rec.appliedModel.updateMatrixWorld(true);
+  }
+
+  function solveArmIK(rec, chain) {
+    const shoulder = chain.upper.getWorldPosition(_ikJointPos);
+    _ikGoal.copy(chain.target);
+    _ikToGoal.subVectors(_ikGoal, shoulder);
+    const dist = _ikToGoal.length();
+    if (dist < 1e-6) return;
+    const minReach = Math.max(0.04, Math.abs(chain.upperLen - chain.lowerLen) + 0.01);
+    const maxReach = Math.max(minReach, chain.upperLen + chain.lowerLen - 0.01);
+    const clamped = THREE.MathUtils.clamp(dist, minReach, maxReach);
+    _ikGoal.copy(shoulder).addScaledVector(_ikToGoal, clamped / dist);
+    /* CCD：先转肘部，再转肩部；几次小迭代足够覆盖手柄/手腕的正常活动范围。 */
+    for (let i = 0; i < 5; i++) {
+      rotateIKJointToward(rec, chain.lower, chain.hand, _ikGoal);
+      rotateIKJointToward(rec, chain.upper, chain.hand, _ikGoal);
+    }
+  }
+
+  function releaseArmIK(rec, chain, dt) {
+    if (!chain || !chain.active) return;
+    const k = 1 - Math.exp(-Math.max(0, Number(dt) || 0) * 12);
+    chain.upper.quaternion.slerp(chain.restUpper, k);
+    chain.lower.quaternion.slerp(chain.restLower, k);
+    chain.hand.quaternion.slerp(chain.restHand, k);
+    if (k > 0.98) {
+      chain.active = false;
+      chain.initialized = false;
+      chain.qInitialized = false;
+    }
+  }
+
+  function applyHandIK(rec, dt) {
+    /* Agent 的 bones/animation 仍走原有协议；这里只把人类的真实手柄/手势目标
+       反解到 Avatar 的上臂、前臂和手腕，避免两套驱动互相抢骨骼。 */
+    if (rec.isAgent || !rec.vrm || !rec.vrm.humanoid) return;
+    const chains = rec.armIK || buildArmIK(rec);
+    if (!chains) return;
+    const hands = rec.handTargetsBySide || { left: null, right: null };
+    const k = 1 - Math.exp(-Math.max(0, Number(dt) || 0) * 18);
+    for (const side of ["left", "right"]) {
+      const chain = chains[side];
+      if (!chain) continue;
+      const names = [`${side}UpperArm`, `${side}LowerArm`, `${side}Hand`];
+      const animationOwnsArm = names.some((name) => rec.animationBoneNames && rec.animationBoneNames.has(name));
+      const h = hands[side];
+      if (!h || !Array.isArray(h.p) || h.p.length !== 3 || animationOwnsArm
+          || !h.p.every(Number.isFinite)) {
+        releaseArmIK(rec, chain, dt);
+        for (const name of names) rec.ikBones.delete(name);
+        continue;
+      }
+      if (!chain.initialized) {
+        chain.target.set(h.p[0], h.p[1], h.p[2]);
+        chain.initialized = true;
+      } else {
+        chain.target.lerp(_ikGoal.set(h.p[0], h.p[1], h.p[2]), k);
+      }
+      if (Array.isArray(h.q) && h.q.length === 4 && h.q.every(Number.isFinite)) {
+        _ikWorldQ.set(h.q[0], h.q[1], h.q[2], h.q[3]).normalize();
+        if (!chain.active || !chain.qInitialized) chain.targetQ.copy(_ikWorldQ);
+        else chain.targetQ.slerp(_ikWorldQ, k);
+        chain.qInitialized = true;
+      }
+      solveArmIK(rec, chain);
+      if (chain.qInitialized) setBoneWorldQuaternion(chain.hand, chain.targetQ);
+      chain.active = true;
+      for (const name of names) rec.ikBones.add(name);
+    }
+  }
+
+  function applyHeadTracking(rec, dt) {
+    if (rec.isAgent || !rec.headPoseSeen || !rec.vrm || !rec.vrm.humanoid) return;
+    const tr = rec.headTracking || buildHeadTracking(rec);
+    if (!tr) return;
+    if ((rec.animationBoneNames && (rec.animationBoneNames.has("neck") || rec.animationBoneNames.has("head")))
+        || (rec.agentBones && (rec.agentBones.has("neck") || rec.agentBones.has("head")))) return;
+    const k = 1 - Math.exp(-Math.max(0, Number(dt) || 0) * 12);
+    tr.pitch = tr.initialized ? THREE.MathUtils.lerp(tr.pitch, rec.headPitchTarget, k) : rec.headPitchTarget;
+    tr.initialized = true;
+    const neckAngle = tr.pitch * 0.35;
+    const headAngle = tr.pitch * 0.65;
+    if (tr.neck && tr.restNeck) {
+      _headPitchQ.setFromAxisAngle(_headAxisX, neckAngle);
+      tr.neck.quaternion.copy(tr.restNeck).multiply(_headPitchQ);
+    }
+    if (tr.head && tr.restHead) {
+      _headPitchQ.setFromAxisAngle(_headAxisX, headAngle);
+      tr.head.quaternion.copy(tr.restHead).multiply(_headPitchQ);
+    }
   }
 
   /* 走路循环的调试快照（验证/排查用）：速度、混合权重、腿的当前摆角 */
@@ -684,5 +1115,37 @@ export function createAvatarSystem(opts) {
     };
   }
 
-  return { group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats, setRemotePose, removeRemote, clearLeft, debugWalk, setRemoteBones, debugBone };
+  function debugAnimation(username) {
+    const rec = avatars.get(String(username));
+    if (!rec || rec.disposed) return null;
+    return {
+      current: rec.animationClip ? (rec.animationClip.id || null) : null,
+      time: +(rec.animationTime || 0).toFixed(3),
+      queued: rec.animationQueue.length,
+      bones: Array.from(rec.animationBoneNames),
+    };
+  }
+
+  function debugAvatarPose(username) {
+    const rec = avatars.get(String(username));
+    if (!rec || rec.disposed) return null;
+    return { yaw: rec.root.rotation.y, isAgent: !!rec.isAgent };
+  }
+
+  function debugAvatarIK(username) {
+    const rec = avatars.get(String(username));
+    if (!rec || rec.disposed) return null;
+    return {
+      left: rec.armIK && rec.armIK.left ? { active: !!rec.armIK.left.active, q: rec.armIK.left.hand.quaternion.toArray() } : null,
+      right: rec.armIK && rec.armIK.right ? { active: !!rec.armIK.right.active, q: rec.armIK.right.hand.quaternion.toArray() } : null,
+      head: rec.headTracking ? { pitch: rec.headTracking.pitch, target: rec.headPitchTarget } : null,
+      bones: Array.from(rec.ikBones || []),
+    };
+  }
+
+  return {
+    group, applyRoom, positionOf, setExpression, wave, update, dispose, setSeats,
+    setRemotePose, removeRemote, clearLeft, debugWalk, setRemoteBones, debugBone,
+    setAnimationCommand, debugAnimation, debugAvatarPose, debugAvatarIK,
+  };
 }

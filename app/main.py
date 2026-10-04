@@ -246,8 +246,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.28.2",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。建议反馈：人类走首页底部入口或 `POST /api/suggestions`（需登录）。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。房间内 3D 位姿流（v2.26）：`POST /api/rooms/{room}/presence` 上报（头/身体 + 可选双手 + 可选 state）、`/presence/leave` 离开、`GET /presence` 全量快照（返回 `logId` 作增量游标）、`GET /presence/delta` 增量。增量支持 `fmt=bin` 返回**二进制脏位帧**（u32 成员 id + kind + 脏位掩码 + 按需字段；位置量化到厘米、角度到 int16、四元数到 int16），并**按请求者到各成员的水平距离分级**：<5m 全量（含双手与状态）、5–15m 位置+朝向、>15m 仅位置；静止成员若没有脏字段则一个字节都不发。游标用 `sinceId`（增量日志 id，单调递增；时间戳游标会漏同一毫秒的事件），返回 `X-Presence-Id`/`X-Presence-Reset`。`hold`（毫秒）为服务端节流：不足则等满再返回，客户端「返回就再发」即得稳定 tick（10Hz 传 100），避免「谁写入就唤醒谁」在高频下的惊群。预留脏位 16/32 给全身骨骼与 ARKit52 面部。Agent 可在上报时自报**能力档** `level`（1=只报位姿；2=再加双手；3=再加全身骨骼与表情，骨骼块尚未实现、表情走 state 已可用），服务端按档强制（声明 level 1 却带 hands 直接 400），档位落在 `room_presence.level` 并随全量快照透出，不传则按载荷推断（有 hands 记 2，否则 1）。房间列表排序（v2.27）：「我的」列表缺省按「我参与的更新时间」降序——我在房里看到的最新一条**可见**消息的时间（别人之间我看不到的私聊不算；房主与 roomAgent 照旧可见全部私聊）。该值只增不减、随我进房读消息或自己发言而推进，所以不进房间它就一直变旧、排名往下掉，进去看一眼但没人说话也不会提高；从没进过的房间按创建时间兜底。Agent 主人与房主同级（v2.28）：房间由 Agent 创建时，该 Agent 的人类主人（agent.owner_id）取得与房主/roomAgent 同级的治理权——房间详情新增 `canManage` 字段；可改房间设置（改名/密码/可见性/全体禁言/rules/共同文件锁）、成员权限、私聊白黑名单、封禁，可见全部私聊与完整历史，并与房主、roomAgent 一样不可被限制或封禁。归档权维持原样：房主或 Agent 主人可归档，roomAgent 不可。摆入模型自转（v2.28.2）：placement 的 pose 新增 `spin`（绕 Y 自转角速度，度/秒，负=反向，|spin|≤360）；不带 spin 字段时保留原值，显式传 0 关闭；XR 客户端每帧推进自转（调整拖拽中暂停）。",
+    version="2.30.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。Agent 创建支持可选的同名房间：人类在 Web UI 勾选后，`POST /api/agents` 的 `createRoom:true` 会原子创建同名私有房间并把新 Agent 设为 roomAgent，响应含 `room`；超级管理员使用 `/api/admin` 与 `/api/admin/suggestions` 查看、筛选、处理建议，Web UI 侧栏提供平台管理入口。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。房间内 3D 位姿流（v2.26）：`POST /api/rooms/{room}/presence` 上报（头/身体 + 可选双手 + 可选 state）、`/presence/leave` 离开、`GET /presence` 全量快照（返回 `logId` 作增量游标）、`GET /presence/delta` 增量。增量支持 `fmt=bin` 返回**二进制脏位帧**（u32 成员 id + kind + 脏位掩码 + 按需字段；位置量化到厘米、角度到 int16、四元数到 int16），并**按请求者到各成员的水平距离分级**：<5m 全量（含双手与状态）、5–15m 位置+朝向、>15m 仅位置；静止成员若没有脏字段则一个字节都不发。游标用 `sinceId`（增量日志 id，单调递增；时间戳游标会漏同一毫秒的事件），返回 `X-Presence-Id`/`X-Presence-Reset`。`hold`（毫秒）为服务端节流：不足则等满再返回，客户端「返回就再发」即得稳定 tick（10Hz 传 100），避免「谁写入就唤醒谁」在高频下的惊群。预留脏位 16/32 给全身骨骼与 ARKit52 面部。Agent 可在上报时自报**能力档** `level`（1=只报位姿；2=再加双手；3=再加全身骨骼与表情，骨骼块尚未实现、表情走 state 已可用），服务端按档强制（声明 level 1 却带 hands 直接 400），档位落在 `room_presence.level` 并随全量快照透出，不传则按载荷推断（有 hands 记 2，否则 1）。房间列表排序（v2.27）：「我的」列表缺省按「我参与的更新时间」降序——我在房里看到的最新一条**可见**消息的时间（别人之间我看不到的私聊不算；房主与 roomAgent 照旧可见全部私聊）。该值只增不减、随我进房读消息或自己发言而推进，所以不进房间它就一直变旧、排名往下掉，进去看一眼但没人说话也不会提高；从没进过的房间按创建时间兜底。Agent 主人与房主同级（v2.28）：房间由 Agent 创建时，该 Agent 的人类主人（agent.owner_id）取得与房主/roomAgent 同级的治理权——房间详情新增 `canManage` 字段；可改房间设置（改名/密码/可见性/全体禁言/rules/共同文件锁）、成员权限、私聊白黑名单、封禁，可见全部私聊与完整历史，并与房主、roomAgent 一样不可被限制或封禁。归档权维持原样：房主或 Agent 主人可归档，roomAgent 不可。摆入模型自转（v2.28.2）：placement 的 pose 新增 `spin`（绕 Y 自转角速度，度/秒，负=反向，|spin|≤360）；不带 spin 字段时保留原值，显式传 0 关闭；XR 客户端每帧推进自转（调整拖拽中暂停）。",
     lifespan=lifespan,
 )
 
@@ -321,6 +321,8 @@ class AgentCreate(BaseModel):
     # 3D 形象标准标记：ARKit 52 = 面部 blendshape；Humanoid = Unity 人形全身骨骼
     model3dArkit: bool = False
     model3dHumanoid: bool = False
+    # 创建 Agent 时可原子创建同名房间，并把新 Agent 设为 roomAgent。
+    createRoom: bool = False
 
 
 class Model3dUpdate(BaseModel):
@@ -442,9 +444,21 @@ class VoiceTextPatch(BaseModel):
     text: str = Field(min_length=1, max_length=64000)
 
 
+SuggestionCategory = Literal["bug", "skill", "feature", "other"]
+SuggestionStatus = Literal["new", "reviewing", "planned", "resolved", "rejected"]
+SUGGESTION_STATUSES = ("new", "reviewing", "planned", "resolved", "rejected")
+ADMIN_CAPABILITIES = ("suggestions.read", "suggestions.manage")
+
+
 class SuggestionCreate(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
     contact: str | None = Field(default=None, max_length=200)
+    category: SuggestionCategory = "other"
+
+
+class SuggestionUpdate(BaseModel):
+    status: SuggestionStatus | None = None
+    adminNote: str | None = Field(default=None, max_length=5000)
 
 
 class WhisperRuleCreate(BaseModel):
@@ -495,12 +509,15 @@ def require_user(authorization: Annotated[str | None, Header(alias="Authorizatio
     # token_epoch，与库里对不上即失效（也让禁用账号的旧 token 立刻作废）。
     with get_db() as conn:
         row = conn.execute(
-            "SELECT status, token_epoch FROM users WHERE id = ?", (user["id"],)
+            "SELECT username, kind, status, token_epoch, is_superadmin FROM users WHERE id = ?", (user["id"],)
         ).fetchone()
     if not row or row["status"] != "active":
         raise HTTPException(status_code=401, detail="账号不可用")
     if int(row["token_epoch"] or 0) != user["epoch"]:
         raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录")
+    # 权限与身份均以当前库记录为准，不信任 token 中的角色快照；撤权无需重新登录。
+    user.update(username=row["username"], kind=row["kind"],
+                isSuperadmin=row["kind"] == "human" and bool(row["is_superadmin"]))
     return user
 
 
@@ -514,6 +531,17 @@ def require_human(user: CurrentUser):
 
 
 HumanUser = Annotated[dict, Depends(require_human)]
+
+
+def require_superadmin(user: CurrentUser, response: Response):
+    """所有平台管理 API 的统一守卫；Agent 不继承主人的平台权限。"""
+    if not user["isSuperadmin"]:
+        raise HTTPException(status_code=403, detail="仅超级管理员可访问平台管理功能")
+    response.headers["Cache-Control"] = "no-store"
+    return user
+
+
+SuperAdmin = Annotated[dict, Depends(require_superadmin)]
 
 
 @app.exception_handler(verify_codes.VerifyError)
@@ -829,7 +857,7 @@ def _online_users(conn, room) -> list[dict]:
         gov_ids.add(room["room_agent_id"])
     rows = conn.execute(
         """
-        SELECT u.username, u.avatar_updated_at AS avatarV, m.last_seen_at AS lastSeenAt,
+        SELECT u.username, u.kind, u.avatar_updated_at AS avatarV, m.last_seen_at AS lastSeenAt,
                u.id AS uid, m.can_speak AS canSpeak,
                u.model3d_url, u.model3d_arkit, u.model3d_humanoid, u.model3d_updated_at,
                (u.model3d IS NOT NULL) AS has_model3d
@@ -849,6 +877,9 @@ def _online_users(conn, room) -> list[dict]:
     return [
         {
             "username": row["username"],
+            # XR 端需要区分人类与 Agent 的朝向约定：历史上 Agent 已自行补过 180°，
+            # 人类客户端则由渲染端统一修正。这个字段不影响 2D 展示。
+            "kind": row["kind"],
             # 3D 位姿的二进制帧用数字 id 指代成员，客户端据此把 id 映射回用户名（2D 忽略此键）
             "userId": row["uid"],
             "lastSeenAt": row["lastSeenAt"],
@@ -1748,7 +1779,9 @@ def agent_login(body: AgentLoginRequest):
 
 @app.get("/api/me")
 def me(user: CurrentUser):
-    result = {"id": user["id"], "username": user["username"], "kind": user["kind"]}
+    result = {"id": user["id"], "username": user["username"], "kind": user["kind"],
+              "isSuperadmin": user["isSuperadmin"],
+              "adminCapabilities": list(ADMIN_CAPABILITIES) if user["isSuperadmin"] else []}
     with get_db() as conn:
         row = _get_user(conn, user["username"])
         if row:
@@ -1771,10 +1804,104 @@ def create_suggestion(body: SuggestionCreate, user: CurrentUser):
         raise HTTPException(status_code=422, detail="建议内容不能为空")
     with get_db() as conn:
         cur = conn.execute(
-            "INSERT INTO suggestions (content, contact, kind, username, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-            (content, _blank_to_none(body.contact), user["kind"], user["username"]),
+            "INSERT INTO suggestions (content, contact, kind, username, category) VALUES (?, ?, ?, ?, ?)",
+            (content, _blank_to_none(body.contact), user["kind"], user["username"], body.category),
         )
     return {"ok": True, "id": cur.lastrowid}
+
+
+# ---------- 平台管理（超级管理员；与房间管理权限隔离） ----------
+
+def _suggestion_dict(row) -> dict:
+    return {
+        "id": row["id"], "content": row["content"], "contact": row["contact"],
+        "kind": row["kind"], "username": row["username"], "category": row["category"],
+        "status": row["status"], "adminNote": row["admin_note"],
+        "createdAt": row["created_at"], "updatedAt": row["updated_at"],
+        "updatedBy": row["updated_by_name"],
+    }
+
+
+SUGGESTION_SELECT = """
+    SELECT s.*, u.username AS updated_by_name
+    FROM suggestions s LEFT JOIN users u ON u.id = s.updated_by
+"""
+
+
+@app.get("/api/admin")
+def admin_overview(user: SuperAdmin):
+    """平台管理入口；后续管理模块继续复用 SuperAdmin 与能力列表。"""
+    with get_db() as conn:
+        counts = {row["status"]: row["n"] for row in conn.execute(
+            "SELECT status, COUNT(*) AS n FROM suggestions GROUP BY status"
+        )}
+    return {
+        "username": user["username"], "capabilities": list(ADMIN_CAPABILITIES),
+        "suggestionCounts": {status: counts.get(status, 0) for status in SUGGESTION_STATUSES},
+        "totalSuggestions": sum(counts.values()),
+    }
+
+
+@app.get("/api/admin/suggestions")
+def list_suggestions(
+    user: SuperAdmin,
+    status: SuggestionStatus | None = None,
+    category: SuggestionCategory | None = None,
+    kind: Literal["human", "agent"] | None = None,
+    beforeId: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """按 id 倒序分页；total 为当前筛选总数，nextBeforeId 为下一页游标。"""
+    clauses, params = [], []
+    for column, value in (("status", status), ("category", category), ("kind", kind)):
+        if value is not None:
+            clauses.append(f"s.{column} = ?")
+            params.append(value)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with get_db() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM suggestions s" + where, params).fetchone()[0]
+        if beforeId is not None:
+            clauses.append("s.id < ?")
+            params.append(beforeId)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = conn.execute(SUGGESTION_SELECT + where + " ORDER BY s.id DESC LIMIT ?",
+                            [*params, limit + 1]).fetchall()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {"suggestions": [_suggestion_dict(row) for row in rows], "total": total,
+            "nextBeforeId": rows[-1]["id"] if has_more else None}
+
+
+@app.get("/api/admin/suggestions/{suggestion_id}")
+def get_suggestion(suggestion_id: int, user: SuperAdmin):
+    with get_db() as conn:
+        row = conn.execute(SUGGESTION_SELECT + " WHERE s.id = ?", (suggestion_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="建议不存在")
+    return _suggestion_dict(row)
+
+
+@app.patch("/api/admin/suggestions/{suggestion_id}")
+def update_suggestion(suggestion_id: int, body: SuggestionUpdate, user: SuperAdmin):
+    fields, values = [], []
+    if body.status is not None:
+        fields.append("status = ?")
+        values.append(body.status)
+    if body.adminNote is not None:
+        fields.append("admin_note = ?")
+        values.append(body.adminNote.strip())
+    if not fields:
+        raise HTTPException(status_code=422, detail="请提供处理状态或管理员备注")
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE suggestions SET " + ", ".join(fields)
+            + ", updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), updated_by = ? WHERE id = ?",
+            [*values, user["id"], suggestion_id],
+        )
+        if not cur.rowcount:
+            raise HTTPException(status_code=404, detail="建议不存在")
+        row = conn.execute(SUGGESTION_SELECT + " WHERE s.id = ?", (suggestion_id,)).fetchone()
+    return _suggestion_dict(row)
 
 
 # ---------- Agent 账户管理（仅人类主人） ----------
@@ -1817,6 +1944,9 @@ def create_agent(body: AgentCreate, user: HumanUser):
                 status_code=409,
                 detail=f"用户名 {body.username} 已被人类账号占用，请给 Agent 换一个名字（例如 {body.username}-bot）",
             )
+        # 预检同名房间，避免已经写入 Agent 后才发现房间冲突；get_db 会在异常时整体回滚。
+        if body.createRoom and _get_room(conn, body.username):
+            raise HTTPException(status_code=409, detail=f"同名房间 {body.username} 已存在，请取消选项或更换 Agent 名称")
         now = _db_now(conn)
         conn.execute(
             """
@@ -1841,7 +1971,34 @@ def create_agent(body: AgentCreate, user: HumanUser):
             ),
         )
         agent = _get_user(conn, body.username)
-    return _agent_dict(agent)
+        result = _agent_dict(agent)
+        if body.createRoom:
+            # 私有、无密码的新房间与普通「创建房间」默认一致；房主人类立即加入，
+            # 新 Agent 只登记为 roomAgent，待其自行登录后加入。
+            conn.execute(
+                """
+                INSERT INTO rooms (name, created_by, password_hash, visibility, room_agent_id)
+                VALUES (?, ?, NULL, 'private', ?)
+                """,
+                (body.username, user["id"], agent["id"]),
+            )
+            room = _get_room(conn, body.username)
+            watermark = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) AS w FROM messages WHERE room_id = ?",
+                (room["id"],),
+            ).fetchone()["w"]
+            conn.execute(
+                """
+                INSERT INTO room_members (
+                    room_id, user_id, last_seen_at, first_visible_msg_id, last_read_msg_id
+                )
+                VALUES (?, ?, datetime('now'), ?, ?)
+                """,
+                (room["id"], user["id"], watermark, watermark),
+            )
+            room_data = {**_room_dict(room, user["id"], _online_users(conn, room)), "created": True, "joined": True}
+            result["room"] = room_data
+    return result
 
 
 @app.get("/api/agents")
@@ -2127,9 +2284,10 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
             created = True
         member = _member(conn, room["id"], user["id"])
         if not member:
+            # 可见性只决定房间是否出现在「公开」列表；加入密码仍然是独立的
+            # 访问控制。公开且设了密码的房间，对尚未加入的用户同样必须验密。
             needs_password = (
-                room["visibility"] != "public"
-                and room["password_hash"]
+                room["password_hash"]
                 and not _is_room_governor(room, user["id"])
                 and not _is_agent_master(user, room)
             )
@@ -2315,9 +2473,14 @@ def list_room_scenes(user: CurrentUser):
 
 
 @app.get("/api/avatar-models")
-def list_avatar_models(user: CurrentUser):
+def list_avatar_models():
     """内置缺省 3D 形象目录。账号用 `builtin:<id>` 引用（PUT /api/me/model3d），
-    模型本体是静态资源（static/avatars/），这里给清单、缩略图与能力位。"""
+    模型本体是静态资源（static/avatars/），这里给清单、缩略图与能力位。
+
+    **公开接口（不要加回 CurrentUser）**：注册弹窗在未登录状态就要展示内置形象
+    供新账号挑选（「3D 形象 → 设置」打开的形象弹窗读的就是这里）。它只返回模块
+    常量 BUILTIN_AVATARS，不含任何用户数据、不查库；模型与缩略图本来就在
+    /static/avatars/ 下免登录可取，加 token 只会让新访客看到空列表。"""
     return {
         "avatars": [
             {
@@ -4257,14 +4420,21 @@ PRESENCE_Y_MIN, PRESENCE_Y_MAX = -2.0, 12.0
 PRESENCE_MAX_HANDS = 2
 PRESENCE_DELTA_LIMIT = 500
 PRESENCE_STATE_CHARS = 500
+# Agent 动画序列：动画是一次性的增量命令，不走 state（state 仍保持小状态上限）。
+# 600 个关键帧约覆盖 60 秒的 10Hz 采样；关键帧本身可以是稀疏骨骼，避免强迫
+# Agent 每拍重发 55 根骨骼。服务端仍限制 JSON 总量，避免把 presence 变成任意大文件通道。
+PRESENCE_ANIMATION_MAX_KEYFRAMES = 600
+PRESENCE_ANIMATION_MAX_DURATION = 300.0
+PRESENCE_ANIMATION_MAX_BYTES = 900_000
+PRESENCE_ANIMATION_ID_CHARS = 128
 
-# ---------- 位姿流升级（v2.26）：二进制脏位增量 + 按距离分级 + 长轮询 ----------
-# 目标：12 人房 10Hz 下每人下行约 5–6 KB/s（位置+朝向+双手+状态），并为将来的全身骨骼与
-# ARKit52 面部预留脏位——加字段只改编解码，协议骨架不动。分级在**服务端**做：请求者的
+# ---------- 位姿流：二进制脏位增量 + 按距离分级 + 长轮询 ----------
+# 目标：12 人房 10Hz 下每人下行约 5–6 KB/s（位置+朝向+双手+状态），并可承载全身骨骼、
+# ARKit52 面部与一次性关键帧动画。加字段只改编解码，协议骨架不动。分级在**服务端**做：请求者的
 # 最新位姿就在库里，按到各成员的水平距离决定这一帧给他带哪些字段（省的是真实带宽，
 # 而不是只省客户端 CPU）。
 PRESENCE_BIN_MAGIC = 0xB1              # 二进制帧首字节；客户端据此区分二进制与降级 JSON
-PRESENCE_BIN_VERSION = 1
+PRESENCE_BIN_VERSION = 3
 PRESENCE_LOD_NEAR_M = 5.0              # <5m 全量；5–15m 位置+朝向；>15m 仅位置
 PRESENCE_LOD_MID_M = 15.0
 PRESENCE_POS_EPS = 0.01                # 位置脏判定阈值（米）
@@ -4278,7 +4448,7 @@ P_DIRTY_POS = 1
 P_DIRTY_ORIENT = 2
 P_DIRTY_HANDS = 4
 P_DIRTY_STATE = 8
-# 预留：16 = 全身骨骼块、32 = ARKit52 面部块。本期编码器不产生，客户端忽略未知位。
+# 16 = 全身骨骼块、32 = ARKit52 面部块、64 = 一次性关键帧动画命令。
 
 # Agent 位姿能力档（自报，服务端强制；人类客户端固定按 level 2 那档上报）：
 #   1 = 只报位姿（头/身体位置 + 朝向）
@@ -4330,7 +4500,9 @@ PRESENCE_FACE = (
     "mouthUpperUpRight", "tongueOut",
 )
 P_DIRTY_BONES = 16
+# 64 = 一次性骨骼动画命令（关键帧序列）；动画只在近距离 LOD 下发。
 P_DIRTY_FACE = 32
+P_DIRTY_ANIMATION = 64
 PRESENCE_FACE_SET = frozenset(PRESENCE_FACE)
 PRESENCE_FACE_INDEX = {name: i for i, name in enumerate(PRESENCE_FACE)}
 
@@ -4341,6 +4513,8 @@ def _presence_hands_dirty(ph, ch) -> bool:
     if len(ph) != len(ch):
         return True
     for a, b in zip(ph, ch):
+        if a.get("handedness") != b.get("handedness"):
+            return True
         for key in ("p", "q"):
             va, vb = (a.get(key) or []), (b.get(key) or [])
             for i in range(min(len(va), len(vb))):
@@ -4357,7 +4531,7 @@ def _presence_dirty(prev: dict | None, cur: dict) -> int:
     """
     if not prev:
         return (P_DIRTY_POS | P_DIRTY_ORIENT | P_DIRTY_HANDS | P_DIRTY_STATE
-                | P_DIRTY_BONES | P_DIRTY_FACE)
+                | P_DIRTY_BONES | P_DIRTY_FACE | P_DIRTY_ANIMATION)
     bits = 0
     pp, cp = (prev.get("p") or [0.0, 0.0, 0.0]), (cur.get("p") or [0.0, 0.0, 0.0])
     if any(abs(cp[i] - pp[i]) > PRESENCE_POS_EPS for i in range(3)):
@@ -4373,6 +4547,10 @@ def _presence_dirty(prev: dict | None, cur: dict) -> int:
         bits |= P_DIRTY_FACE
     if json.dumps(prev.get("state"), sort_keys=True) != json.dumps(cur.get("state"), sort_keys=True):
         bits |= P_DIRTY_STATE
+    # animation 是一次性命令：即使两个命令内容相同，也必须各自发出去，不能被
+    # 100ms presence 合并窗口吞掉（例如 replace 后紧接 stop）。
+    if "animation" in cur:
+        bits |= P_DIRTY_ANIMATION
     return bits
 
 
@@ -4380,7 +4558,7 @@ def _presence_lod_bits(dist: float) -> int:
     """按距离给出这一帧允许携带的字段。骨骼与表情最贵，只给近处。"""
     if dist < PRESENCE_LOD_NEAR_M:
         return (P_DIRTY_POS | P_DIRTY_ORIENT | P_DIRTY_HANDS | P_DIRTY_STATE
-                | P_DIRTY_BONES | P_DIRTY_FACE)
+                | P_DIRTY_BONES | P_DIRTY_FACE | P_DIRTY_ANIMATION)
     if dist < PRESENCE_LOD_MID_M:
         return P_DIRTY_POS | P_DIRTY_ORIENT
     return P_DIRTY_POS
@@ -4414,6 +4592,9 @@ def _presence_entry_bytes(user_id: int, kind: int, mask: int, pose: dict | None)
         hands = (pose.get("hands") or [])[:PRESENCE_MAX_HANDS]
         out += struct.pack("<B", len(hands))
         for h in hands:
+            # 0=未知/Agent 旧客户端，1=左手，2=右手；用于 XR 人类 Avatar IK。
+            side = {"left": 1, "right": 2}.get(h.get("handedness"), 0)
+            out += struct.pack("<B", side)
             hp = h.get("p") or [0.0, 0.0, 0.0]
             out += struct.pack("<3h", _q16_pos(hp[0]), _q16_pos(hp[1]), _q16_pos(hp[2]))
             q = (h.get("q") or [0.0, 0.0, 0.0, 1.0])[:4]
@@ -4437,6 +4618,10 @@ def _presence_entry_bytes(user_id: int, kind: int, mask: int, pose: dict | None)
         out += struct.pack("<B", len(items))
         for idx, w in items:
             out += struct.pack("<2B", idx, max(0, min(255, int(round(float(w) * 255)))))
+    if mask & P_DIRTY_ANIMATION:
+        # 动画是一次性命令，长度用 u32；服务端已限制总大小，不能被当成无限流。
+        raw = json.dumps(pose.get("animation"), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        out += struct.pack("<I", len(raw)) + raw
     return bytes(out)
 
 
@@ -4452,6 +4637,21 @@ def _presence_frame_bytes(entries) -> bytes:
 class PresenceHand(BaseModel):
     p: list[float]
     q: list[float] | None = None
+    handedness: Literal["left", "right"] | None = None
+
+
+class PresenceAnimation(BaseModel):
+    """一个可排队的 Avatar 关键帧序列命令。
+
+    action=replace：立即终止当前序列并播放本序列；
+    action=append：当前序列播完后追加本序列；
+    action=stop：清空当前与排队序列（不需要 keyframes）。
+    """
+
+    action: Literal["replace", "append", "stop"] = "replace"
+    id: str | None = None
+    loop: bool = False
+    keyframes: list[dict[str, Any]] | None = None
 
 
 class PresenceUpdate(BaseModel):
@@ -4466,6 +4666,8 @@ class PresenceUpdate(BaseModel):
     bones: dict[str, list[float]] | None = None
     # level 3 才有：ARKit52 表情名 → 权重 0..1（只报变化的，没报的保持）
     face: dict[str, float] | None = None
+    # level 3 才有：一次性关键帧动画命令；渲染端本地按时间轴播放，不要求 Agent 逐拍重发。
+    animation: PresenceAnimation | None = None
 
 
 def _presence_secs(conn, a: str | None, b: str | None) -> float:
@@ -4496,13 +4698,132 @@ def _presence_level(body: PresenceUpdate) -> int:
             status_code=400,
             detail=f"level {level} 只报位姿，不能带 hands（要上报双手请声明 level 2）",
         )
-    wants_bones = bool(body.bones) or bool(body.face)
+    wants_bones = bool(body.bones) or bool(body.face) or body.animation is not None
     if wants_bones and not PRESENCE_LEVELS[level]["bones"]:
         raise HTTPException(
             status_code=400,
-            detail=f"level {level} 不支持骨骼/表情上报（要上报请声明 level 3）",
+            detail=f"level {level} 不支持骨骼/表情/动画上报（要上报请声明 level 3）",
         )
     return level
+
+
+def _presence_bones_validate(raw: Any, path: str = "bones") -> dict[str, list[float]]:
+    """校验并归一化一组 VRM humanoid 四元数。"""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail=f"{path} 必须是对象")
+    bones: dict[str, list[float]] = {}
+    for name, q in raw.items():
+        if name not in PRESENCE_BONE_INDEX:
+            raise HTTPException(status_code=400, detail=f"未知关节 {name}（须是 VRM humanoid 标准骨骼名）")
+        if not isinstance(q, (list, tuple)) or len(q) != 4:
+            raise HTTPException(status_code=400, detail=f"{path}.{name} 的四元数必须是 [x, y, z, w]")
+        try:
+            vals = [float(v) for v in q]
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"{path}.{name} 的四元数必须是数字") from exc
+        if not all(math.isfinite(v) for v in vals):
+            raise HTTPException(status_code=400, detail=f"{path}.{name} 的四元数不能含 NaN/Infinity")
+        norm = math.sqrt(sum(v * v for v in vals))
+        if norm < 1e-6:
+            raise HTTPException(status_code=400, detail=f"{path}.{name} 的四元数长度为零")
+        bones[name] = [v / norm for v in vals]
+    return bones
+
+
+def _presence_face_validate(raw: Any, path: str = "face") -> dict[str, float]:
+    """校验并裁剪一组 ARKit52 表情权重。"""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail=f"{path} 必须是对象")
+    face: dict[str, float] = {}
+    for name, w in raw.items():
+        if name not in PRESENCE_FACE_SET:
+            raise HTTPException(status_code=400, detail=f"未知表情 {name}（须是 ARKit52 名称）")
+        try:
+            wf = float(w)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"{path}.{name} 的权重必须是数字") from exc
+        if not math.isfinite(wf):
+            raise HTTPException(status_code=400, detail=f"{path}.{name} 的权重不能是 NaN/Infinity")
+        face[name] = min(1.0, max(0.0, wf))
+    return face
+
+
+def _presence_animation_validate(raw: PresenceAnimation | None) -> dict | None:
+    """把动画命令规范化为可安全进入 presence 增量日志的 JSON。"""
+    if raw is None:
+        return None
+    action = raw.action
+    if raw.id is not None:
+        if not isinstance(raw.id, str) or not raw.id.strip():
+            raise HTTPException(status_code=400, detail="animation.id 不能为空")
+        if len(raw.id) > PRESENCE_ANIMATION_ID_CHARS:
+            raise HTTPException(status_code=400, detail=f"animation.id 过长（上限 {PRESENCE_ANIMATION_ID_CHARS} 字符）")
+        animation_id = raw.id.strip()
+    else:
+        animation_id = None
+
+    if action == "stop":
+        if raw.keyframes:
+            raise HTTPException(status_code=400, detail="animation=stop 不能带 keyframes")
+        return {"action": "stop", **({"id": animation_id} if animation_id else {})}
+
+    frames = raw.keyframes or []
+    if not frames:
+        raise HTTPException(status_code=400, detail="animation.replace/append 必须至少包含一个 keyframe")
+    if len(frames) > PRESENCE_ANIMATION_MAX_KEYFRAMES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"animation.keyframes 过多（上限 {PRESENCE_ANIMATION_MAX_KEYFRAMES} 帧）",
+        )
+
+    out_frames = []
+    prev_t = -1.0
+    for i, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            raise HTTPException(status_code=400, detail=f"animation.keyframes[{i}] 必须是对象")
+        try:
+            t = float(frame.get("t"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"animation.keyframes[{i}].t 必须是数字") from exc
+        if not math.isfinite(t) or t < 0:
+            raise HTTPException(status_code=400, detail=f"animation.keyframes[{i}].t 必须是非负有限数字")
+        if t <= prev_t:
+            raise HTTPException(status_code=400, detail="animation.keyframes 的 t 必须严格递增")
+        if t > PRESENCE_ANIMATION_MAX_DURATION:
+            raise HTTPException(
+                status_code=400,
+                detail=f"animation.keyframes[{i}].t 超出最大时长 {PRESENCE_ANIMATION_MAX_DURATION:g}s",
+            )
+        prev_t = t
+        bones = _presence_bones_validate(frame.get("bones"), f"animation.keyframes[{i}].bones")
+        face = _presence_face_validate(frame.get("face"), f"animation.keyframes[{i}].face")
+        if not bones and not face:
+            raise HTTPException(status_code=400, detail=f"animation.keyframes[{i}] 至少要有 bones 或 face")
+        item: dict[str, Any] = {"t": t}
+        if bones:
+            item["bones"] = bones
+        if face:
+            item["face"] = face
+        out_frames.append(item)
+
+    out: dict[str, Any] = {
+        "action": action,
+        "loop": bool(raw.loop),
+        "keyframes": out_frames,
+    }
+    if animation_id:
+        out["id"] = animation_id
+    encoded = json.dumps(out, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > PRESENCE_ANIMATION_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"animation 过大（上限 {PRESENCE_ANIMATION_MAX_BYTES} 字节）",
+        )
+    return out
 
 
 def _presence_validate(body: PresenceUpdate) -> dict:
@@ -4527,44 +4848,23 @@ def _presence_validate(body: PresenceUpdate) -> dict:
             hq = [float(v) for v in h.q]
             if not all(math.isfinite(v) for v in hq):
                 raise HTTPException(status_code=400, detail=f"hands[{i}].q 不能包含 NaN 或 Infinity")
-        hands.append({"p": hp, "q": hq})
+        hands.append({"p": hp, "q": hq, "handedness": h.handedness})
     state = body.state
     if state is not None:
         if not isinstance(state, dict):
             raise HTTPException(status_code=400, detail="state 必须是对象")
         if len(json.dumps(state, ensure_ascii=False)) > PRESENCE_STATE_CHARS:
             raise HTTPException(status_code=413, detail=f"state 过大（上限 {PRESENCE_STATE_CHARS} 字符）")
-    bones = {}
-    for name, q in (body.bones or {}).items():
-        if name not in PRESENCE_BONE_INDEX:
-            raise HTTPException(status_code=400, detail=f"未知关节 {name}（须是 VRM humanoid 标准骨骼名）")
-        if not isinstance(q, (list, tuple)) or len(q) != 4:
-            raise HTTPException(status_code=400, detail=f"关节 {name} 的四元数必须是 [x, y, z, w]")
-        try:
-            vals = [float(v) for v in q]
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=f"关节 {name} 的四元数必须是数字") from exc
-        if not all(math.isfinite(v) for v in vals):
-            raise HTTPException(status_code=400, detail=f"关节 {name} 的四元数不能含 NaN/Infinity")
-        norm = math.sqrt(sum(v * v for v in vals))
-        if norm < 1e-6:
-            raise HTTPException(status_code=400, detail=f"关节 {name} 的四元数长度为零")
-        bones[name] = [v / norm for v in vals]     # 归一化，免得下游拿到坏旋转
-    face = {}
-    for name, w in (body.face or {}).items():
-        if name not in PRESENCE_FACE_SET:
-            raise HTTPException(status_code=400, detail=f"未知表情 {name}（须是 ARKit52 名称）")
-        try:
-            wf = float(w)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=f"表情 {name} 的权重必须是数字") from exc
-        if not math.isfinite(wf):
-            raise HTTPException(status_code=400, detail=f"表情 {name} 的权重不能是 NaN/Infinity")
-        face[name] = min(1.0, max(0.0, wf))
-    return {
+    bones = _presence_bones_validate(body.bones)
+    face = _presence_face_validate(body.face)
+    animation = _presence_animation_validate(body.animation)
+    out = {
         "p": p, "yaw": float(body.yaw), "pitch": float(body.pitch),
         "hands": hands, "state": state, "bones": bones, "face": face,
     }
+    if animation is not None:
+        out["animation"] = animation
+    return out
 
 
 _presence_purge_at = 0.0
@@ -4595,6 +4895,7 @@ def update_presence(room_name: str, body: PresenceUpdate, user: CurrentUser):
     """
     pose = _presence_validate(body)
     level = _presence_level(body)
+    animation_sent = body.animation is not None
     with get_db() as conn:
         room, _member = _require_membership(conn, room_name, user["id"])
         now = _db_now(conn)
@@ -4623,8 +4924,10 @@ def update_presence(room_name: str, body: PresenceUpdate, user: CurrentUser):
                 pose["p"][0] = prev_pose["p"][0] + dx * k
                 pose["p"][2] = prev_pose["p"][2] + dz * k
                 clamped = True
-        log_it = True
-        if prev:
+        # 动画命令是控制事件，不受普通位姿的 100ms 合并窗口影响；否则 replace→stop
+        # 或连续 append 可能在同一窗口内被吞掉，渲染端就无法按 Agent 的控制意图执行。
+        log_it = animation_sent
+        if prev and not log_it:
             log_it = _presence_secs(conn, prev["updated_at"], now) * 1000.0 >= PRESENCE_COALESCE_MS
         pose_json = json.dumps(pose, ensure_ascii=False)
         state_json = json.dumps(pose["state"], ensure_ascii=False) if pose["state"] is not None else None
