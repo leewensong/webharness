@@ -153,16 +153,23 @@ test('human hand targets activate the avatar arm IK chain', async () => {
     page.setDefaultTimeout(15000);
     await page.goto(origin + '/');
     await page.waitForFunction(() => !!window.__test?.avatars.debugBone('human', 'rightUpperArm'));
-    await page.evaluate(() => {
+    const target = await page.evaluate(() => {
+      __test.avatars.setRemotePose('human', { p: [0, 1.6, 0], yaw: 0, pitch: 0.3 });
+      __test.avatars.update(1 / 60);
+      const base = __test.avatars.debugAvatarIK('human').right.hand;
+      return [base[0] + 0.08, base[1] + 0.02, base[2] - 0.08];
+    });
+    await page.evaluate((target) => {
       __test.avatars.setRemotePose('human', {
         p: [0, 1.6, 0], yaw: 0, pitch: 0.3,
-        hands: [{ handedness: 'right', p: [0.65, 1.25, -0.35], q: [0, 0, 0, 1] }],
+        hands: [{ handedness: 'right', p: target, q: [0, 0, 0, 1] }],
       });
-      __test.avatars.update(1 / 60);
-    });
+      for (let i = 0; i < 20; i++) __test.avatars.update(1 / 60);
+    }, target);
     const ik = await page.evaluate(() => __test.avatars.debugAvatarIK('human'));
     assert.equal(ik.right.active, true);
     assert.deepEqual(new Set(ik.bones), new Set(['rightUpperArm', 'rightLowerArm', 'rightHand']));
+    assert.ok(ik.right.error < 0.12, `IK target error too large: ${ik.right.error}`);
     assert.ok(ik.head && Math.abs(ik.head.target - 0.3) < 1e-6);
   } finally {
     await page.close();

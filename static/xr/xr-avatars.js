@@ -1135,9 +1135,20 @@ export function createAvatarSystem(opts) {
   function debugAvatarIK(username) {
     const rec = avatars.get(String(username));
     if (!rec || rec.disposed) return null;
+    const chainInfo = (chain) => {
+      if (!chain) return null;
+      const p = chain.hand.getWorldPosition(new THREE.Vector3());
+      return {
+        active: !!chain.active,
+        q: chain.hand.quaternion.toArray(),
+        hand: p.toArray(),
+        target: chain.target.toArray(),
+        error: p.distanceTo(chain.target),
+      };
+    };
     return {
-      left: rec.armIK && rec.armIK.left ? { active: !!rec.armIK.left.active, q: rec.armIK.left.hand.quaternion.toArray() } : null,
-      right: rec.armIK && rec.armIK.right ? { active: !!rec.armIK.right.active, q: rec.armIK.right.hand.quaternion.toArray() } : null,
+      left: chainInfo(rec.armIK && rec.armIK.left),
+      right: chainInfo(rec.armIK && rec.armIK.right),
       head: rec.headTracking ? { pitch: rec.headTracking.pitch, target: rec.headPitchTarget } : null,
       bones: Array.from(rec.ikBones || []),
     };

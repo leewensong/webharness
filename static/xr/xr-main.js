@@ -2095,6 +2095,7 @@ export async function createXR(ctx) {
   /* ---------- 主循环 ---------- */
 
   let lastT = 0;
+  let avatarUpdateWarned = false;
 
   function frame(tNow) {
     if (disposed) return;
@@ -2114,7 +2115,16 @@ export async function createXR(ctx) {
       updateScrollBar();
     }
     layout(dt);
-    try { avatars.update(dt); } catch (err) {} /* 形象呼吸/浮动/表情推进（需求 4.4） */
+    try {
+      avatars.update(dt);
+    } catch (err) {
+      /* 3D 形象故障不能拖垮 2D/XR 主循环，但不能再静默吞掉 IK/骨骼错误；
+         第一次记录完整错误，便于从浏览器 console 直接区分数据问题与渲染问题。 */
+      if (!avatarUpdateWarned) {
+        avatarUpdateWarned = true;
+        console.error("[xr] avatar update failed; hand/head IK may be disabled", err);
+      }
+    }
     /* 位姿同步：0.5s 上报自己的、0.5s 拉别人的增量（页面隐藏时 rAF 停发，自然暂停） */
     presenceSendAcc += dt;
     presencePollAcc += dt;
