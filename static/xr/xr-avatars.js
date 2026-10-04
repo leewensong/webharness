@@ -600,9 +600,15 @@ export function createAvatarSystem(opts) {
     rec.handTargets = hands;
     rec.handTargetsBySide = { left: null, right: null };
     hands.forEach((h, i) => {
-      /* 新客户端带 handedness；旧 Agent/客户端没有时保留 left→right 的兼容顺序。 */
-      const side = h.handedness === "left" || h.handedness === "right"
-        ? h.handedness : (i === 0 ? "left" : "right");
+      /* 新客户端带 handedness；旧客户端没有时，优先用头部 yaw 下的身体横向
+         位置判断左右，避免两个 controller 的输入顺序把手臂交叉/反向。 */
+      let side = h.handedness === "left" || h.handedness === "right" ? h.handedness : null;
+      if (!side && pose && Array.isArray(pose.p) && Number.isFinite(pose.yaw)) {
+        const rx = Math.cos(pose.yaw), rz = -Math.sin(pose.yaw);
+        const lateral = (h.p[0] - pose.p[0]) * rx + (h.p[2] - pose.p[2]) * rz;
+        if (Math.abs(lateral) > 0.015) side = lateral < 0 ? "left" : "right";
+      }
+      if (!side) side = i === 0 ? "left" : "right";
       if (!rec.handTargetsBySide[side]) rec.handTargetsBySide[side] = h;
     });
     if (hands.length) {
