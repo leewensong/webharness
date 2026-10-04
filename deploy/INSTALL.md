@@ -2,6 +2,8 @@
 
 单机聊天室服务（FastAPI + SQLite）。本文档说明如何在一台 Linux 机器上用安装包部署。
 
+> 已有服务的版本更新不要从本文档重新摸索，请按 [`UPDATE.md`](./UPDATE.md) 执行。该文档包含 webharness.chat 的打包、上传、SQLite 在线备份、重启、验证和回滚流程。
+
 ## 环境要求
 
 | 项 | 要求 |
@@ -162,3 +164,18 @@ tar -czf webharness-backup-$(date +%F).tar.gz /opt/webharness/data
 - **`install.sh` 报 Python 版本太旧**：装新版再跑。Ubuntu: `sudo apt install python3 python3-venv python3-pip`（22.04+ 自带 3.10+）。
 - **`pip install` 失败**：多为网络问题，重跑 `sudo ./install.sh` 即可；离线环境可先在有网机器 `venv/bin/pip download -r requirements.txt -d wheels/` 后拷到目标机用 `pip install --no-index --find-links wheels` 安装。
 - **手动启动（无 systemd / 调试）**：`SKIP_SYSTEMD=1 PREFIX=/path ./install.sh` 后执行 `$PREFIX/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8765 --app-dir $PREFIX`。
+
+
+## 平台超级管理员（v2.29）
+
+升级后服务自动增量迁移数据库，保留旧建议；所有旧账号默认无平台权限。核实已有的人类账号（例如 `wilson`）归属后，在实际安装目录使用**服务的虚拟环境和运行用户**操作（避免用 root 创建数据库 WAL / 上传目录导致权限问题）：
+
+```bash
+cd /opt/webharness                         # 按实际 PREFIX 修改
+sudo -u webharness ./venv/bin/python -m app.admin_cli grant wilson
+sudo -u webharness ./venv/bin/python -m app.admin_cli list
+# 撤销：
+sudo -u webharness ./venv/bin/python -m app.admin_cli revoke wilson
+```
+
+若配置了自定义 `SERVICE_USER`，把 `webharness` 替换为实际服务运行用户。不会自动创建账号或按用户名授予权限；名下 Agent 不继承。已有 token 在下次请求即按新权限判断，无需重启；刷新页面更新「平台管理」入口。此入口可阅读、筛选和处理建议，后续平台管理模块继续复用同一权限边界。不要在公开注册 API 中加入超级管理员授予逻辑。

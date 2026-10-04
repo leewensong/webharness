@@ -51,7 +51,8 @@ export function createXRFiles(opts) {
   /* ---------- 数据 ---------- */
 
   let filesCache = [];
-  let revision = -1;
+  let revision = -1;        // 已见到的最高版本（含单文件 PUT），拒绝较早发出的 GET
+  let listRevision = -1;    // 上次完整列表版本；PUT 不能代替其他文件的同步
   let pollTimer = null;
   const base = () => `/api/rooms/${encodeURIComponent(roomName())}/files`;
 
@@ -108,6 +109,8 @@ export function createXRFiles(opts) {
   let hotspots = [];        // [{x,y,w,h,act}] CSS px
   let listScroll = 0;
   let anchor = null;        // 打开时刻的位姿（世界内固定）
+  let tempFileId = null;    // 临时模型仅属于当前预览，不能与常驻摆放叠在一起
+  let tempPreviewRequest = null;
 
   function cssW() { return view === "list" ? LIST_W : PV_W; }
   function cssH() {
@@ -205,7 +208,7 @@ export function createXRFiles(opts) {
     menuHotspots = [];
     if (view === "list") drawList(wCss, hCss);
     else drawPreview(wCss, hCss);
-    if (menu) drawActionMenu(wCss); /* 浮层最后画，盖在面板内容之上 */
+    if (menu) { menu.items = menuItems(); drawActionMenu(wCss); } /* 浮层与最新可见状态同步 */
     /* 闪讯（撤销/收起/再显示的反馈；沉浸式看不到 DOM 状态栏） */
     const fmsg = performance.now() < flashUntil ? flashMsg : "";
     if (fmsg) {
@@ -277,24 +280,32 @@ export function createXRFiles(opts) {
       g2.fillStyle = "#eef3f9";
       g2.font = "14px system-ui, sans-serif";
       let name = f.name || "";
-      const hasWorld = f.kind === "model" && f.world;
-      while (g2.measureText(name).width > wCss - (hasWorld ? 210 : 130) && name.length > 2) name = name.slice(0, -2);
+      const isModel = f.kind === "model";
+      while (g2.measureText(name).width > wCss - (isModel ? 160 : 130) && name.length > 2) name = name.slice(0, -2);
       g2.fillText(name, 46, y + 18);
       g2.fillStyle = "#7c90aa";
       g2.font = "11px system-ui, sans-serif";
-      g2.fillText(`${f.updatedBy || ""} · ${relTime(f.updatedAt)} · ${fmtKB(f.size)}`, 46, y + 38);
-      if (f.kind === "model" && f.world && f.world.visible) {
+      g2.fillText(`${f.updatedBy || ""} · ${relTime(f.updatedAt)} · ${fmtKB(f.size)}`, 46, y + 38, wCss - (isModel ? 164 : 62));
+      if (isModel && canEdit()) {
+        const pending = placementPending(f.id);
+        const r = { x: wCss - 110, y: y + 4, w: 94, h: 28 };
+        drawButton(g2, r, pending ? t("xrFileLoading") : t(f.world && f.world.visible ? "xrFileHideModel" : "xrFileShowModel"), false, pending);
+        /* 必须排在整行热点前：点开关不能同时进入预览。 */
+        const top = Math.max(r.y, LIST_HEAD), bottom = Math.min(r.y + r.h, hCss - LIST_PAD);
+        if (bottom > top) hotspots.push({ ...r, y: top, h: bottom - top, act: "togglePlace", fileId: f.id, dim: pending });
+      }
+      if (isModel && f.world && f.world.visible) {
         g2.fillStyle = "rgba(120,180,255,0.9)";
         g2.font = "11px system-ui, sans-serif";
         g2.textAlign = "right";
-        g2.fillText("🧊 " + t("filePlaced"), wCss - 16, y + 18);
+        g2.fillText("🧊 " + t("filePlaced"), wCss - 16, y + 43);
         g2.textAlign = "left";
-      } else if (f.kind === "model" && f.world && f.world.pose) {
+      } else if (isModel && f.world && f.world.pose) {
         /* 摆过但已收起：标出来，便于知道哪些能在动作菜单里「再显示」 */
         g2.fillStyle = "#7c90aa";
         g2.font = "11px system-ui, sans-serif";
         g2.textAlign = "right";
-        g2.fillText(t("xrFileHidden"), wCss - 16, y + 18);
+        g2.fillText(t("xrFileHidden"), wCss - 16, y + 43);
         g2.textAlign = "left";
       }
     });
@@ -322,8 +333,8 @@ export function createXRFiles(opts) {
     const btns = [];
     const editable = curFile && EDITABLE_KINDS.has(curFile.kind) && canEdit();
     if (curFile && curFile.kind === "model") {
-      if (canEdit()) btns.push({ act: "togglePlace", label: curFile.world && curFile.world.visible ? t("xrFileUnplace") : t("xrFilePlace") });
-      if (!curFile.world || !curFile.world.visible) btns.push({ act: "temp", label: t("xrFileTemp") });
+      if (canEdit()) btns.push({ act: "togglePlace", label: placementPending(curFile.id) ? t("xrFileLoading") : curFile.world && curFile.world.visible ? t("xrFileUnplace") : t("xrFilePlace"), dim: placementPending(curFile.id) });
+      if (!curFile.world || !curFile.world.visible) btns.push({ act: "temp", label: t(tempFileId === curFile.id ? "xrFileHideModel" : "xrFileTemp") });
       btns.push({ act: "menu", label: "⋯ " + t("xrFileActions") }); /* 再显示/收起/撤销的集中入口 */
     }
     if (editable) btns.push({ act: "edit", label: t("xrFileEdit") });
@@ -335,8 +346,8 @@ export function createXRFiles(opts) {
     const btns = previewButtons();
     btns.forEach((b, i) => {
       const r = btnRect(i, btns.length);
-      drawButton(g2, r, b.label, false, false);
-      hotspots.push({ ...r, act: b.act });
+      drawButton(g2, r, b.label, false, !!b.dim);
+      hotspots.push({ ...r, act: b.act, dim: !!b.dim });
     });
   }
 
@@ -429,8 +440,8 @@ export function createXRFiles(opts) {
     const items = [];
     if (curFile && curFile.kind === "model") {
       const placed = !!(curFile.world && curFile.world.visible);
-      if (canEdit()) items.push({ act: "menuReshow", label: placed ? t("xrFileUnplace") : t("xrFileReshow") });
-      if (!placed && placeChatModel) items.push({ act: "menuTemp", label: t("xrFileTemp") });
+      if (canEdit()) items.push({ act: "menuReshow", label: placed ? t("xrFileUnplace") : t("xrFileReshow"), dim: placementPending(curFile.id) });
+      if (!placed && placeChatModel) items.push({ act: "menuTemp", label: t(tempFileId === curFile.id ? "xrFileHideModel" : "xrFileTemp") });
     }
     items.push({ act: "menuUndo", label: t("xrAdjUndo"), dim: undoStack.length === 0 });
     items.push({ act: "menuClose", label: t("xrFileClose") });
@@ -480,10 +491,9 @@ export function createXRFiles(opts) {
     closeMenu();
     if (!f) return;
     if (act === "menuReshow") {
-      if (f.world && f.world.visible) await unplaceFile(f);
-      else await placeFile(f);
+      toggleFilePlacement(f);
     } else if (act === "menuTemp") {
-      if (placeChatModel) placeChatModel("file:" + f.id, { downloadUrl: f.contentUrl });
+      toggleTempPreview(f);
     } else if (act === "menuUndo") {
       await undoLast();
     }
@@ -517,6 +527,23 @@ export function createXRFiles(opts) {
   }
   function isOpen() { return open; }
 
+  function clearTempPreview() {
+    tempPreviewRequest = null;
+    if (tempFileId == null) return;
+    if (removeChatModel) removeChatModel("file:" + tempFileId);
+    tempFileId = null;
+  }
+  async function toggleTempPreview(file) {
+    if (!file || !placeChatModel || disposed) return;
+    if (tempFileId === file.id) { clearTempPreview(); drawPanel(); return; }
+    clearTempPreview();
+    tempFileId = file.id;
+    const request = tempPreviewRequest = {};
+    drawPanel();
+    const loaded = await placeChatModel("file:" + file.id, { downloadUrl: file.contentUrl });
+    if (loaded === false && tempPreviewRequest === request) { tempFileId = null; tempPreviewRequest = null; drawPanel(); }
+  }
+
   function closePreviewContent() {
     menu = null;            /* 换文件/回列表时动作菜单一并收掉 */
     menuHotspots = [];
@@ -525,7 +552,7 @@ export function createXRFiles(opts) {
     }
     if (pv && pv.videoTex) { pv.videoTex.dispose(); }
     if (pv && pv.objUrl) { URL.revokeObjectURL(pv.objUrl); }
-    if (curFile && curFile.kind === "model" && removeChatModel) removeChatModel("file:" + curFile.id);
+    clearTempPreview();
     if (pv && pv.mdEl) { try { pv.mdEl.remove(); } catch (e) {} }
     videoMesh.visible = false;
     pv = null;
@@ -742,6 +769,21 @@ export function createXRFiles(opts) {
 
   const gltfLoader = new GLTFLoader();
   const worldRecs = new Map(); // fileId → { holder, file, state, box, pendingPlace }
+  const placementBusy = new Set();
+
+  function placementPending(id) {
+    const rec = worldRecs.get(id);
+    return placementBusy.has(id) || !!(rec && (rec.pendingPlace || rec.placing));
+  }
+  function toggleFilePlacement(file) {
+    const latest = filesCache.find((f) => f.id === file.id);
+    if (!latest || placementPending(latest.id)) return;
+    if (latest.world && latest.world.visible) unplaceFile(latest);
+    else placeFile(latest);
+  }
+  function currentWorldRec(rec) {
+    return !disposed && worldRecs.get(rec.file.id) === rec;
+  }
 
   function applyPose(rec) {
     if (adjust && adjust.fileId === rec.file.id) return; /* 调整中本地位姿优先 */
@@ -759,6 +801,7 @@ export function createXRFiles(opts) {
   function removeWorld(id) {
     const rec = worldRecs.get(id);
     if (!rec) return;
+    if (saveTimers.has(id)) { clearTimeout(saveTimers.get(id)); saveTimers.delete(id); }
     worldGroup.remove(rec.holder);
     disposeObjectTree(rec.holder);
     worldRecs.delete(id);
@@ -783,8 +826,14 @@ export function createXRFiles(opts) {
   function syncWorld() {
     const want = filesCache.filter((f) => f.kind === "model" && f.world && f.world.visible);
     const wantIds = new Set(want.map((f) => f.id));
-    for (const id of Array.from(worldRecs.keys())) if (!wantIds.has(id)) removeWorld(id);
+    for (const [id, rec] of worldRecs) {
+      const latest = filesCache.find((f) => f.id === id && f.kind === "model");
+      /* 首次摆放先加载、再写 visible=true；不能让别的文件的轮询更新取消它。 */
+      if (!latest || (!wantIds.has(id) && !rec.pendingPlace && !rec.placing)) removeWorld(id);
+      else rec.file = latest;
+    }
     for (const f of want) {
+      if (tempFileId === f.id) clearTempPreview();
       let rec = worldRecs.get(f.id);
       if (!rec) {
         rec = newRec(f);
@@ -792,6 +841,7 @@ export function createXRFiles(opts) {
         loadWorldModel(rec);
       } else {
         rec.file = f;
+        rec.pendingPlace = false; /* 另一客户端已摆入，按远端位姿显示，不重新计算 */
         if (rec.state === "ready") applyPose(rec);
       }
     }
@@ -801,29 +851,33 @@ export function createXRFiles(opts) {
     (async () => {
       try {
         const blob = await fetchBlob(rec.file.contentUrl);
-        if (disposed || !worldRecs.has(rec.file.id)) return;
+        if (!currentWorldRec(rec)) return;
         const buf = await blob.arrayBuffer();
         const gltf = await new Promise((resolve, reject) => {
           try { gltfLoader.parse(buf, "", resolve, reject); }
           catch (e) { reject(e); }
         });
-        if (disposed || !worldRecs.has(rec.file.id)) return;
         const model = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+        /* 同 id 收起后再显示会建立新 rec；旧回调不能复活旧物体或泄漏资源。 */
+        if (!currentWorldRec(rec)) { if (model) disposeObjectTree(model); return; }
         if (!model) throw new Error("empty model");
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         model.position.copy(center).negate();
-        rec.holder.remove(rec.holder.children[0]); /* 摘掉线框占位 */
+        const placeholder = rec.holder.children[0];
+        rec.holder.remove(placeholder);
+        disposeObjectTree(placeholder);
         rec.holder.add(model);
         rec.box = box;
         rec.state = "ready";
         if (rec.pendingPlace) doInitialPlace(rec);
         else applyPose(rec);
       } catch (err) {
-        if (!disposed && worldRecs.has(rec.file.id)) {
+        if (currentWorldRec(rec)) {
           rec.state = "failed";
           if (statusEl) statusEl.textContent = t("xrFileLoadFail");
           if (rec.pendingPlace) { rec.pendingPlace = false; removeWorld(rec.file.id); }
+          drawPanel();
         }
       }
     })();
@@ -833,9 +887,15 @@ export function createXRFiles(opts) {
      面前空位算一次初始位姿（Box3 ~1m 归一化 + 底边落地 + 朝向摆放者）。 */
   async function placeFile(file) {
     if (!canEdit()) { if (statusEl) statusEl.textContent = t("xrFileNoPerm"); return; }
+    if (disposed || placementPending(file.id)) return;
+    file = filesCache.find((f) => f.id === file.id);
+    if (!file || (file.world && file.world.visible)) return;
+    if (tempFileId === file.id) clearTempPreview();
     const stored = file.world && file.world.pose;
     if (stored && stored.position) {
-      pushUndo(file, "place", snapshotOf(file)); /* 再显示可撤销（撤销 = 又收起来） */
+      const undo = pushUndo(file, "place", snapshotOf(file)); /* 再显示可撤销（撤销 = 又收起来） */
+      placementBusy.add(file.id);
+      drawPanel();
       try {
         await putPlacement(file.id, {
           visible: true,
@@ -846,8 +906,11 @@ export function createXRFiles(opts) {
         });
         flash(t("xrFilePoseRestored"));
       } catch (err) {
-        undoStack.pop();
+        removeUndo(undo);
         if (statusEl) statusEl.textContent = (err && err.message) || t("xrSendFail");
+      } finally {
+        placementBusy.delete(file.id);
+        drawPanel();
       }
       return;
     }
@@ -856,6 +919,7 @@ export function createXRFiles(opts) {
       rec = newRec(file);
       rec.pendingPlace = true;
       loadWorldModel(rec);
+      drawPanel();
       return;
     }
     if (rec.state !== "ready") { rec.pendingPlace = true; return; }
@@ -865,8 +929,9 @@ export function createXRFiles(opts) {
   }
 
   async function doInitialPlace(rec) {
-    if (rec.placing || rec.state !== "ready") return;
+    if (!currentWorldRec(rec) || rec.placing || rec.state !== "ready") return;
     rec.placing = true;
+    rec.pendingPlace = false;
     const p = camera.getWorldPosition(new THREE.Vector3());
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
     fwd.y = 0;
@@ -878,7 +943,7 @@ export function createXRFiles(opts) {
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const s = THREE.MathUtils.clamp(1.0 / maxDim, 0.02, MAX_WORLD_SCALE);
     const undoFile = filesCache.find((f) => f.id === rec.file.id);
-    if (undoFile && !(undoFile.world && undoFile.world.visible)) pushUndo(undoFile, "place", snapshotOf(undoFile));
+    const undo = undoFile && !(undoFile.world && undoFile.world.visible) ? pushUndo(undoFile, "place", snapshotOf(undoFile)) : null;
     try {
       const payload = await api(`${base()}/${rec.file.id}/placement`, {
         method: "PUT",
@@ -889,22 +954,23 @@ export function createXRFiles(opts) {
           scale: [s, s, s],
         }),
       });
-      if (disposed) return;
+      if (!currentWorldRec(rec)) return;
       applyFilePayload(payload.file, payload.revision);
       flash(t("xrFilePlace"));
     } catch (err) {
-      undoStack.pop(); /* 没写成功就不该留在撤销栈里 */
-      removeWorld(rec.file.id);
+      removeUndo(undo); /* 只移除本次失败操作，不能弹掉其他文件的并发操作 */
+      if (currentWorldRec(rec)) removeWorld(rec.file.id);
       if (statusEl) statusEl.textContent = (err && err.message) || t("xrSendFail");
     } finally {
       rec.placing = false;
+      drawPanel();
     }
   }
 
   function applyFilePayload(f2, rev) {
     const i = filesCache.findIndex((x) => x.id === f2.id);
     if (i >= 0) filesCache[i] = f2;
-    if (rev != null) revision = rev;
+    if (rev != null) revision = Math.max(revision, rev);
     const rec = worldRecs.get(f2.id);
     if (rec) rec.file = f2;
     syncWorld();
@@ -914,20 +980,39 @@ export function createXRFiles(opts) {
 
   async function unplaceFile(file) {
     if (!canEdit()) { if (statusEl) statusEl.textContent = t("xrFileNoPerm"); return; }
-    pushUndo(file, "unplace", snapshotOf(file)); /* 收起可撤销：撤销时按保留位姿再显示 */
+    if (disposed || placementPending(file.id)) return;
+    file = filesCache.find((f) => f.id === file.id);
+    if (!file || !file.world || !file.world.visible) return;
+    const localPose = poseOf(file.id);
+    /* 结束调整会先发出最后一次位姿保存；等待它完成后再 PUT visible=false，
+       否则立即点击隐藏会丢掉刚才的调整，或被较慢的 visible=true 覆盖。 */
+    if (adjust && adjust.fileId === file.id) exitAdjust();
+    placementBusy.add(file.id);
+    if (saveTimers.has(file.id)) { clearTimeout(saveTimers.get(file.id)); saveTimers.delete(file.id); }
+    const before = snapshotOf(file);
+    if (localPose) Object.assign(before, localPose);
+    const undo = pushUndo(file, "unplace", before); /* 收起可撤销：撤销时按保留位姿再显示 */
+    drawPanel();
     try {
+      /* 已发出的拖拽保存也要先完成，否则它的 visible=true 会把模型重新显示。 */
+      if (poseWrites.has(file.id)) await poseWrites.get(file.id).catch(() => {});
+      if (disposed) return;
       const payload = await api(`${base()}/${file.id}/placement`, { method: "PUT", body: JSON.stringify({ visible: false }) });
       if (disposed) return;
       applyFilePayload(payload.file, payload.revision);
       flash(t("xrFileUnplace"));
     } catch (err) {
-      undoStack.pop(); /* 没成功就不该留在撤销栈里 */
+      removeUndo(undo);
       if (statusEl) statusEl.textContent = (err && err.message) || t("xrSendFail");
+    } finally {
+      placementBusy.delete(file.id);
+      drawPanel();
     }
   }
 
   /* 拖拽节流保存：500ms 合并；松手立即保存 */
   const saveTimers = new Map();
+  const poseWrites = new Map();
   function poseOf(fileId) {
     const rec = worldRecs.get(fileId);
     if (!rec) return null;
@@ -939,14 +1024,22 @@ export function createXRFiles(opts) {
   }
   async function putPose(fileId) {
     const pose = poseOf(fileId);
-    if (!pose) return;
-    try {
-      await api(`${base()}/${fileId}/placement`, {
-        method: "PUT",
-        body: JSON.stringify({ visible: true, ...pose }),
+    if (!pose || disposed || placementBusy.has(fileId)) return;
+    const previous = poseWrites.get(fileId);
+    const write = (async () => {
+      if (previous) await previous.catch(() => {});
+      if (disposed) return;
+      return api(`${base()}/${fileId}/placement`, {
+        method: "PUT", body: JSON.stringify({ visible: true, ...pose }),
       });
+    })();
+    poseWrites.set(fileId, write);
+    try {
+      await write;
     } catch (err) {
       if (statusEl) statusEl.textContent = (err && err.message) || t("xrSendFail");
+    } finally {
+      if (poseWrites.get(fileId) === write) poseWrites.delete(fileId);
     }
   }
   function scheduleSave(fileId) {
@@ -1010,8 +1103,14 @@ export function createXRFiles(opts) {
   }
   function pushUndo(file, label, before) {
     if (!file) return;
-    undoStack.push({ fileId: file.id, name: file.name || "", before, label });
+    const item = { fileId: file.id, name: file.name || "", before, label };
+    undoStack.push(item);
     while (undoStack.length > UNDO_MAX) undoStack.shift();
+    return item;
+  }
+  function removeUndo(item) {
+    const i = undoStack.indexOf(item);
+    if (i >= 0) undoStack.splice(i, 1);
   }
   function placementBody(snap) {
     const body = { visible: !!snap.visible };
@@ -1054,7 +1153,7 @@ export function createXRFiles(opts) {
       /* 选中被撤销的对象：世界里在就进调整（顺手可再调），否则（已收起）打开它的预览页 */
       const rec = worldRecs.get(file.id);
       if (rec && rec.state === "ready" && !adjust) enterAdjust(file.id);
-      else if (open) openPreview(file);
+      else if (open) openPreview(filesCache.find((f) => f.id === file.id) || file);
     } catch (err) {
       flash((err && err.message) || t("xrSendFail"));
     }
@@ -1197,7 +1296,7 @@ export function createXRFiles(opts) {
         if (act === "move" || act === "rotate" || act === "scale") { adjust.submode = act; drawAdjustBar(); }
         else if (act === "done") exitAdjust();
         else if (act === "undo") undoLast();
-        else if (act === "unplace" && adjust) { const f = filesCache.find((x) => x.id === adjust.fileId); exitAdjust(false); if (f) unplaceFile(f); }
+        else if (act === "unplace" && adjust) { const f = filesCache.find((x) => x.id === adjust.fileId); if (f) unplaceFile(f); }
         return true;
       }
     }
@@ -1214,9 +1313,13 @@ export function createXRFiles(opts) {
     const hit = uiHit(ray);
     if (hit) {
       const spot = hotspots.find((h) => hit.px >= h.x && hit.px <= h.x + h.w && hit.py >= h.y && hit.py <= h.y + h.h);
-      if (spot) {
+      if (spot && !spot.dim) {
         if (view === "list") {
           if (spot.act === "close") closePanel();
+          else if (spot.act === "togglePlace") {
+            const f = filesCache.find((f) => f.id === spot.fileId);
+            if (f) toggleFilePlacement(f);
+          }
           else if (spot.act === "row") {
             const idx = Math.floor((hit.py - LIST_HEAD + listScroll) / ROW_H);
             const f = filesCache[idx];
@@ -1226,9 +1329,9 @@ export function createXRFiles(opts) {
         else if (spot.act === "close") { endEdit(); closePanel(); }
         else if (spot.act === "menu") openMenu();
         else if (spot.act === "edit") startEdit();
-        else if (spot.act === "togglePlace") { if (curFile) (curFile.world && curFile.world.visible ? unplaceFile(curFile) : placeFile(curFile)); }
+        else if (spot.act === "togglePlace") { if (curFile) toggleFilePlacement(curFile); }
         else if (spot.act === "temp") {
-          if (curFile && placeChatModel) placeChatModel("file:" + curFile.id, { downloadUrl: curFile.contentUrl });
+          if (curFile) toggleTempPreview(curFile);
         } else if (spot.act === "play") toggleVideo();
       }
       return true;
@@ -1278,8 +1381,13 @@ export function createXRFiles(opts) {
     }
     const hit = uiHit(ray);
     if (hit) {
-      const spot = hotspots.find((h) => (h.act === "scroll" || (view === "list" && h.act === "row")) &&
+      const spot = hotspots.find((h) =>
         hit.px >= h.x && hit.px <= h.x + h.w && hit.py >= h.y && hit.py <= h.y + h.h);
+      /* 具体按钮必须在 selectstart 时立即执行。若把它当成整行拖拽，
+         某些 WebXR 浏览器/手柄只可靠地派发 selectstart，用户就会看到
+         「隐藏/显示」和「关闭/返回」都没有反应；只有内容区/整行才进入
+         滚动拖拽，抬起时再补一次点击。 */
+      if (spot && spot.act !== "scroll" && !(view === "list" && spot.act === "row")) return null;
       if (spot) {
         return {
           kind: "xrfile-panel", py: hit.py,
@@ -1437,13 +1545,17 @@ export function createXRFiles(opts) {
     polling = true;
     try {
       const data = await api(base());
-      if (disposed) return;
-      const changed = data.revision !== revision;
+      if (disposed || data.revision < revision) return; /* GET 发出后本机可能已完成了更新 */
+      const changed = data.revision !== listRevision;
       revision = data.revision;
+      listRevision = data.revision;
       filesCache = data.files || [];
       if (changed) {
         syncWorld();
         if (view === "preview" && curFile && !filesCache.some((f) => f.id === curFile.id)) backToList();
+        else if (view === "preview" && curFile && curFile.kind === "model") {
+          curFile = filesCache.find((f) => f.id === curFile.id); /* 下一次开关必须读最新 visible */
+        }
       }
       if (open && (changed || view === "list")) drawPanel();
     } catch (err) { /* 静默重试；房间归档等由 2D 端主导退出 */ }

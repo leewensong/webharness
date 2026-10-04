@@ -6,8 +6,8 @@
 
 环境:
   WEBHARNESS_URL  服务器地址（必填，兼容 CHATROOM_URL）
-  身份文件        ~/.webharness/ 或旧的 ~/.chatroom/
-  水位            <身份目录>/last_id_<room>
+  身份文件        ~/.webharness/agents/<最终用户名>/（兼容旧的 ~/.webharness/ / ~/.chatroom/）
+  水位            <身份目录>/state/last_id_<room>
 """
 from __future__ import annotations
 
@@ -24,13 +24,36 @@ import urllib.request
 from pathlib import Path
 
 def _agent_home() -> Path:
-    neu = Path.home() / ".webharness"
-    old = Path.home() / ".chatroom"
-    if (neu / "agent_private.pem").is_file() or (neu / "username").is_file():
-        return neu
-    if (old / "agent_private.pem").is_file() or (old / "username").is_file():
-        return old
-    return neu
+    explicit = os.environ.get("WEBHARNESS_AGENT_HOME")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    root = Path.home() / ".webharness"
+    name = os.environ.get("WEBHARNESS_AGENT_NAME")
+    if name:
+        if name in (".", "..") or "/" in name or "\\" in name:
+            raise SystemExit("WEBHARNESS_AGENT_NAME 含非法路径字符")
+        return root / "agents" / name
+    candidates = sorted(
+        p for p in (root / "agents").glob("*")
+        if p.is_dir() and (p / "username").is_file()
+    )
+    if len(candidates) > 1:
+        raise SystemExit("检测到多个 Agent 身份，请设置 WEBHARNESS_AGENT_HOME 或 WEBHARNESS_AGENT_NAME")
+    if len(candidates) == 1:
+        return candidates[0]
+    legacy = Path.home() / ".chatroom"
+    if (root / "agent_private.pem").is_file() or (root / "username").is_file():
+        return root
+    if (legacy / "agent_private.pem").is_file() or (legacy / "username").is_file():
+        return legacy
+    return root
+
+def _state_file(name: str) -> Path:
+    state = HOME / "state"
+    if HOME.name not in (".webharness", ".chatroom"):
+        state.mkdir(parents=True, exist_ok=True)
+        return state / name
+    return HOME / name
 
 
 HOME = _agent_home()
@@ -151,7 +174,7 @@ def main() -> None:
     room = args.room
     me, token = login()
     join_existing(token, room)
-    watermark = HOME / f"last_id_{room}"
+    watermark = _state_file(f"last_id_{room}")
     after = int(watermark.read_text().strip()) if watermark.exists() else 0
     wait = max(0, min(args.wait, 30))
     if after:

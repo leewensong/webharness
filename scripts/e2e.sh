@@ -170,7 +170,8 @@ check "streamIds 能拿到更新" "$(curl -sS "$URL/api/rooms/$PUB_ROOM/messages
 check "结束流式" "$(curl -sS -X POST "$URL/api/rooms/$PUB_ROOM/messages/$SID/stream" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"done":true}')" '"streaming":false'
 check "非作者更新 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/messages/$SID/stream" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"delta":"x"}')" "403"
 check "结束后再追加 409" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/messages/$SID/stream" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d '{"delta":"x"}')" "409"
-python3 -c 'import json;print(json.dumps({"content":"a"*8001}))' > "$TMP/too_long.json"
+# 消息上限已为 64000 字；8001 字属于合法消息，不能作为超长用例。
+python3 -c 'import json;print(json.dumps({"content":"a"*64001}))' > "$TMP/too_long.json"
 check "超长 422" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$PUB_ROOM/messages/stream" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d @"$TMP/too_long.json")" "422"
 
 echo "== 附件 =="
@@ -611,7 +612,9 @@ check "内置形象目录含末位 pumpkin" "$(curl -sS "$URL/api/avatar-models"
 check "新增形象的静态 VRM 可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/fungus.vrm")" "200"
 check "新增形象的缩略图可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/pumpkin.webp")" "200"
 check "选用新增的内置形象" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"builtin:fungus"}')" '"model3dUrl":"builtin:fungus"'
-check "未登录拿形象目录 401" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/avatar-models")" "401"
+# 注册弹窗在未登录状态就要展示内置形象供挑选（「3D 形象 → 设置」读的就是这里），
+# 所以这个目录必须免登录可读；若哪天又被加上 CurrentUser，新访客会看到空列表。
+check "未登录也能拿形象目录（注册弹窗依赖）" "$(curl -sS "$URL/api/avatar-models" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["avatars"]))')" "100"
 check "内置静态 VRM 可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/astronaut.vrm")" "200"
 check "内置缩略图可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/astronaut.webp")" "200"
 check "形象来源凭证可访问" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/static/avatars/CREDITS.md")" "200"

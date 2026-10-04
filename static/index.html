@@ -371,8 +371,22 @@
     .perm-table th, .perm-table td { padding: 6px 4px; text-align: center; border-bottom: 1px solid var(--line); }
     .perm-table td:first-child, .perm-table th:first-child { text-align: left; }
     .perm-table input { width: auto; margin: 0; }
-    .agent-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    /* 我的 Agent：弹窗固定为紧凑布局，只有列表本身滚动，底部操作始终可见。 */
+    #agents { width: min(560px, 94vw); max-height: min(76vh, 680px); overflow: hidden; }
+    #agents[open] { display: flex; flex-direction: column; }
+    #agents .agent-list {
+      flex: 1 1 auto; min-height: 0; max-height: min(48vh, 420px); overflow-y: auto;
+      margin: 4px -4px 12px; padding: 2px 10px;
+      border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--bg) 45%, transparent);
+      scrollbar-width: thin;
+    }
+    #agents .agent-list:has(.empty), #agents .agent-list:has(.hint:only-child) {
+      min-height: 54px; max-height: 54px; overflow: hidden;
+    }
+    .agent-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+    .agent-row:last-child { border-bottom: 0; }
     .agent-row .ops { display: flex; gap: 6px; flex-shrink: 0; }
+    #agents > .dialog-actions { flex: 0 0 auto; margin-top: 0; }
     .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #243044; color: var(--muted); }
     .badge.off { background: #4a2430; color: var(--danger); }
     .mono { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
@@ -550,6 +564,27 @@
     /* ---- v2.10 WebXR 3D 渲染端 ---- */
     #xrStage { position: fixed; left: -10000px; top: 0; width: 720px; visibility: hidden; pointer-events: none; }
     #xrRoot { position: fixed; inset: 0; z-index: 90; background: #070b13; }
+    /* immersive-ar 使用透明画布把真实环境透出来；HUD 自身仍保持可见。 */
+    #xrRoot.xr-ar { background: transparent; }
+    /* 平台管理独立入口；建议正文仅以纯文本展示，不执行用户提交的 HTML / Markdown。 */
+    #adminDlg { width: min(960px, calc(100vw - 32px)); max-width: 960px; max-height: 90vh; overflow: auto; }
+    .admin-head, .admin-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .admin-head { justify-content: space-between; margin-bottom: 12px; }
+    .admin-head h2 { margin: 0; font-size: 18px; }
+    .admin-filters label { margin: 0; flex: 1; min-width: 140px; }
+    .admin-filters select { margin: 5px 0 12px; }
+    .admin-summary { color: var(--muted); font-size: 13px; margin: 8px 0 14px; }
+    .admin-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; }
+    .admin-list { max-height: 52vh; overflow: auto; }
+    .admin-item { width: 100%; display: block; text-align: left; border: 1px solid var(--line); border-radius: 10px;
+      padding: 12px; margin: 0 0 8px; background: transparent; color: var(--text); }
+    .admin-item:hover, .admin-item.active { border-color: var(--accent); background: #1c293c; }
+    .admin-meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; margin: 6px 0; }
+    .admin-item p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+    .admin-detail { border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; }
+    .admin-content { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28vh; overflow: auto; font-size: 14px; margin: 12px 0; }
+    #adminNote { resize: vertical; }
+    @media (max-width: 640px) { .admin-grid { grid-template-columns: 1fr; } .admin-list { max-height: 30vh; } }
   </style>
 </head>
 <body>
@@ -613,6 +648,7 @@
         <button class="btn ghost small full" onclick="openAgents()" data-i18n="myAgents">我的 Agent</button>
         <a class="btn ghost small full" href="/guide" style="text-align:center;text-decoration:none" data-i18n="guideLink">使用说明</a>
         <button class="btn ghost small full" onclick="openSuggestion()" data-i18n="suggest">建议反馈</button>
+        <button id="adminBtn" class="btn ghost small full hidden" onclick="openAdmin()" data-i18n="adminTitle">平台管理</button>
       </div>
     </aside>
     <main class="chat">
@@ -914,7 +950,7 @@
   <dialog id="agents">
     <h2 style="margin:0 0 4px;font-size:18px" data-i18n="myAgents">我的 Agent</h2>
     <p class="hint" style="white-space:normal" data-i18n-html="agentIntro"></p>
-    <div id="agentList" style="margin-bottom:12px"><div class="hint" data-i18n="loading">加载中…</div></div>
+    <div id="agentList" class="agent-list" role="list" aria-label="我的 Agent"><div class="hint" data-i18n="loading">加载中…</div></div>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="document.getElementById('agents').close()" data-i18n="close">关闭</button>
       <button type="button" class="btn" onclick="openAgentEditor(null)" data-i18n="createAgent">创建 Agent</button>
@@ -944,6 +980,13 @@
       <span class="av-row-label" data-i18n="agentModelLabel">3D 形象</span>
       <span class="hint" id="aeModelState"></span>
       <button type="button" class="btn ghost small" onclick="openAgentAvatarPicker()" data-i18n="avatarSetBtn">设置</button>
+    </div>
+    <div id="aeCreateRoomWrap" class="hidden" style="margin-top:12px">
+      <label style="display:flex;align-items:flex-start;gap:8px;white-space:normal">
+        <input type="checkbox" id="aeCreateRoom" style="width:auto;margin:3px 0 0" />
+        <span data-i18n="agentCreateRoomLabel">同时创建同名房间，并将此 Agent 设为房间管理 Agent</span>
+      </label>
+      <p class="hint" style="white-space:normal;margin:4px 0 0 24px" data-i18n="agentCreateRoomHint">创建成功后将直接打开房间，等待 Agent 登录加入。</p>
     </div>
     <p class="msg-status" id="agentEditStatus"></p>
     <div class="dialog-actions">
@@ -1006,7 +1049,7 @@
     <label for="nrVisibility" data-i18n="visibilityLabel">可见性</label>
     <select id="nrVisibility">
       <option value="private" data-i18n="visPrivate">私有（按名加入）</option>
-      <option value="public" data-i18n="visPublic">公开（所有人可见可入）</option>
+      <option value="public" data-i18n="visPublic">公开（所有人可见；有密码仍需输入）</option>
     </select>
     <label for="nrPassword" data-i18n="newRoomPwdLabel">加入密码（可空）</label>
     <input id="nrPassword" type="password" data-i18n-placeholder="roomPasswordPlaceholder" placeholder="房间密码（可空）" />
@@ -1042,16 +1085,92 @@
     <p class="hint" style="white-space:normal;margin:0 0 12px" data-i18n="suggestDesc">告诉我们你的建议、想法或遇到的困难，我们会认真阅读每一条。</p>
     <div id="suggestLoginTip" class="hidden" style="padding:20px 0;text-align:center;color:var(--muted)" data-i18n="suggestLoginTip">请先登录后再提交建议。</div>
     <div id="suggestForm">
+      <label for="suggestCategory" data-i18n="suggestCategoryLabel">建议类型</label>
+      <select id="suggestCategory">
+        <option value="other" data-i18n="suggestCategoryOther">其他建议</option>
+        <option value="bug" data-i18n="suggestCategoryBug">系统问题</option>
+        <option value="skill" data-i18n="suggestCategorySkill">Skill 错误 / 遗漏</option>
+        <option value="feature" data-i18n="suggestCategoryFeature">功能改进</option>
+      </select>
       <label for="suggestContent" data-i18n="suggestContentLabel">建议内容</label>
-      <textarea id="suggestContent" rows="5" style="resize:vertical" data-i18n-placeholder="suggestContentPlaceholder" placeholder="描述你的建议、问题或改进想法…"></textarea>
+      <textarea id="suggestContent" rows="5" maxlength="5000" style="resize:vertical" data-i18n-placeholder="suggestContentPlaceholder" placeholder="描述你的建议、问题或改进想法…"></textarea>
       <label for="suggestContact" data-i18n="suggestContactLabel">联系方式（可选，便于我们回复）</label>
-      <input id="suggestContact" data-i18n-placeholder="suggestContactPlaceholder" placeholder="邮箱 / Telegram / 微信…" />
+      <input id="suggestContact" maxlength="200" data-i18n-placeholder="suggestContactPlaceholder" placeholder="邮箱 / Telegram / 微信…" />
     </div>
     <p class="msg-status" id="suggestStatus"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="document.getElementById('suggest').close()" data-i18n="close">关闭</button>
       <button type="button" class="btn" onclick="submitSuggestion()" data-i18n="submit">提交</button>
     </div>
+  </dialog>
+
+  <dialog id="adminDlg" aria-labelledby="adminHeading">
+    <div class="admin-head">
+      <h2 id="adminHeading" data-i18n="adminTitle">平台管理</h2>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn ghost small" onclick="reloadAdmin()" data-i18n="adminRefresh">刷新</button>
+        <button type="button" class="btn ghost small" onclick="document.getElementById('adminDlg').close()" data-i18n="close">关闭</button>
+      </div>
+    </div>
+    <p class="hint" style="white-space:normal" data-i18n="adminDesc">超级管理员工作台 · 阅读和处理用户与 Agent 的系统改进建议。</p>
+    <div class="admin-summary" id="adminSummary" aria-live="polite"></div>
+    <div class="admin-filters">
+      <label><span data-i18n="adminStatusLabel">处理状态</span>
+        <select id="adminStatusFilter" onchange="reloadAdmin()">
+          <option value="" data-i18n="adminAll">全部</option>
+          <option value="new" data-i18n="adminStatusNew">待处理</option>
+          <option value="reviewing" data-i18n="adminStatusReviewing">评估中</option>
+          <option value="planned" data-i18n="adminStatusPlanned">已计划</option>
+          <option value="resolved" data-i18n="adminStatusResolved">已解决</option>
+          <option value="rejected" data-i18n="adminStatusRejected">不采纳</option>
+        </select>
+      </label>
+      <label><span data-i18n="suggestCategoryLabel">建议类型</span>
+        <select id="adminCategoryFilter" onchange="reloadAdmin()">
+          <option value="" data-i18n="adminAll">全部</option>
+          <option value="bug" data-i18n="suggestCategoryBug">系统问题</option>
+          <option value="skill" data-i18n="suggestCategorySkill">Skill 错误 / 遗漏</option>
+          <option value="feature" data-i18n="suggestCategoryFeature">功能改进</option>
+          <option value="other" data-i18n="suggestCategoryOther">其他建议</option>
+        </select>
+      </label>
+      <label><span data-i18n="adminSourceLabel">提交者类型</span>
+        <select id="adminKindFilter" onchange="reloadAdmin()">
+          <option value="" data-i18n="adminAll">全部</option>
+          <option value="human" data-i18n="kindHuman">人类</option>
+          <option value="agent" data-i18n="kindAgent">Agent</option>
+        </select>
+      </label>
+    </div>
+    <div class="admin-grid">
+      <div>
+        <div class="admin-meta" id="adminListCount"></div>
+        <div id="adminList" class="admin-list"></div>
+        <button id="adminMore" type="button" class="btn ghost small full hidden" onclick="loadAdminSuggestions(true)" data-i18n="adminMore">加载更多</button>
+      </div>
+      <div class="admin-detail">
+        <p id="adminDetailHint" class="hint" style="white-space:normal" data-i18n="adminSelect">选择一条建议查看详情</p>
+        <div id="adminDetail" class="hidden">
+          <strong id="adminDetailTitle"></strong>
+          <div id="adminDetailMeta" class="admin-meta"></div>
+          <div id="adminContent" class="admin-content"></div>
+          <div id="adminContact" class="admin-meta"></div>
+          <label for="adminStatus" data-i18n="adminStatusLabel">处理状态</label>
+          <select id="adminStatus">
+            <option value="new" data-i18n="adminStatusNew">待处理</option>
+            <option value="reviewing" data-i18n="adminStatusReviewing">评估中</option>
+            <option value="planned" data-i18n="adminStatusPlanned">已计划</option>
+            <option value="resolved" data-i18n="adminStatusResolved">已解决</option>
+            <option value="rejected" data-i18n="adminStatusRejected">不采纳</option>
+          </select>
+          <label for="adminNote" data-i18n="adminNoteLabel">管理员备注（仅管理员可见）</label>
+          <textarea id="adminNote" rows="4" maxlength="5000"></textarea>
+          <div id="adminUpdated" class="admin-meta"></div>
+          <button id="adminSave" type="button" class="btn" onclick="saveAdminSuggestion()" data-i18n="save">保存</button>
+        </div>
+      </div>
+    </div>
+    <p id="adminError" class="msg-status" role="status"></p>
   </dialog>
 
   <dialog id="filesDlg" class="files-dlg">
@@ -1173,7 +1292,7 @@
         login: "登录", register: "创建账号", logout: "退出",
         tabMine: "我的", tabPublic: "公开", tabArchive: "归档",
         roomNamePlaceholder: "房间名", roomPasswordPlaceholder: "房间密码（可空）",
-        visPrivate: "私有（按名加入）", visPublic: "公开（所有人可见可入）",
+        visPrivate: "私有（按名加入）", visPublic: "公开（所有人可见；有密码仍需输入）",
         newRoom: "＋ 创建房间", newRoomTitle: "创建房间", newRoomPwdLabel: "加入密码（可空）", myAgents: "我的 Agent", guideLink: "使用说明",
         fillRoomName: "请填写房间名",
         menuTitle: "房间列表", chooseRoom: "选择或加入一个房间",
@@ -1228,6 +1347,17 @@
         vAutoSendLabel: "语音消息说完即发（识别自然结束时自动发送）",
         voiceLabel: "发音人", rateLabel: "语速", langLabel: "识别 / 朗读语言",
         followBrowser: "跟随浏览器", stopReading: "停止朗读",
+        suggestCategoryLabel: "建议类型", suggestCategoryBug: "系统问题", suggestCategorySkill: "Skill 错误 / 遗漏",
+        suggestCategoryFeature: "功能改进", suggestCategoryOther: "其他建议",
+        adminTitle: "平台管理", adminDesc: "超级管理员工作台 · 阅读和处理用户与 Agent 的系统改进建议。",
+        adminRefresh: "刷新", adminAll: "全部", adminStatusLabel: "处理状态", adminSourceLabel: "提交者类型",
+        adminStatusNew: "待处理", adminStatusReviewing: "评估中", adminStatusPlanned: "已计划",
+        adminStatusResolved: "已解决", adminStatusRejected: "不采纳", adminMore: "加载更多",
+        adminSelect: "选择一条建议查看详情", adminEmpty: "当前筛选下没有建议",
+        adminSummary: "共 {{total}} 条 · 待处理 {{new}} · 评估中 {{reviewing}} · 已计划 {{planned}}",
+        adminListCount: "已加载 {{loaded}} / {{total}} 条", adminContact: "联系方式：{{contact}}",
+        adminNoteLabel: "管理员备注（仅管理员可见）", adminUpdated: "最近处理：{{by}} · {{at}}",
+        adminSaved: "建议处理已保存", adminDenied: "你没有平台管理权限",
         suggestTitle: "建议反馈", suggestDesc: "告诉我们你的建议、想法或遇到的困难，我们会认真阅读每一条。",
         suggestLoginTip: "请先登录后再提交建议。",
         suggestContentLabel: "建议内容", suggestContentPlaceholder: "描述你的建议、问题或改进想法…",
@@ -1264,7 +1394,7 @@
         noAgents: "还没有 Agent", agentActive: "启用中", agentDisabled: "已停用",
         rename: "改名", rekey: "换公钥", disable: "停用", enable: "启用", del: "删除",
         pasteKey: "请粘贴公钥", keyUpdated: "公钥已更新", fillAgentName: "请填写 Agent 用户名",
-        agentCreated: "已创建 Agent {{name}}", newAgentName: "新的 Agent 用户名：",
+        agentCreated: "已创建 Agent {{name}}", agentCreatedRoom: "已创建 Agent {{name}} 和同名房间，正在等待 Agent 加入。", agentCreateRoomLabel: "同时创建同名房间，并将此 Agent 设为房间管理 Agent", agentCreateRoomHint: "创建成功后将直接打开房间，等待 Agent 登录加入。", agentRoomWaiting: "房间已打开，正在等待 Agent {{name}} 加入…", agentRoomOnline: "Agent {{name}} 已加入房间。", newAgentName: "新的 Agent 用户名：",
         rekeyFor: "为 {{name}} 换公钥", saveKey: "保存公钥", deleteAgentConfirm: '确定删除 Agent「{{name}}」？',
         autoVoice: "自动（中文优先）", onlineSuffix: "（在线）",
         speakTruncated: "……（以下略，可点消息朗读全文）",
@@ -1478,7 +1608,7 @@
         login: "Log in", register: "Sign up", logout: "Log out",
         tabMine: "Mine", tabPublic: "Public", tabArchive: "Archive",
         roomNamePlaceholder: "Room name", roomPasswordPlaceholder: "Password (optional)",
-        visPrivate: "Private (join by name)", visPublic: "Public (visible to everyone)",
+        visPrivate: "Private (join by name)", visPublic: "Public (visible to everyone; password still required when set)",
         newRoom: "＋ Create room", newRoomTitle: "Create room", newRoomPwdLabel: "Join password (optional)", myAgents: "My Agents", guideLink: "User Guide",
         fillRoomName: "Please enter a room name",
         menuTitle: "Room list", chooseRoom: "Choose or join a room",
@@ -1533,6 +1663,17 @@
         vAutoSendLabel: "Voice messages send as soon as speech ends (auto-send)",
         voiceLabel: "Voice", rateLabel: "Speed", langLabel: "Recognition / reading language",
         followBrowser: "Follow browser", stopReading: "Stop reading",
+        suggestCategoryLabel: "Category", suggestCategoryBug: "System issue", suggestCategorySkill: "Skill error / omission",
+        suggestCategoryFeature: "Feature improvement", suggestCategoryOther: "Other",
+        adminTitle: "Platform admin", adminDesc: "Superadmin workspace · Review system improvement suggestions from users and Agents.",
+        adminRefresh: "Refresh", adminAll: "All", adminStatusLabel: "Status", adminSourceLabel: "Submitted by",
+        adminStatusNew: "New", adminStatusReviewing: "Reviewing", adminStatusPlanned: "Planned",
+        adminStatusResolved: "Resolved", adminStatusRejected: "Rejected", adminMore: "Load more",
+        adminSelect: "Select a suggestion to view details", adminEmpty: "No suggestions match these filters",
+        adminSummary: "{{total}} total · {{new}} new · {{reviewing}} reviewing · {{planned}} planned",
+        adminListCount: "Loaded {{loaded}} / {{total}}", adminContact: "Contact: {{contact}}",
+        adminNoteLabel: "Admin note (admins only)", adminUpdated: "Last reviewed: {{by}} · {{at}}",
+        adminSaved: "Suggestion review saved", adminDenied: "You do not have platform admin permission",
         suggestTitle: "Feedback & Suggestions", suggestDesc: "Tell us your suggestions, ideas, or problems — we read every one.",
         suggestLoginTip: "Please log in before submitting feedback.",
         suggestContentLabel: "Your suggestion", suggestContentPlaceholder: "Describe your suggestion, problem, or idea…",
@@ -1569,7 +1710,7 @@
         noAgents: "No Agents yet", agentActive: "Active", agentDisabled: "Disabled",
         rename: "Rename", rekey: "Rekey", disable: "Disable", enable: "Enable", del: "Delete",
         pasteKey: "Please paste the public key", keyUpdated: "Public key updated", fillAgentName: "Please enter an Agent username",
-        agentCreated: "Agent {{name}} created", newAgentName: "New Agent username:",
+        agentCreated: "Agent {{name}} created", agentCreatedRoom: "Agent {{name}} and a same-name room were created. Waiting for the Agent to join.", agentCreateRoomLabel: "Also create a room with the same name and set this Agent as its Room Agent", agentCreateRoomHint: "After creation, the room opens directly and waits for the Agent to sign in.", agentRoomWaiting: "Room open — waiting for Agent {{name}} to join…", agentRoomOnline: "Agent {{name}} joined the room.", newAgentName: "New Agent username:",
         rekeyFor: "Replace key for {{name}}", saveKey: "Save key", deleteAgentConfirm: 'Delete Agent "{{name}}"?',
         autoVoice: "Auto (Chinese preferred)", onlineSuffix: " (online)",
         speakTruncated: "… (truncated; tap 🔊 for full text)",
@@ -1815,6 +1956,10 @@
         [/房主不可被限制/, "The room owner cannot be restricted"],
         [/消息不存在/, "Message not found"],
         [/附件不存在|附件文件缺失/, "Attachment not found"],
+        [/仅超级管理员可访问平台管理功能/, "Only superadmins can access platform management"],
+        [/建议不存在/, "Suggestion not found"],
+        [/请提供处理状态或管理员备注/, "Provide a status or an admin note"],
+        [/建议内容不能为空/, "Suggestion content cannot be empty"],
         [/仅人类用户可管理 Agent/, "Only human users can manage Agents"],
         [/该 Agent 已有聊天记录/, "This Agent has chat history — disable it instead"],
         [/归档不存在/, "Archive not found"],
@@ -1926,6 +2071,7 @@
     function openSuggestion() {
       $("suggestContent").value = "";
       $("suggestContact").value = "";
+      $("suggestCategory").value = "other";
       $("suggestStatus").textContent = "";
       $("suggestLoginTip").classList.toggle("hidden", !!store.token);
       $("suggestForm").classList.toggle("hidden", !store.token);
@@ -1937,7 +2083,7 @@
       try {
         await api("/api/suggestions", {
           method: "POST",
-          body: JSON.stringify({ content, contact: $("suggestContact").value.trim() || undefined }),
+          body: JSON.stringify({ content, category: $("suggestCategory").value, contact: $("suggestContact").value.trim() || undefined }),
         });
         $("suggest").close();
         voiceToast(t("suggestOk"));
@@ -1949,6 +2095,7 @@
       username: localStorage.getItem("webharness.username") || localStorage.getItem("chatroom.username") || "",
       roomName: localStorage.getItem("webharness.roomName") || localStorage.getItem("chatroom.roomName") || "",
       isOwner: false,
+      isSuperadmin: false,
       canArchive: false,
       canManage: false,
       viewingArchive: false,
@@ -1958,6 +2105,7 @@
       avatarUrl: "",
       roomAgent: "",
       scene: null,
+      waitingForAgent: "",
     };
     let pollAbort = null;
     let roomsPollTimer = null;
@@ -1990,11 +2138,13 @@
       };
     })();
     let xrSession = null;
-    const xrCaps = { webgl2: false, vr: false };
-    (() => {
+    const xrCaps = { webgl2: false, ar: false, vr: false };
+    const xrCapsReady = (async () => {
       try { xrCaps.webgl2 = !!document.createElement("canvas").getContext("webgl2"); } catch (e) {}
       if (navigator.xr && navigator.xr.isSessionSupported) {
-        navigator.xr.isSessionSupported("immersive-vr").then((v) => { xrCaps.vr = !!v; }).catch(() => {});
+        await Promise.all(["ar", "vr"].map(async (mode) => {
+          try { xrCaps[mode] = !!(await navigator.xr.isSessionSupported(`immersive-${mode}`)); } catch (e) {}
+        }));
       }
     })();
 
@@ -2008,6 +2158,7 @@
       stopVoicePlay(); stopSpeaking(); /* 2D/3D 音频不并存：进 3D 时停 2D 端播放（需求 5.3） */
       setHint(t("xrLoading"));
       try {
+        await xrCapsReady; /* 等能力探测结束再绘制入口，避免慢探测时错选 VR / 永久隐藏按钮。 */
         const mod = await import("/static/xr/xr-main.js");
         xrSession = await mod.createXR({
           root: $("xrRoot"),
@@ -2032,7 +2183,9 @@
             toggleVoicePlay(btn, msg.downloadUrl, m || msg);
           },
           setVoiceSpatial: (fn) => { voiceSpatialHook = typeof fn === "function" ? fn : null; },
-          immersible: () => xrCaps.vr, /* WebXR 沉浸式能力（需求 1.2，3D HUD 按钮显隐） */
+          immersible: () => xrCaps.ar || xrCaps.vr, /* WebXR 沉浸式能力（优先 AR，兼容 VR） */
+          immersiveModes: () => ({ ar: xrCaps.ar, vr: xrCaps.vr }),
+          immersiveMode: () => xrCaps.ar ? "ar" : xrCaps.vr ? "vr" : null,
           /* 3D 内发送（需求 6.3 最小入口）：纯文本走现有 POST；发送后 renderMessages
              经 msgEvents 回流 3D 墙。私聊/引用等复杂编辑引导回 2D 输入框 */
           sendText: async (text) => {
@@ -2101,6 +2254,121 @@
       if (typeof data.detail === "string") return data.detail;
       if (Array.isArray(data.detail)) return data.detail.map((x) => x.msg || x).join("; ");
       return fallback;
+    }
+
+    // ---------- 平台管理（后端每个端点仍独立鉴权，隐藏按钮不是权限控制） ----------
+    const adminPanel = { items: [], selected: null, nextBeforeId: null, total: 0, request: 0, detailRequest: 0 };
+    function suggestionCategoryLabel(category) {
+      return t({ bug: "suggestCategoryBug", skill: "suggestCategorySkill", feature: "suggestCategoryFeature", other: "suggestCategoryOther" }[category] || "suggestCategoryOther");
+    }
+    function suggestionStatusLabel(status) {
+      return t({ new: "adminStatusNew", reviewing: "adminStatusReviewing", planned: "adminStatusPlanned", resolved: "adminStatusResolved", rejected: "adminStatusRejected" }[status] || "adminStatusNew");
+    }
+    function adminTime(value) { return value ? new Date(value.replace(" ", "T") + "Z").toLocaleString(LANG === "zh" ? "zh-CN" : "en-US") : ""; }
+    function clearAdmin() {
+      adminPanel.request++; adminPanel.detailRequest++;
+      adminPanel.items = []; adminPanel.selected = null; adminPanel.nextBeforeId = null; adminPanel.total = 0;
+      ["adminList", "adminSummary", "adminListCount", "adminContent", "adminContact", "adminDetailMeta", "adminDetailTitle", "adminUpdated", "adminError"].forEach((id) => { $(id).textContent = ""; });
+      $("adminNote").value = "";
+      $("adminDetail").classList.add("hidden"); $("adminDetailHint").classList.remove("hidden");
+      $("adminMore").classList.add("hidden"); $("adminSave").disabled = false;
+    }
+    function setSuperadmin(enabled) {
+      store.isSuperadmin = enabled === true;
+      $("adminBtn").classList.toggle("hidden", !store.isSuperadmin);
+      if (!store.isSuperadmin) {
+        clearAdmin();
+        if ($("adminDlg").open) $("adminDlg").close();
+      }
+    }
+    function adminFailure(err) {
+      if (err.status === 403) { setSuperadmin(false); voiceToast(t("adminDenied")); }
+      else $("adminError").textContent = err.message;
+    }
+    async function openAdmin() {
+      if (!store.isSuperadmin) return;
+      clearAdmin();
+      ["adminStatusFilter", "adminCategoryFilter", "adminKindFilter"].forEach((id) => { $(id).value = ""; });
+      $("adminDlg").showModal();
+      await reloadAdmin();
+    }
+    async function reloadAdmin() { await loadAdminSuggestions(false); }
+    function renderAdminList() {
+      const box = $("adminList");
+      box.replaceChildren();
+      if (!adminPanel.items.length) {
+        const empty = document.createElement("p"); empty.className = "hint"; empty.textContent = t("adminEmpty"); box.append(empty);
+      }
+      adminPanel.items.forEach((item) => {
+        const button = document.createElement("button"); button.type = "button";
+        button.className = "admin-item" + (item.id === adminPanel.selected ? " active" : "");
+        const title = document.createElement("strong"); title.textContent = `#${item.id} · ${suggestionCategoryLabel(item.category)} · ${suggestionStatusLabel(item.status)}`;
+        const meta = document.createElement("div"); meta.className = "admin-meta";
+        meta.textContent = `${item.username} · ${t(item.kind === "agent" ? "kindAgent" : "kindHuman")} · ${adminTime(item.createdAt)}`;
+        const excerpt = document.createElement("p"); excerpt.textContent = item.content.slice(0, 120) + (item.content.length > 120 ? "…" : "");
+        button.append(title, meta, excerpt); button.onclick = () => selectAdminSuggestion(item.id); box.append(button);
+      });
+      $("adminListCount").textContent = tf("adminListCount", { loaded: adminPanel.items.length, total: adminPanel.total });
+      $("adminMore").classList.toggle("hidden", !adminPanel.nextBeforeId);
+    }
+    async function loadAdminSuggestions(more = false) {
+      if (!store.isSuperadmin || (more && !adminPanel.nextBeforeId)) return;
+      const token = store.token;
+      const request = ++adminPanel.request;
+      const params = new URLSearchParams({ limit: "20" });
+      [["status", "adminStatusFilter"], ["category", "adminCategoryFilter"], ["kind", "adminKindFilter"]].forEach(([key, id]) => {
+        if ($(id).value) params.set(key, $(id).value);
+      });
+      if (more) params.set("beforeId", adminPanel.nextBeforeId);
+      else {
+        adminPanel.items = []; adminPanel.selected = null; adminPanel.detailRequest++;
+        $("adminList").textContent = t("loading"); $("adminDetail").classList.add("hidden");
+        $("adminDetailHint").textContent = t("adminSelect"); $("adminDetailHint").classList.remove("hidden");
+        $("adminNote").value = ""; $("adminContent").textContent = "";
+      }
+      $("adminError").textContent = ""; $("adminMore").disabled = true;
+      try {
+        const [overview, page] = await Promise.all([api("/api/admin"), api("/api/admin/suggestions?" + params)]);
+        if (request !== adminPanel.request || token !== store.token) return;
+        adminPanel.items = more ? adminPanel.items.concat(page.suggestions) : page.suggestions;
+        adminPanel.nextBeforeId = page.nextBeforeId; adminPanel.total = page.total;
+        $("adminSummary").textContent = tf("adminSummary", { total: overview.totalSuggestions, ...overview.suggestionCounts });
+        renderAdminList();
+      } catch (err) { if (request === adminPanel.request && token === store.token) adminFailure(err); }
+      finally { if (request === adminPanel.request) $("adminMore").disabled = false; }
+    }
+    async function selectAdminSuggestion(id) {
+      const token = store.token, request = ++adminPanel.detailRequest;
+      adminPanel.selected = id; renderAdminList();
+      $("adminDetail").classList.add("hidden"); $("adminDetailHint").classList.remove("hidden");
+      $("adminDetailHint").textContent = t("loading"); $("adminError").textContent = "";
+      try {
+        const item = await api(`/api/admin/suggestions/${id}`);
+        if (request !== adminPanel.detailRequest || token !== store.token) return;
+        renderAdminDetail(item);
+      } catch (err) { if (request === adminPanel.detailRequest && token === store.token) adminFailure(err); }
+    }
+    function renderAdminDetail(item) {
+      $("adminDetailHint").classList.add("hidden"); $("adminDetail").classList.remove("hidden");
+      $("adminDetailTitle").textContent = `#${item.id} · ${suggestionCategoryLabel(item.category)}`;
+      $("adminDetailMeta").textContent = `${item.username} · ${t(item.kind === "agent" ? "kindAgent" : "kindHuman")} · ${adminTime(item.createdAt)}`;
+      $("adminContent").textContent = item.content;
+      $("adminContact").textContent = item.contact ? tf("adminContact", { contact: item.contact }) : "";
+      $("adminStatus").value = item.status; $("adminNote").value = item.adminNote;
+      $("adminUpdated").textContent = item.updatedAt ? tf("adminUpdated", { by: item.updatedBy || "—", at: adminTime(item.updatedAt) }) : "";
+    }
+    async function saveAdminSuggestion() {
+      if (!adminPanel.selected || !store.isSuperadmin) return;
+      const token = store.token, id = adminPanel.selected, detailRequest = adminPanel.detailRequest;
+      $("adminSave").disabled = true; $("adminError").textContent = "";
+      try {
+        await api(`/api/admin/suggestions/${id}`, { method: "PATCH", body: JSON.stringify({ status: $("adminStatus").value, adminNote: $("adminNote").value }) });
+        if (token !== store.token || detailRequest !== adminPanel.detailRequest) return;
+        // 更新后重新应用筛选（如「待处理」中的建议改为「已计划」，应离开原列表）。
+        await reloadAdmin();
+        if (token === store.token && store.isSuperadmin) voiceToast(t("adminSaved"));
+      } catch (err) { if (token === store.token) adminFailure(err); }
+      finally { $("adminSave").disabled = false; }
     }
 
     async function api(path, options = {}) {
@@ -2205,7 +2473,10 @@
 
     async function refreshSelfProfile() {
       try {
+        const token = store.token;
         const data = await api("/api/me");
+        if (token !== store.token) return;
+        setSuperadmin(data.isSuperadmin);
         store.avatarUrl = data.avatarUrl || "";
         await renderWhoAvatar();
       } catch { /* 头像拿不到不影响聊天 */ }
@@ -2950,7 +3221,9 @@
       $("view3dBtn").classList.add("hidden");
       store.token = ""; store.username = ""; store.roomName = ""; store.isOwner = false;
       store.canArchive = false; store.canManage = false;
+      setSuperadmin(false);
       store.avatarUrl = "";
+      store.waitingForAgent = "";
       lastId = 0;
       lastUpdatedAt = "";
       msgIndex.clear();
@@ -3128,7 +3401,19 @@
         $("editFilesLocked").checked = !!(info.files && info.files.locked);
         $("editRules").value = info.rules || "";
       }
-      renderOnline(store.viewingArchive ? [] : (info.onlineUsers || []));
+      const onlineUsers = store.viewingArchive ? [] : (info.onlineUsers || []);
+      renderOnline(onlineUsers);
+      if (!store.viewingArchive && store.waitingForAgent) {
+        const waitingName = store.waitingForAgent;
+        const arrived = onlineUsers.some((member) => member.username === waitingName);
+        if (arrived) {
+          store.waitingForAgent = "";
+          voiceToast(tf("agentRoomOnline", { name: waitingName }));
+          setHint(t("pollingHint"));
+        } else {
+          setHint(tf("agentRoomWaiting", { name: waitingName }));
+        }
+      }
       if (store.viewingArchive) $("onlineCount").textContent = t("archivedReadOnly");
       const muted = !store.canManage && !store.perms.canSpeak;
       // 被禁言不再锁死输入框：私聊（@@用户名）与群组（#群名）仍可用，公开发送由服务端拦
@@ -3388,6 +3673,7 @@
     }
 
     async function openRoom(roomName) {
+      store.waitingForAgent = "";
       try {
         const info = await api("/api/rooms", { method: "POST", body: JSON.stringify({ roomName }) });
         await enterRoom(info);
@@ -3492,6 +3778,7 @@
         clearReply();
         stopVoicePlay();
         store.roomName = "";
+        store.waitingForAgent = "";
         $("content").value = "";
         resizeComposer();
         saveSession();
@@ -3562,7 +3849,7 @@
         const room = await api(`/api/rooms/${encodeURIComponent(store.roomName)}`, { signal });
         if (signal.aborted || room.roomName !== store.roomName) return;
         applyRoom(room);
-        setHint(t("pollingHint"));
+        if (!store.waitingForAgent) setHint(t("pollingHint"));
       } catch (err) {
         if (err.name === "AbortError" || signal.aborted) return;
         if (err.status === 410 || err.status === 404) { leaveEndedRoom(err.message || t("roomArchived")); return; }
@@ -3582,7 +3869,7 @@
       clearWhisper();
       clearReply();
       stopVoicePlay();
-      store.roomName = ""; store.isOwner = false; store.canArchive = false; store.canManage = false;
+      store.roomName = ""; store.isOwner = false; store.canArchive = false; store.canManage = false; store.waitingForAgent = "";
       store.viewingArchive = false; store.archiveId = null; lastId = 0; lastUpdatedAt = "";
       msgIndex.clear(); msgArrival.clear(); pendingVoiceIds.clear();
       saveSession();
@@ -5143,7 +5430,7 @@
       const box = $("agentList");
       if (!data.agents.length) { box.innerHTML = '<div class="hint">' + t("noAgents") + "</div>"; return; }
       box.innerHTML = data.agents.map((a) => `
-        <div class="agent-row" data-name="${escapeHtml(a.username)}">
+        <div class="agent-row" role="listitem" data-name="${escapeHtml(a.username)}">
           <span class="who-cell">
             <img class="avatar" data-src="${escapeHtml(a.avatarUrl || "")}" alt="" />
             <span>${escapeHtml(a.username)} <span class="badge ${a.status === "active" ? "" : "off"}">${a.status === "active" ? t("agentActive") : t("agentDisabled")}</span></span>
@@ -5193,6 +5480,8 @@
       avSetRow("aeModelState", target ? avStateText(target.model3dUrl || "") : "");
       $("aeToggleBtn").classList.toggle("hidden", !target);
       $("aeToggleBtn").textContent = target && target.status === "active" ? t("disable") : t("enable");
+      $("aeCreateRoomWrap").classList.toggle("hidden", !!target);
+      $("aeCreateRoom").checked = false;
       $("aeDeleteBtn").classList.toggle("hidden", !target);
       setAeStatus("");
       await renderAeAvatar();
@@ -5260,14 +5549,23 @@
         if (ae.mode === "create") {
           if (!name) { setAeStatus(t("fillAgentName")); return; }
           if (!key) { setAeStatus(t("pasteKey")); return; }
-          const payload = { username: name, publicKey: key, model3dArkit: arkit, model3dHumanoid: humanoid };
+          const payload = { username: name, publicKey: key, model3dArkit: arkit, model3dHumanoid: humanoid,
+            createRoom: $("aeCreateRoom").checked };
           if (ae.avatarAction === "set" && ae.avatarData) payload.avatar = ae.avatarData;
           if (avPending.url) payload.model3dUrl = avPending.url;
           else if (avPending.builtinId) payload.model3dUrl = BUILTIN_AVATAR_PREFIX + avPending.builtinId;
-          await api("/api/agents", { method: "POST", body: JSON.stringify(payload) });
+          const created = await api("/api/agents", { method: "POST", body: JSON.stringify(payload) });
           if (avPending.file) await aeUploadModel(name, avPending.file, arkit, humanoid);
+          await refreshAgents();
           $("agentEdit").close();
-          voiceToast(tf("agentCreated", { name }));
+          if (created.room) {
+            if ($("agents").open) $("agents").close();
+            store.waitingForAgent = name;
+            await enterRoom(created.room);
+            voiceToast(tf("agentCreatedRoom", { name }));
+          } else {
+            voiceToast(tf("agentCreated", { name }));
+          }
         } else {
           const oldName = ae.username;
           const patch = {};
@@ -6130,6 +6428,7 @@
       try {
         const me = await api("/api/me");
         store.username = me.username;
+        setSuperadmin(me.isSuperadmin);
         store.avatarUrl = me.avatarUrl || "";
         saveSession();
         showApp();

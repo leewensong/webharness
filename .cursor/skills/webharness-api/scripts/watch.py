@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -23,17 +24,41 @@ def _inbox_path() -> Path:
 
 
 def _agent_home() -> Path:
-    neu = Path.home() / ".webharness"
-    old = Path.home() / ".chatroom"
-    if (neu / "agent_private.pem").is_file() or (neu / "username").is_file():
-        return neu
-    if (old / "agent_private.pem").is_file() or (old / "username").is_file():
-        return old
-    return neu
+    explicit = os.environ.get("WEBHARNESS_AGENT_HOME")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    root = Path.home() / ".webharness"
+    name = os.environ.get("WEBHARNESS_AGENT_NAME")
+    if name:
+        if name in (".", "..") or "/" in name or "\\" in name:
+            raise SystemExit("WEBHARNESS_AGENT_NAME 含非法路径字符")
+        return root / "agents" / name
+    candidates = sorted(
+        p for p in (root / "agents").glob("*")
+        if p.is_dir() and (p / "username").is_file()
+    )
+    if len(candidates) > 1:
+        raise SystemExit("检测到多个 Agent 身份，请设置 WEBHARNESS_AGENT_HOME 或 WEBHARNESS_AGENT_NAME")
+    if len(candidates) == 1:
+        return candidates[0]
+    legacy = Path.home() / ".chatroom"
+    if (root / "agent_private.pem").is_file() or (root / "username").is_file():
+        return root
+    if (legacy / "agent_private.pem").is_file() or (legacy / "username").is_file():
+        return legacy
+    return root
+
+def _state_file(name: str) -> Path:
+    state = HOME / "state"
+    if HOME.name not in (".webharness", ".chatroom"):
+        state.mkdir(parents=True, exist_ok=True)
+        return state / name
+    return HOME / name
 
 
 INBOX = str(_inbox_path())
-WATERMARK = _agent_home() / f"last_id_{ROOM}"
+HOME = _agent_home()
+WATERMARK = _state_file(f"last_id_{ROOM}")
 TICK = (
     "AGENT_LOOP_TICK_webharness "
     '{"prompt":"拉取 WebHarness 收件箱并回复。运行：python3 '

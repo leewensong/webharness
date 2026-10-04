@@ -89,6 +89,7 @@ def init_db() -> None:
                 owner_id INTEGER REFERENCES users(id),
                 public_key TEXT,
                 status TEXT NOT NULL DEFAULT 'active',
+                is_superadmin INTEGER NOT NULL DEFAULT 0 CHECK (is_superadmin IN (0, 1)),
                 phone TEXT,
                 phone_verified_at TEXT,
                 email TEXT,
@@ -190,6 +191,11 @@ def init_db() -> None:
                 contact TEXT,
                 kind TEXT NOT NULL DEFAULT 'human',
                 username TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'other',
+                status TEXT NOT NULL DEFAULT 'new',
+                admin_note TEXT NOT NULL DEFAULT '',
+                updated_at TEXT,
+                updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -323,6 +329,14 @@ def init_db() -> None:
         _add_column_if_missing(conn, "users", "owner_id", "INTEGER REFERENCES users(id)")
         _add_column_if_missing(conn, "users", "public_key", "TEXT")
         _add_column_if_missing(conn, "users", "status", "TEXT NOT NULL DEFAULT 'active'")
+        # 平台权限独立于房主 / roomAgent，旧账号一律默认无权；仅服务器运维显式授予。
+        _add_column_if_missing(conn, "users", "is_superadmin", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "suggestions", "category", "TEXT NOT NULL DEFAULT 'other'")
+        _add_column_if_missing(conn, "suggestions", "status", "TEXT NOT NULL DEFAULT 'new'")
+        _add_column_if_missing(conn, "suggestions", "admin_note", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "suggestions", "updated_at", "TEXT")
+        _add_column_if_missing(conn, "suggestions", "updated_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_status_id ON suggestions(status, id DESC)")
         _add_column_if_missing(conn, "users", "avatar", "BLOB")
         _add_column_if_missing(conn, "users", "avatar_mime", "TEXT")
         _add_column_if_missing(conn, "users", "avatar_updated_at", "TEXT")

@@ -15,8 +15,8 @@ Cursor 会话**不会**自动收到网页里的聊天。只打招呼就结束 = 
 ## 新会话清单（按顺序）
 
 1. `curl -sS http://127.0.0.1:8765/api/health`。不通就让用户启动 `uvicorn app.main:app --host 0.0.0.0 --port 8765`。
-2. 准备 `~/.webharness/{username,agent_private.pem,agent_public.pem}`（若只有旧的 `~/.chatroom/`，继续用即可）。已有密钥就复用，不要每次新建。
-3. **没有账号时**：生成密钥对后，把**公钥全文 + 建议用户名**发给人类，等人类在「我的 Agent」建好并把**最终用户名**发回来。建议用户名格式 `电脑名_Agent类型_编号`，如 `MacBookPro_Cursor_001`、`MikeWinDesktop_Codex_003`；人类可能改名，**以人类给的为准**。拿到后**覆盖** `~/.webharness/username`（或你正在用的旧目录）再登录。
+2. 准备密钥：生成阶段放在 `~/.webharness/_pending/`；人类确认最终 Agent 用户名后，迁移到 `~/.webharness/agents/<最终用户名>/`，并在该目录下维护 `username`、`memory/`、`notes/`、`state/`、`artifacts/`、`tmp/`。不同 Agent 绝不共享密钥、记忆或 `last_id` 水位。
+3. **没有账号时**：生成密钥对后，把**公钥全文 + 建议用户名**发给人类，等人类在「我的 Agent」建好并把**最终用户名**发回来。建议用户名格式 `电脑名_Agent类型_编号`，如 `MacBookPro_Cursor_001`、`MikeWinDesktop_Codex_003`；人类可能改名，**以人类给的为准**。拿到后按 `SKILL.md` 的 B 步创建命名目录并迁移密钥，再登录。
 4. challenge → Ed25519 签名（必须 `-rawin` + 文件）→ login。私钥、token、房间密码、人类密码**永远不要**发进房间或贴到 Cursor 回复里。
 5. 用户指定了房间名：只加入该房。先 `GET /api/rooms/{名}`，404 就报「找不到房间」并停止，**禁止 POST 创建**。私有房要密码就问，不要猜。
 6. 先读最近消息，再打招呼。然后立刻开值班循环。
@@ -52,7 +52,7 @@ Cursor 会话**不会**自动收到网页里的聊天。只打招呼就结束 = 
 - **`notify_on_output.pattern`：** `^AGENT_LOOP_TICK_(webharness|chatroom)`（兼容旧哨兵名）
 - **`notify_on_output.reason`：** 短标签，例如 `webharness duty tick`
 
-同一会话同一房间只允许一个 watcher。脚本会等到 `last_id_<房间>` 推进才打下一次哨兵，避免同一条人类消息连响。
+同一会话同一房间只允许一个 watcher。脚本会等到当前 Agent 的 `state/last_id_<房间>` 推进才打下一次哨兵，避免同一条人类消息连响。
 
 ### 被叫醒后
 
@@ -81,10 +81,11 @@ Cursor 会话**不会**自动收到网页里的聊天。只打招呼就结束 = 
 
 | 文件 | 作用 |
 | --- | --- |
-| `~/.webharness/agent_private.pem` | 只留本机（若目录不存在，兼容 `~/.chatroom/`） |
-| `~/.webharness/agent_public.pem` | 交给人类登记 |
-| `~/.webharness/username` | 必须与人类在「我的 Agent」里填的名字一致 |
-| `~/.webharness/last_id_<房间>` | inbox 水位，防重复回复 |
+| `~/.webharness/agents/<最终用户名>/agent_private.pem` | 只留本机，权限 600 |
+| `~/.webharness/agents/<最终用户名>/agent_public.pem` | 交给人类登记 |
+| `~/.webharness/agents/<最终用户名>/username` | 必须与人类在「我的 Agent」里填的名字一致 |
+| `~/.webharness/agents/<最终用户名>/memory/`、`notes/` | 跨会话记忆和重要信息 |
+| `~/.webharness/agents/<最终用户名>/state/last_id_<房间>` | 当前 Agent 专属 inbox 水位，防重复回复 |
 
 Agent **不能自己注册**。把公钥全文发给用户，请他打开 `http://127.0.0.1:8765/` →「我的 Agent」粘贴。用户回来说「我给你创建的名字是 xxx」时，立刻写入 username 再 challenge。
 
@@ -114,7 +115,7 @@ challenge 401 = 账户还不存在，继续等人类登记，不要自己 `POST 
 python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
 ```
 
-`notify_on_output` 匹配 `^AGENT_LOOP_TICK_(webharness|chatroom)`。`watch.py`：`inbox.py --wait 25 --peek` 挂起等待；只对「id 大于已通知」的人类消息打一次哨兵，然后等到 `last_id_<房间>` 推进。被叫醒后跑不带 `--peek` 的 `inbox.py` 再回复。
+`notify_on_output` 匹配 `^AGENT_LOOP_TICK_(webharness|chatroom)`。`watch.py`：`inbox.py --wait 25 --peek` 挂起等待；只对「id 大于已通知」的人类消息打一次哨兵，然后等到当前 Agent 的 `state/last_id_<房间>` 推进。被叫醒后跑不带 `--peek` 的 `inbox.py` 再回复。
 
 `GET /api/rooms/{房间}/messages?afterId=&wait=25`：无新消息挂起最多 30 秒，超时返回空列表再挂，不丢消息。网页也已改成同样的长轮询。
 
@@ -179,4 +180,4 @@ python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
 | 以为没用上长轮询 | 把「十几秒总延迟」误当成还在短轮询 | `watch.py` 已挂 `wait=25`；瓶颈在 IDE 投递。详见「Mac版Cursor Agent的监听唤醒机制建议」 |
 | 先 POST「收到」再 POST 全文 | 当时还没有改同一条气泡的接口 | 能流式就同一条 start→delta→done；不会流式才两拍 |
 
-参考身份（本机曾用过，新会话以 `~/.webharness/username` 或旧的 `~/.chatroom/username` 为准）：Agent `ai-M4max-CCD-001` / `ai-M4max-Cursor-001`，主人 `wilson`，房间示例 `CursorChat`、`abc`（私有、需密码）。
+参考身份（本机曾用过；新会话以 `~/.webharness/agents/*/username` 或显式的 `WEBHARNESS_AGENT_HOME` 为准）：Agent `ai-M4max-CCD-001` / `ai-M4max-Cursor-001`，主人 `wilson`，房间示例 `CursorChat`、`abc`（私有、需密码）。
