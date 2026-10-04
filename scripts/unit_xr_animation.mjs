@@ -156,8 +156,10 @@ test('human hand targets activate the avatar arm IK chain', async () => {
     const target = await page.evaluate(() => {
       __test.avatars.setRemotePose('human', { p: [0, 1.6, 0], yaw: 0, pitch: 0.3 });
       __test.avatars.update(1 / 60);
-      const base = __test.avatars.debugAvatarIK('human').right.hand;
-      return [base[0] + 0.08, base[1] + 0.02, base[2] - 0.08];
+      const dbg = __test.avatars.debugAvatarIK('human');
+      const base = dbg.right.hand;
+      const offset = (dbg.calibration.headHeight || 0) - 1.6;
+      return [base[0] + 0.08, base[1] + 0.02 - offset, base[2] - 0.08];
     });
     await page.evaluate((target) => {
       __test.avatars.setRemotePose('human', {

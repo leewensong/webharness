@@ -256,6 +256,8 @@ export async function createXR(ctx) {
     const e = new THREE.Euler().setFromQuaternion(q, "YXZ");
     const hands = [];
     if (xrInImmersive && renderer.xr.isPresenting) {
+      const session = renderer.xr.getSession();
+      const sources = session && session.inputSources ? Array.from(session.inputSources) : [];
       for (let i = 0; i < xrControllers.length; i++) {
         const c = xrControllers[i];
         const grip = xrControllerGrips[i];
@@ -267,12 +269,15 @@ export async function createXR(ctx) {
            没有稳定的 IK 目标，看到的白块也常常像“没跟手”。 */
         const wrist = hand && hand.joints && hand.joints["wrist"];
         const source = wrist && wrist.visible ? wrist : (grip && grip.visible ? grip : c);
+        const inputSource = c.userData.inputSource || sources[i] || null;
+        const handedness = c.userData.handedness || (inputSource && inputSource.handedness) || null;
+        if (handedness) c.userData.handedness = handedness;
         source.updateMatrixWorld(true);
         source.getWorldPosition(hp);
         source.getWorldQuaternion(hq);
         if (![hp.x, hp.y, hp.z, hq.x, hq.y, hq.z, hq.w].every(Number.isFinite)) continue;
         hands.push({
-          handedness: c.userData.handedness || null,
+          handedness,
           p: [hp.x, hp.y, hp.z], q: [hq.x, hq.y, hq.z, hq.w],
         });
       }
@@ -1645,10 +1650,15 @@ export async function createXR(ctx) {
     c.add(line);
     c.userData.xrLine = line;
     c.userData.handedness = null;
+    c.userData.inputSource = null;
     c.addEventListener("connected", (ev) => {
+      c.userData.inputSource = ev && ev.data ? ev.data : null;
       c.userData.handedness = ev && ev.data && (ev.data.handedness || null);
     });
-    c.addEventListener("disconnected", () => { c.userData.handedness = null; });
+    c.addEventListener("disconnected", () => {
+      c.userData.inputSource = null;
+      c.userData.handedness = null;
+    });
     c.addEventListener("selectstart", () => onXRSelect(c));
     c.addEventListener("selectend", () => onXRSelectEnd(c));
     /* 侧握键按住说话（松开发送）——沉浸式下的快捷语音入口 */

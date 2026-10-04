@@ -77,6 +77,7 @@ const _ikWorldQ = new THREE.Quaternion();
 const _ikTmpQ = new THREE.Quaternion();
 const _headPitchQ = new THREE.Quaternion();
 const _headAxisX = new THREE.Vector3(1, 0, 0);
+const _ikHandTarget = new THREE.Vector3();
 
 const ARKIT_TO_VRM = {
   jawOpen: [["aa", 1]],
@@ -254,6 +255,17 @@ export function createAvatarSystem(opts) {
       pitch: 0,
       initialized: false,
     };
+    /* XR 的 p 是真实头部高度，而模型已经归一化到 AVATAR_H；不把真实头高
+       直接当作模型脚底高度，否则手目标会整体高出模型半米左右。 */
+    rec.headHeight = null;
+    const headNode = head || neck;
+    if (headNode) {
+      rec.root.updateMatrixWorld(true);
+      const rootPos = rec.root.getWorldPosition(new THREE.Vector3());
+      const headPos = headNode.getWorldPosition(new THREE.Vector3());
+      const h = headPos.y - rootPos.y;
+      if (Number.isFinite(h) && h > 0.5) rec.headHeight = h;
+    }
     return rec.headTracking;
   }
 
@@ -285,6 +297,7 @@ export function createAvatarSystem(opts) {
     rec.handTargetsBySide = { left: null, right: null };
     rec.armIK = null;
     rec.headTracking = null;
+    rec.headHeight = null;
     rec.ikBones.clear();
     rec.animationQueue.length = 0;
     rec.animationClip = null;
@@ -446,7 +459,8 @@ export function createAvatarSystem(opts) {
           foreArm: null, waveT: null,
           poseTarget: null, hasPose: false, handTargets: null, handMeshes: [],
           handTargetsBySide: { left: null, right: null },
-          armIK: null, headTracking: null, headPitchTarget: 0, headPoseSeen: false, ikBones: new Set(),
+          armIK: null, headTracking: null, headHeight: null, poseHeadY: null,
+          headPitchTarget: 0, headPoseSeen: false, ikBones: new Set(),
           /* Agent 逐拍骨骼：保留最新目标，渲染帧里 quaternion.slerp 趋近。 */
           remoteBoneTargets: new Map(),
           /* Agent 关键帧动画：当前 clip + 等待播放的 clip 队列。 */
@@ -549,6 +563,17 @@ export function createAvatarSystem(opts) {
     return rec.handMeshes;
   }
 
+  function handTargetWorld(rec, hand, out = _ikHandTarget) {
+    if (!hand || !Array.isArray(hand.p) || hand.p.length !== 3) return null;
+    out.set(hand.p[0], hand.p[1], hand.p[2]);
+    /* Keep the Avatar's feet/body scale while preserving the user's relative
+       hand height beneath the tracked head. */
+    if (Number.isFinite(rec.headHeight) && Number.isFinite(rec.poseHeadY)) {
+      out.y += rec.headHeight - rec.poseHeadY;
+    }
+    return out;
+  }
+
   /* 目标位姿 = 服务端最新一份；返回是否命中在场成员 */
   function setRemotePose(username, pose) {
     const name = String(username);
@@ -570,6 +595,7 @@ export function createAvatarSystem(opts) {
       rec.headPitchTarget = THREE.MathUtils.clamp(Number(pose.pitch), -Math.PI / 2, Math.PI / 2);
       rec.headPoseSeen = true;
     }
+    if (pose && pose.p && Number.isFinite(pose.p[1])) rec.poseHeadY = pose.p[1];
     const hands = Array.isArray(pose && pose.hands) ? pose.hands.filter((h) => h && Array.isArray(h.p)).slice(0, 2) : [];
     rec.handTargets = hands;
     rec.handTargetsBySide = { left: null, right: null };
@@ -827,10 +853,12 @@ export function createAvatarSystem(opts) {
           const m = rec.handMeshes[i];
           const h = hs[i];
           if (!h || !m.visible) { m.visible = false; continue; }
+          const target = handTargetWorld(rec, h);
+          if (!target) { m.visible = false; continue; }
           const k = 1 - Math.exp(-dt * 10);
-          m.position.x += (h.p[0] - m.position.x) * k;
-          m.position.y += (h.p[1] - m.position.y) * k;
-          m.position.z += (h.p[2] - m.position.z) * k;
+          m.position.x += (target.x - m.position.x) * k;
+          m.position.y += (target.y - m.position.y) * k;
+          m.position.z += (target.z - m.position.z) * k;
           if (Array.isArray(h.q) && h.q.length === 4) {
             _handQ.set(h.q[0], h.q[1], h.q[2], h.q[3]);
             m.quaternion.slerp(_handQ, k);
@@ -1040,17 +1068,17 @@ export function createAvatarSystem(opts) {
       const names = [`${side}UpperArm`, `${side}LowerArm`, `${side}Hand`];
       const animationOwnsArm = names.some((name) => rec.animationBoneNames && rec.animationBoneNames.has(name));
       const h = hands[side];
-      if (!h || !Array.isArray(h.p) || h.p.length !== 3 || animationOwnsArm
-          || !h.p.every(Number.isFinite)) {
+      const target = handTargetWorld(rec, h);
+      if (!target || animationOwnsArm || !target.toArray().every(Number.isFinite)) {
         releaseArmIK(rec, chain, dt);
         for (const name of names) rec.ikBones.delete(name);
         continue;
       }
       if (!chain.initialized) {
-        chain.target.set(h.p[0], h.p[1], h.p[2]);
+        chain.target.copy(target);
         chain.initialized = true;
       } else {
-        chain.target.lerp(_ikGoal.set(h.p[0], h.p[1], h.p[2]), k);
+        chain.target.lerp(target, k);
       }
       if (Array.isArray(h.q) && h.q.length === 4 && h.q.every(Number.isFinite)) {
         _ikWorldQ.set(h.q[0], h.q[1], h.q[2], h.q[3]).normalize();
@@ -1150,6 +1178,7 @@ export function createAvatarSystem(opts) {
       left: chainInfo(rec.armIK && rec.armIK.left),
       right: chainInfo(rec.armIK && rec.armIK.right),
       head: rec.headTracking ? { pitch: rec.headTracking.pitch, target: rec.headPitchTarget } : null,
+      calibration: { headHeight: rec.headHeight, poseHeadY: rec.poseHeadY },
       bones: Array.from(rec.ikBones || []),
     };
   }
