@@ -77,6 +77,16 @@ class PresenceAnimationTests(unittest.TestCase):
         self.assertEqual(frame[10], 1)
         self.assertEqual(frame[25], 2)
 
+    def test_palm_orientation_tag_survives_existing_state_transport(self):
+        body = main.PresenceUpdate(
+            level=2, p=[0, 1.6, 0], state={"handOrientation": "palm-v1"},
+            hands=[{"handedness": "right", "p": [.3, 1.2, -.4], "q": [0, 0, 0, 1]}],
+        )
+        pose = main._presence_validate(body)
+        self.assertEqual(pose["state"], {"handOrientation": "palm-v1"})
+        wire = main._presence_frame_bytes([(7, 0, main.P_DIRTY_HANDS | main.P_DIRTY_STATE, pose)])
+        self.assertIn(b'"handOrientation":"palm-v1"', wire)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,7 @@ import { mergeXRI18n } from "./xr-i18n.js";
 import { createPanelSystem } from "./xr-panels.js";
 import { createNativeSystem } from "./xr-native.js";
 import { createAvatarSystem, ARKIT52, PRESENCE_BONES } from "./xr-avatars.js";
+import { HAND_ORIENTATION, readXRHands } from "./xr-hand-pose.js";
 import { createXRFiles } from "./xr-files.js";
 import { createXRWorldUI } from "./xr-world-ui.js";
 import { buildRoomScene, sceneKeyOf } from "./xr-rooms.js";
@@ -254,35 +255,16 @@ export async function createXR(ctx) {
     camera.getWorldPosition(p);
     camera.getWorldQuaternion(q);
     const e = new THREE.Euler().setFromQuaternion(q, "YXZ");
-    const hands = [];
+    let hands = [];
     if (xrInImmersive && renderer.xr.isPresenting) {
       const session = renderer.xr.getSession();
       const sources = session && session.inputSources ? Array.from(session.inputSources) : [];
-      for (let i = 0; i < xrControllers.length; i++) {
-        const c = xrControllers[i];
-        const grip = xrControllerGrips[i];
-        const hand = xrHandSpaces[i];
-        const hp = new THREE.Vector3();
-        const hq = new THREE.Quaternion();
-        /* 真实手柄使用 gripSpace；手势使用 wrist joint；两者都回退到 targetRaySpace。
-           之前只读 targetRaySpace，手柄尖端/射线并不等于手掌位置，导致 Avatar 手臂
-           没有稳定的 IK 目标，看到的白块也常常像“没跟手”。 */
-        const wrist = hand && hand.joints && hand.joints["wrist"];
-        const source = wrist && wrist.visible ? wrist : (grip && grip.visible ? grip : c);
-        const inputSource = c.userData.inputSource || sources[i] || null;
-        const handedness = c.userData.handedness || (inputSource && inputSource.handedness) || null;
-        if (handedness) c.userData.handedness = handedness;
-        source.updateMatrixWorld(true);
-        source.getWorldPosition(hp);
-        source.getWorldQuaternion(hq);
-        if (![hp.x, hp.y, hp.z, hq.x, hq.y, hq.z, hq.w].every(Number.isFinite)) continue;
-        hands.push({
-          handedness,
-          p: [hp.x, hp.y, hp.z], q: [hq.x, hq.y, hq.z, hq.w],
-        });
-      }
+      hands = readXRHands(xrControllers, xrControllerGrips, xrHandSpaces, sources);
     }
-    return { p: [p.x, p.y, p.z], yaw: e.y, pitch: e.x, hands };
+    // Keep the existing binary layout: a small state tag identifies the quaternion
+    // frame, preventing the receiver from applying the grip correction twice.
+    return { p: [p.x, p.y, p.z], yaw: e.y, pitch: e.x, hands,
+      state: hands.length ? { handOrientation: HAND_ORIENTATION } : null };
   }
 
   async function presenceSend() {

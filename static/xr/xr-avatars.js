@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
+import { HAND_ORIENTATION, xrOrientationToPalm, measureHandFrame, handFrameWorld } from "./xr-hand-pose.js";
 
 const RING_R = 2.9;        // 站位环半径（墙 R=6 与中央视角之间）
 const SLOTS = 16;          // 站位槽位数（hash 取模，稳定不跳）
@@ -231,6 +232,8 @@ export function createAvatarSystem(opts) {
         lowerLen: Math.max(0.05, elbow.distanceTo(wrist)),
         target: new THREE.Vector3(), goal: new THREE.Vector3(),
         targetQ: new THREE.Quaternion(),
+        frame: measureHandFrame(hb, side),
+        rawFrame: measureHandFrame(hb, side, true),
         restUpper: upper.quaternion.clone(),
         restLower: lower.quaternion.clone(),
         restHand: hand.quaternion.clone(),
@@ -596,6 +599,7 @@ export function createAvatarSystem(opts) {
       rec.headPoseSeen = true;
     }
     if (pose && pose.p && Number.isFinite(pose.p[1])) rec.poseHeadY = pose.p[1];
+    rec.handOrientation = pose?.state?.handOrientation === HAND_ORIENTATION ? HAND_ORIENTATION : null;
     const hands = Array.isArray(pose && pose.hands) ? pose.hands.filter((h) => h && Array.isArray(h.p)).slice(0, 2) : [];
     rec.handTargets = hands;
     rec.handTargetsBySide = { left: null, right: null };
@@ -1087,11 +1091,19 @@ export function createAvatarSystem(opts) {
         chain.target.lerp(target, k);
       }
       if (Array.isArray(h.q) && h.q.length === 4 && h.q.every(Number.isFinite)) {
-        _ikWorldQ.set(h.q[0], h.q[1], h.q[2], h.q[3]).normalize();
-        if (!chain.active || !chain.qInitialized) chain.targetQ.copy(_ikWorldQ);
-        else chain.targetQ.slerp(_ikWorldQ, k);
-        chain.qInitialized = true;
-      }
+        _ikWorldQ.fromArray(h.q);
+        const palmQ = xrOrientationToPalm(_ikWorldQ,
+          rec.handOrientation === HAND_ORIENTATION ? 'palm' : 'grip', side, _ikWorldQ);
+        if (palmQ && chain.frame) {
+          // Palm world rotation -> normalized hand BONE world rotation -> local.
+          // The calibrated basis is a right-multiplied LOCAL correction, not a
+          // world-space Euler offset (which breaks on turns/left-right mirroring).
+          _ikWorldQ.multiply(chain.frame.boneToPalm).normalize();
+          if (!chain.active || !chain.qInitialized) chain.targetQ.copy(_ikWorldQ);
+          else chain.targetQ.slerp(_ikWorldQ, k);
+          chain.qInitialized = true;
+        } else chain.qInitialized = false;
+      } else chain.qInitialized = false;
       solveArmIK(rec, chain);
       if (chain.qInitialized) setBoneWorldQuaternion(chain.hand, chain.targetQ);
       chain.active = true;
@@ -1178,6 +1190,9 @@ export function createAvatarSystem(opts) {
         hand: p.toArray(),
         target: chain.target.toArray(),
         error: p.distanceTo(chain.target),
+        axes: chain.frame ? handFrameWorld(chain.hand, chain.frame) : null,
+        rawAxes: chain.rawFrame ? handFrameWorld(rec.vrm.humanoid.getRawBoneNode(
+          chain === rec.armIK.left ? 'leftHand' : 'rightHand'), chain.rawFrame) : null,
       };
     };
     return {
