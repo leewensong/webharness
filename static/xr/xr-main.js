@@ -224,6 +224,7 @@ export async function createXR(ctx) {
   let presencePollAcc = 0;
   let presenceCursor = null;   /* 增量日志 id 游标（单调递增；比时间戳稳，不会漏同一毫秒的事件） */
   let presenceBusy = false;    /* 拉取在途（避免请求堆积） */
+  let presenceHandSample = 0;
   let presenceOff = false;     /* 服务端不支持（404）→ 关闭 */
   let presenceWarned = false;  /* 协议不匹配只警告一次（避免每 tick 刷屏） */
   let memberRefreshAt = 0;
@@ -263,8 +264,11 @@ export async function createXR(ctx) {
     }
     // Keep the existing binary layout: a small state tag identifies the quaternion
     // frame, preventing the receiver from applying the grip correction twice.
+    // Repeat the tag on logged samples. The server can coalesce a mode-change
+    // packet; a stable state alone would then never become dirty again. This
+    // counter also refreshes the tag when a viewer comes back into near LOD.
     return { p: [p.x, p.y, p.z], yaw: e.y, pitch: e.x, hands,
-      state: hands.length ? { handOrientation: HAND_ORIENTATION } : null };
+      state: hands.length ? { handOrientation: HAND_ORIENTATION, handSample: ++presenceHandSample } : null };
   }
 
   async function presenceSend() {

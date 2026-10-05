@@ -87,6 +87,14 @@ class PresenceAnimationTests(unittest.TestCase):
         wire = main._presence_frame_bytes([(7, 0, main.P_DIRTY_HANDS | main.P_DIRTY_STATE, pose)])
         self.assertIn(b'"handOrientation":"palm-v1"', wire)
 
+    def test_hand_sample_repeats_frame_tag_after_presence_coalescing(self):
+        previous = main._presence_validate(main.PresenceUpdate(
+            p=[0, 1.6, 0], state={"handOrientation": "palm-v1", "handSample": 1},
+            hands=[{"handedness": "left", "p": [-.3, 1.2, -.4], "q": [0, 0, 0, 1]}],
+        ))
+        current = {**previous, "state": {"handOrientation": "palm-v1", "handSample": 2}}
+        self.assertTrue(main._presence_dirty(previous, current) & main.P_DIRTY_STATE)
+
 
 if __name__ == "__main__":
     unittest.main()
