@@ -24,6 +24,14 @@ async function vrm1Fixture() {
   delete json.extensions.VRM;
   json.extensions.VRMC_vrm = {specVersion:'1.0',humanoid:{humanBones:bones},
     meta:{name:'VRM1 test rabbit',authors:['test'],licenseUrl:'https://vrm.dev/licenses/1.0/'}};
+  // VRM1's authored front is +Z, unlike this VRM0 source mesh. Rotate each scene
+  // root (mesh AND skeleton) so this is a valid VRM1-facing fixture, not merely
+  // a metadata label applied to backwards geometry.
+  for (const scene of json.scenes) {
+    const wrapper = json.nodes.length;
+    json.nodes.push({children:scene.nodes,rotation:[0,1,0,0]});
+    scene.nodes=[wrapper];
+  }
   json.extensionsUsed = json.extensionsUsed.filter(e => e !== 'VRM').concat('VRMC_vrm');
   const bytes = Buffer.from(JSON.stringify(json));
   const padded = Buffer.alloc(Math.ceil(bytes.length / 4) * 4, 32); bytes.copy(padded);
@@ -343,4 +351,148 @@ test('invalid tracking quaternions do not produce a palm rotation',async()=>{
     });
     assert.deepEqual(invalid,[null,null,null]);
   }finally {await page.close();}
+});
+
+test('body yaw follows coherent two-hand turns, not head-only turns or wrist rolls', async () => {
+  const page=await browser.newPage();
+  try {
+    await page.goto(origin+'/');
+    const result=await page.evaluate(async()=>{
+      const {THREE:T}=__test,{BodyTracker}=await import('/static/xr/xr-body-tracking.js');
+      const head=new T.Vector3(0,1.7,0),Y=new T.Vector3(0,1,0);
+      const scenario=(kind,base=0,rate=1)=>{
+        const tracker=new BodyTracker();let last;
+        for(let i=0;i<=30;i++){
+          const angle=base+i*.04*rate,q=new T.Quaternion().setFromAxisAngle(Y,angle);
+          const hands=['left','right'].map((side,j)=>{
+            const b=new T.Vector3(j?.28:-.28,1.2,-.35);
+            const rot=kind==='body'||(kind==='one'&&j===0)?q:new T.Quaternion().setFromAxisAngle(Y,base);
+            b.sub(head).applyQuaternion(rot).add(head);
+            const hq=kind==='body'||kind==='wrists'||(kind==='one'&&j===0)?q:new T.Quaternion().setFromAxisAngle(Y,base);
+            return {handedness:side,p:b.toArray(),q:hq.toArray()};
+          });
+          last=tracker.sample(head,q,hands,i*.1);
+        }
+        return last;
+      };
+      return {head:scenario('head'),wrists:scenario('wrists'),one:scenario('one'),body:scenario('body'),
+        slow:scenario('body',0,.35),wrapped:scenario('body',2.8)};
+    });
+    for(const key of ['head','wrists','one'])assert.ok(Math.abs(result[key].b[0])<.01,`${key} falsely turned body ${JSON.stringify(result[key])}`);
+    const wrap=a=>Math.atan2(Math.sin(a),Math.cos(a));
+    assert.ok(Math.abs(wrap(result.body.b[0]-1.2))<.04,JSON.stringify(result.body));
+    assert.ok(Math.abs(wrap(result.slow.b[0]-.42))<.06,JSON.stringify(result.slow));
+    assert.ok(Math.abs(wrap(result.wrapped.b[0]-4))<.04,JSON.stringify(result.wrapped));
+  }finally{await page.close();}
+});
+
+test('body anchor distinguishes head lean from whole-user translation; tracking dropouts are bounded',async()=>{
+  const page=await browser.newPage();
+  try{
+    await page.goto(origin+'/');
+    const r=await page.evaluate(async()=>{
+      const {THREE:T}=__test,{BodyTracker}=await import('/static/xr/xr-body-tracking.js');
+      const scenario=moveHands=>{
+        const t=new BodyTracker();let s;
+        for(let i=0;i<=15;i++){
+          const dx=i*.01,head=new T.Vector3(dx,1.7,0);
+          s=t.sample(head,new T.Quaternion(),['left','right'].map((side,j)=>({handedness:side,
+            p:[(j?.25:-.25)+(moveHands?dx:0),1.2,-.3],q:[0,0,0,1]})),i*.1);
+        }return s;
+      };
+      const t=new BodyTracker();t.sample(new T.Vector3(0,1.7,0),new T.Quaternion(),[],0);
+      const lost=t.sample(new T.Vector3(0,1.7,0),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),.9),[],.1);
+      const reset=t.sample(new T.Vector3(3,1.7,0),new T.Quaternion(),[],5);
+      return {lean:scenario(false),walk:scenario(true),lost,reset};
+    });
+    assert.ok(Math.abs(r.lean.b[1])<.02,JSON.stringify(r.lean));
+    assert.ok(Math.abs(r.walk.b[1]-.15)<.02,JSON.stringify(r.walk));
+    assert.ok(Math.abs(r.lost.b[0])<.01,JSON.stringify(r.lost));
+    assert.ok(Math.abs(r.reset.b[1]-3)<.01,JSON.stringify(r.reset));
+  }finally{await page.close();}
+});
+
+for(const model of ['witch','rabbit','polybot','test-vrm1']){
+  test(`${model}: head uses full world pose independently of body and palms`,async()=>{
+    const page=await browser.newPage();
+    try{
+      await page.goto(origin+'/?model='+model);
+      await page.waitForFunction(()=>!!window.__test?.avatars.debugAvatarIK('human')?.right);
+      const r=await page.evaluate(()=>{
+        const {avatars:a,THREE:T}=__test;
+        const state=(q,p)=>({handOrientation:'palm-v1',xr:{v:1,p,q:q.toArray(),b:[0,0,0],h:1.7}});
+        const pose=(p,q,hands=[])=>({p,yaw:new T.Euler().setFromQuaternion(q,'YXZ').y,
+          pitch:new T.Euler().setFromQuaternion(q,'YXZ').x,state:state(q,p),hands});
+        const step=p=>{a.setRemotePose('human',p);for(let i=0;i<90;i++)a.update(1/60);return a.debugAvatarIK('human');};
+        const base=step(pose([0,1.7,0],new T.Quaternion()));
+        const q=new T.Quaternion().setFromEuler(new T.Euler(.25,.65,-.3,'YXZ'));
+        const hands=['left','right'].map(s=>({handedness:s,p:[base[s].hand[0],base[s].hand[1]+1.7-base.calibration.headHeight,base[s].hand[2]],q:[0,0,0,1]}));
+        const turned=step(pose([0,1.7,0],q,hands));
+        const leaned=step(pose([.10,1.7,-.07],q,hands));
+        const crouched=step(pose([.10,1.45,-.07],q,hands));
+        return {base,turned,leaned,crouched,root:a.debugAvatarPose('human'),
+          expected:{forward:new T.Vector3(0,0,-1).applyQuaternion(q).toArray(),up:new T.Vector3(0,1,0).applyQuaternion(q).toArray()}};
+      });
+      const dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0),dist=(a,b)=>Math.hypot(...a.map((x,i)=>x-b[i]));
+      assert.ok(Math.abs(r.root.yaw-Math.PI)<.01,`head-only rotation turned body: ${JSON.stringify(r.root)}`);
+      for(const key of ['turned','leaned','crouched']){
+        assert.ok(dot(r[key].headPose.forward,r.expected.forward)>.99,`${model} ${key} head forward`);
+        assert.ok(dot(r[key].headPose.up,r.expected.up)>.99,`${model} ${key} head roll`);
+        assert.ok(dist(r[key].headPose.position,r[key].headPose.target)<.065,
+          `${model} ${key} head error ${dist(r[key].headPose.position,r[key].headPose.target)} ${JSON.stringify(r[key].headPose)}`);
+        for(const side of ['left','right'])assert.ok(r[key][side].rawAxes.palm[1]<-.99,`${model} ${key} broke palms`);
+      }
+      for(let i=0;i<r.base.feet.length;i++)assert.ok(dist(r.base.feet[i],r.crouched.feet[i])<.065,
+        `${model} feet drift on crouch: ${dist(r.base.feet[i],r.crouched.feet[i])}`);
+      for(let i=0;i<r.base.footRotations.length;i++)assert.ok(Math.abs(dot(r.base.footRotations[i],r.crouched.footRotations[i]))>.99,
+        `${model} planted foot rotated on crouch`);
+    }finally{await page.close();}
+  });
+}
+
+test('coherent body turn reaches the rendered torso while head orientation stays absolute',async()=>{
+  const page=await browser.newPage();
+  try{
+    await page.goto(origin+'/?model=witch');
+    await page.waitForFunction(()=>!!window.__test?.avatars.debugAvatarIK('human')?.right);
+    const r=await page.evaluate(async()=>{
+      const {THREE:T,avatars:a}=__test,{BodyTracker}=await import('/static/xr/xr-body-tracking.js');
+      const tracker=new BodyTracker(),head=new T.Vector3(0,1.7,0),Y=new T.Vector3(0,1,0);
+      let q=new T.Quaternion();
+      for(let i=0;i<=30;i++){
+        const angle=i*.04;q=new T.Quaternion().setFromAxisAngle(Y,angle);
+        const hands=['left','right'].map((side,j)=>({handedness:side,
+          p:new T.Vector3(j?.25:-.25,-.45,-.35).applyQuaternion(q).add(head).toArray(),q:q.toArray()}));
+        const xr=tracker.sample(head,q,hands,i*.1);
+        a.setRemotePose('human',{p:head.toArray(),yaw:angle,pitch:0,hands,state:{handOrientation:'palm-v1',xr}});
+        for(let n=0;n<6;n++)a.update(1/60);
+      }
+      for(let i=0;i<60;i++)a.update(1/60);
+      return {root:a.debugAvatarPose('human'),pose:a.debugAvatarIK('human'),
+        expected:new T.Vector3(0,0,-1).applyQuaternion(q).toArray()};
+    });
+    const diff=Math.atan2(Math.sin(r.root.yaw-(Math.PI+1.2)),Math.cos(r.root.yaw-(Math.PI+1.2)));
+    assert.ok(Math.abs(diff)<.04,`body didn't follow hand/head turn: ${JSON.stringify(r.root)}`);
+    assert.ok(r.pose.headPose.forward.reduce((sum,x,i)=>sum+x*r.expected[i],0)>.99,'head world rotation changed with torso');
+  }finally{await page.close();}
+});
+
+test('stale distant LOD state cannot pin a human to an old body anchor; Agents retain their controls',async()=>{
+  const page=await browser.newPage();
+  try{
+    await page.goto(origin+'/');
+    await page.waitForFunction(()=>!!window.__test?.avatars.debugAvatarIK('human')?.right);
+    const r=await page.evaluate(()=>{
+      const a=__test.avatars,xr={v:1,p:[0,1.7,0],q:[0,0,0,1],b:[0,0,0],h:1.7};
+      a.setRemotePose('human',{p:[0,1.7,0],yaw:0,pitch:0,state:{xr}});
+      a.update(1/60);
+      a.setRemotePose('human',{p:[2,1.7,0],yaw:.6,pitch:0,state:{xr}});
+      for(let i=0;i<120;i++)a.update(1/60);
+      a.setRemotePose('animator',{p:[0,1.7,0],yaw:.3,pitch:.5,state:{xr:{...xr,b:[-1,0,0]}}});
+      return {position:a.positionOf('human').toArray(),human:a.debugAvatarIK('human'),agent:a.debugAvatarPose('animator')};
+    });
+    assert.ok(Math.abs(r.position[0]-2)<.02,`stale LOD froze avatar: ${r.position}`);
+    assert.equal(r.human.body,null);
+    assert.ok(Math.abs(r.agent.yaw-.3)<.001,'human body metadata changed Agent yaw');
+  }finally{await page.close();}
 });

@@ -12,6 +12,7 @@ import { createPanelSystem } from "./xr-panels.js";
 import { createNativeSystem } from "./xr-native.js";
 import { createAvatarSystem, ARKIT52, PRESENCE_BONES } from "./xr-avatars.js";
 import { HAND_ORIENTATION, readXRHands } from "./xr-hand-pose.js";
+import { BodyTracker } from "./xr-body-tracking.js";
 import { createXRFiles } from "./xr-files.js";
 import { createXRWorldUI } from "./xr-world-ui.js";
 import { buildRoomScene, sceneKeyOf } from "./xr-rooms.js";
@@ -225,6 +226,7 @@ export async function createXR(ctx) {
   let presenceCursor = null;   /* 增量日志 id 游标（单调递增；比时间戳稳，不会漏同一毫秒的事件） */
   let presenceBusy = false;    /* 拉取在途（避免请求堆积） */
   let presenceHandSample = 0;
+  const bodyTracker = new BodyTracker();
   let presenceOff = false;     /* 服务端不支持（404）→ 关闭 */
   let presenceWarned = false;  /* 协议不匹配只警告一次（避免每 tick 刷屏） */
   let memberRefreshAt = 0;
@@ -267,8 +269,11 @@ export async function createXR(ctx) {
     // Repeat the tag on logged samples. The server can coalesce a mode-change
     // packet; a stable state alone would then never become dirty again. This
     // counter also refreshes the tag when a viewer comes back into near LOD.
+    const xr = xrInImmersive && renderer.xr.isPresenting
+      ? bodyTracker.sample(p, q, hands, performance.now() / 1000) : null;
     return { p: [p.x, p.y, p.z], yaw: e.y, pitch: e.x, hands,
-      state: hands.length ? { handOrientation: HAND_ORIENTATION, handSample: ++presenceHandSample } : null };
+      state: xr || hands.length ? { handOrientation: HAND_ORIENTATION, handSample: ++presenceHandSample,
+        ...(xr ? {xr} : {}) } : null };
   }
 
   async function presenceSend() {
@@ -1658,6 +1663,7 @@ export async function createXR(ctx) {
     xrHandSpaces.push(hand);
   }
   renderer.xr.addEventListener("sessionstart", () => {
+    bodyTracker.reset();
     xrInImmersive = true;
     xrPassthrough = activeImmersiveMode === "ar";
     ctx.root.classList.toggle("xr-ar", xrPassthrough);
@@ -1673,6 +1679,7 @@ export async function createXR(ctx) {
     vrHintText(t("xrVRHint"), 9000); /* 入场提示几秒后自动淡出 */
   });
   renderer.xr.addEventListener("sessionend", () => {
+    bodyTracker.reset();
     const nextMode = pendingSwitchMode;
     pendingSwitchMode = null;
     xrInImmersive = false;

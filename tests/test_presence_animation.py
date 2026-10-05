@@ -95,6 +95,17 @@ class PresenceAnimationTests(unittest.TestCase):
         current = {**previous, "state": {"handOrientation": "palm-v1", "handSample": 2}}
         self.assertTrue(main._presence_dirty(previous, current) & main.P_DIRTY_STATE)
 
+    def test_full_head_body_state_fits_binary_block_without_truncation(self):
+        import json
+        state = {"handOrientation": "palm-v1", "handSample": 9999999999,
+                 "xr": {"v": 1, "p": [-39.99999, 11.99999, 39.99999], "q": [-.70711, .70711, -.70711, .70711],
+                        "b": [-3.14159, -39.99999, 39.99999], "h": 11.99999}}
+        body = main.PresenceUpdate(p=[0, 1.7, 0], state=state)
+        pose = main._presence_validate(body)
+        wire = main._presence_frame_bytes([(7, 0, main.P_DIRTY_STATE, pose)])
+        self.assertLessEqual(len(json.dumps(state, separators=(",", ":")).encode()), 255)
+        self.assertEqual(json.loads(wire[10:10 + wire[9]]), state)
+
 
 if __name__ == "__main__":
     unittest.main()

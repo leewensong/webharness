@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 import { HAND_ORIENTATION, xrOrientationToPalm, measureHandFrame, handFrameWorld } from "./xr-hand-pose.js";
+import { readBodyTracking, measureHeadFrame } from "./xr-body-tracking.js";
 
 const RING_R = 2.9;        // 站位环半径（墙 R=6 与中央视角之间）
 const SLOTS = 16;          // 站位槽位数（hash 取模，稳定不跳）
@@ -78,6 +79,7 @@ const _ikWorldQ = new THREE.Quaternion();
 const _ikTmpQ = new THREE.Quaternion();
 const _headPitchQ = new THREE.Quaternion();
 const _headAxisX = new THREE.Vector3(1, 0, 0);
+const _headAxisY = new THREE.Vector3(0, 1, 0);
 const _ikHandTarget = new THREE.Vector3();
 
 const ARKIT_TO_VRM = {
@@ -251,12 +253,28 @@ export function createAvatarSystem(opts) {
     const neck = hb.getNormalizedBoneNode("neck");
     const head = hb.getNormalizedBoneNode("head");
     if (!neck && !head) return null;
+    const hip = hb.getNormalizedBoneNode("hips");
+    const trunk = ["spine", "chest", "upperChest", "neck"].map(name => ({name,node:hb.getNormalizedBoneNode(name)}))
+      .filter(b => b.node).map(b => ({...b,rest:b.node.quaternion.clone()}));
+    rec.root.updateWorldMatrix(true,true);
+    const offset = rec.root.worldToLocal((head || neck).getWorldPosition(new THREE.Vector3()));
+    const legs = ["left", "right"].map(side => {
+      const upper=hb.getNormalizedBoneNode(`${side}UpperLeg`),lower=hb.getNormalizedBoneNode(`${side}LowerLeg`),hand=hb.getNormalizedBoneNode(`${side}Foot`);
+      if(!upper||!lower||!hand)return null;
+      const a=upper.getWorldPosition(new THREE.Vector3()),b=lower.getWorldPosition(new THREE.Vector3()),c=hand.getWorldPosition(new THREE.Vector3());
+      return {side,upper,lower,hand,upperLen:a.distanceTo(b),lowerLen:b.distanceTo(c),target:new THREE.Vector3(),targetQ:new THREE.Quaternion(),
+        rests:[upper.quaternion.clone(),lower.quaternion.clone(),hand.quaternion.clone()]};
+    }).filter(Boolean);
     rec.headTracking = {
       neck, head,
       restNeck: neck ? neck.quaternion.clone() : null,
       restHead: head ? head.quaternion.clone() : null,
       pitch: 0,
       initialized: false,
+      hip, restHipPosition:hip?.position.clone(), trunk, reverseTrunk:[...trunk].reverse(), legs, offset,
+      frame:measureHeadFrame(rec.vrm,head || neck),
+      rawFrame:measureHeadFrame(rec.vrm,hb.getRawBoneNode(head ? 'head' : 'neck')),
+      target:new THREE.Vector3(),q:new THREE.Quaternion(),poseInitialized:false,
     };
     /* XR 的 p 是真实头部高度，而模型已经归一化到 AVATAR_H；不把真实头高
        直接当作模型脚底高度，否则手目标会整体高出模型半米左右。 */
@@ -463,7 +481,7 @@ export function createAvatarSystem(opts) {
           poseTarget: null, hasPose: false, handTargets: null, handMeshes: [],
           handTargetsBySide: { left: null, right: null },
           armIK: null, headTracking: null, headHeight: null, poseHeadY: null,
-          headPitchTarget: 0, headPoseSeen: false, ikBones: new Set(),
+          headPitchTarget: 0, headPoseSeen: false, bodyTracking: null, ikBones: new Set(),
           /* Agent 逐拍骨骼：保留最新目标，渲染帧里 quaternion.slerp 趋近。 */
           remoteBoneTargets: new Map(),
           /* Agent 关键帧动画：当前 clip + 等待播放的 clip 队列。 */
@@ -571,8 +589,9 @@ export function createAvatarSystem(opts) {
     out.set(hand.p[0], hand.p[1], hand.p[2]);
     /* Keep the Avatar's feet/body scale while preserving the user's relative
        hand height beneath the tracked head. */
-    if (Number.isFinite(rec.headHeight) && Number.isFinite(rec.poseHeadY)) {
-      out.y += rec.headHeight - rec.poseHeadY;
+    const headY = rec.bodyTracking?.neutralY ?? rec.poseHeadY;
+    if (Number.isFinite(rec.headHeight) && Number.isFinite(headY)) {
+      out.y += rec.headHeight - headY;
     }
     return out;
   }
@@ -583,14 +602,22 @@ export function createAvatarSystem(opts) {
     const rec = avatars.get(name);
     leftSet.delete(name);          /* 再次上报 = 又回到 3D 里了 */
     if (!rec || rec.disposed) return false;
+    rec.bodyTracking = rec.isAgent ? null : readBodyTracking(pose?.state,pose);
     if (pose && Array.isArray(pose.p) && pose.p.length === 3 && pose.p.every(Number.isFinite)) {
       const [x, y, z] = pose.p;
-      const ry = Number.isFinite(pose.yaw) ? facingYawFor(rec, pose.yaw) : rec.root.rotation.y;
+      const ry = Number.isFinite(pose.yaw) ? facingYawFor(rec, rec.bodyTracking?.yaw ?? pose.yaw) : rec.root.rotation.y;
       rec.poseTarget = { x, y, z, ry };
+      if (rec.bodyTracking) {
+        rec.bodyTracking.head = new THREE.Vector3(x,y,z);
+        const offset = rec.headTracking?.offset.clone() || new THREE.Vector3();
+        offset.applyAxisAngle(_headAxisY,ry);
+        rec.poseTarget.x = rec.bodyTracking.x-offset.x;
+        rec.poseTarget.z = rec.bodyTracking.z-offset.z;
+      }
       if (!rec.hasPose) {          /* 首次：直接就位，避免从座位慢慢飘过去 */
         rec.hasPose = true;
-        rec.root.position.x = x;
-        rec.root.position.z = z;
+        rec.root.position.x = rec.poseTarget.x;
+        rec.root.position.z = rec.poseTarget.z;
         rec.root.rotation.y = ry;
       }
     }
@@ -600,7 +627,8 @@ export function createAvatarSystem(opts) {
     }
     if (pose && pose.p && Number.isFinite(pose.p[1])) rec.poseHeadY = pose.p[1];
     rec.handOrientation = pose?.state?.handOrientation === HAND_ORIENTATION ? HAND_ORIENTATION : null;
-    const hands = Array.isArray(pose && pose.hands) ? pose.hands.filter((h) => h && Array.isArray(h.p)).slice(0, 2) : [];
+    const staleTracking = !rec.isAgent && pose?.state?.xr?.v === 1 && !rec.bodyTracking;
+    const hands = !staleTracking && Array.isArray(pose && pose.hands) ? pose.hands.filter((h) => h && Array.isArray(h.p)).slice(0, 2) : [];
     rec.handTargets = hands;
     rec.handTargetsBySide = { left: null, right: null };
     hands.forEach((h, i) => {
@@ -821,6 +849,7 @@ export function createAvatarSystem(opts) {
     const now = performance.now() / 1000;
     for (const [, rec] of avatars) {
       if (rec.disposed) continue;
+      prepareTrackedBody(rec);
       /* 远端位姿插值（指数趋近，~6/s：0.5s 一次目标也能平滑移动）+ 估算水平速度
          （走路循环靠它驱动——不额外传输任何骨骼数据） */
       if (rec.hasPose && rec.poseTarget) {
@@ -941,8 +970,8 @@ export function createAvatarSystem(opts) {
       }
       if (rec.vrm) {
         advanceAnimation(rec, dt);
-        applyHandIK(rec, dt);
         applyHeadTracking(rec, dt);
+        applyHandIK(rec, dt); // shoulders have moved with the tracked torso/head pose
         rec.vrm.update(dt);
       }
     }
@@ -1031,7 +1060,9 @@ export function createAvatarSystem(opts) {
     } else {
       joint.quaternion.premultiply(_ikDeltaQ).normalize();
     }
-    if (rec.appliedModel) rec.appliedModel.updateMatrixWorld(true);
+    // Only the changed normalized subtree needs updating during IK. Traversing
+    // the entire skinned model at every CCD step is costly on a headset.
+    joint.updateWorldMatrix(false,true);
   }
 
   function solveArmIK(rec, chain) {
@@ -1112,6 +1143,10 @@ export function createAvatarSystem(opts) {
   }
 
   function applyHeadTracking(rec, dt) {
+    if (rec.bodyTracking?.head) {
+      applyTrackedHeadPose(rec,dt);
+      return;
+    }
     if (rec.isAgent || !rec.headPoseSeen || !rec.vrm || !rec.vrm.humanoid) return;
     const tr = rec.headTracking || buildHeadTracking(rec);
     if (!tr) return;
@@ -1130,6 +1165,84 @@ export function createAvatarSystem(opts) {
       _headPitchQ.setFromAxisAngle(_headAxisX, headAngle);
       tr.head.quaternion.copy(tr.restHead).multiply(_headPitchQ);
     }
+  }
+
+  function ownsTrackedBody(rec) {
+    return ['hips','spine','chest','upperChest','neck','head'].some(name =>
+      rec.agentBones?.has(name) || rec.animationBoneNames?.has(name));
+  }
+
+  function ownsTrackedLeg(rec,side) {
+    return ['UpperLeg','LowerLeg','Foot'].some(part =>
+      rec.agentBones?.has(side+part) || rec.animationBoneNames?.has(side+part));
+  }
+
+  function prepareTrackedBody(rec) {
+    if(rec.isAgent||!rec.vrm)return;
+    const tr=rec.headTracking;
+    if(!tr||(!rec.bodyTracking&&!tr.wasTracked)||ownsTrackedBody(rec))return;
+    if(tr.hip&&tr.restHipPosition)tr.hip.position.copy(tr.restHipPosition);
+    for(const b of tr.trunk)b.node.quaternion.copy(b.rest);
+    if(tr.head&&tr.restHead)tr.head.quaternion.copy(tr.restHead);
+    for(const leg of tr.legs)if(!ownsTrackedLeg(rec,leg.side))
+      [leg.upper,leg.lower,leg.hand].forEach((node,i)=>node.quaternion.copy(leg.rests[i]));
+    tr.wasTracked=!!rec.bodyTracking;
+    if(!rec.bodyTracking)tr.poseInitialized=false;
+  }
+
+  function applyTrackedHeadPose(rec,dt) {
+    if(rec.isAgent||ownsTrackedBody(rec))return;
+    const tr=rec.headTracking||buildHeadTracking(rec),data=rec.bodyTracking;
+    if(!tr?.head||!tr.frame||!data?.head)return;
+    const k=1-Math.exp(-Math.max(0,dt)*14);
+    const target=data.head.clone();
+    target.y+=(rec.headHeight||AVATAR_H)-data.neutralY;
+    const desired=data.q.clone().multiply(tr.frame.boneToViewer).normalize();
+    if(!tr.poseInitialized){tr.target.copy(target);tr.q.copy(desired);tr.poseInitialized=true;}
+    else {tr.target.lerp(target,k);tr.q.slerp(desired,k);}
+    rec.root.updateWorldMatrix(true,true);
+    for(const leg of tr.legs){
+      leg.hand.getWorldPosition(leg.target); // planted/walking foot anchors
+      leg.hand.getWorldQuaternion(leg.targetQ);
+    }
+    // Vertical HMD displacement lowers/raises the pelvis. Compensating leg IK
+    // keeps feet in place instead of moving the whole model through the floor.
+    if(tr.hip&&tr.restHipPosition){
+      const dy=THREE.MathUtils.clamp(tr.target.y-(rec.root.position.y+(rec.headHeight||AVATAR_H)),-.6,.12);
+      const scale=tr.hip.parent.getWorldScale(new THREE.Vector3()).y;
+      tr.hip.position.y+=dy/Math.max(1e-6,Math.abs(scale));
+      tr.hip.updateWorldMatrix(true,true);
+      if(Math.abs(dy)>.002)for(const leg of tr.legs){
+        if(ownsTrackedLeg(rec,leg.side))continue;
+        leg.lower.rotation.x+=.12; // seed the otherwise singular straight-leg CCD chain
+        leg.lower.updateWorldMatrix(true,true);
+        for(let i=0;i<3;i++)solveArmIK(rec,leg);
+        setBoneWorldQuaternion(leg.hand,leg.targetQ);
+        leg.hand.updateWorldMatrix(false,true);
+      }
+    }
+    // Seed a little neck rotation, then solve bounded spine/neck position IK.
+    // Head world rotation is applied last, so pitch/roll/yaw remain independent
+    // of both the body yaw estimate and the leaning shoulders.
+    if(tr.neck){
+      const restWorld=tr.head.getWorldQuaternion(new THREE.Quaternion());
+      const relative=restWorld.invert().multiply(tr.q);
+      tr.neck.quaternion.copy(tr.restNeck).multiply(new THREE.Quaternion().slerp(relative,.35));
+      tr.neck.updateWorldMatrix(true,true);
+    }
+    for(let i=0;i<8;i++)for(const b of tr.reverseTrunk){
+      rotateIKJointToward(rec,b.node,tr.head,tr.target);
+      const max=b.name==='neck' ? .4 : .3,angle=b.rest.angleTo(b.node.quaternion);
+      if(angle>max){
+        _ikTmpQ.copy(b.rest).slerp(b.node.quaternion,max/angle);
+        b.node.quaternion.copy(_ikTmpQ);
+        b.node.updateWorldMatrix(false,true);
+      }
+    }
+    setBoneWorldQuaternion(tr.head,tr.q);
+    tr.pitch=new THREE.Euler().setFromQuaternion(data.q,'YXZ').x;
+    tr.initialized=true;
+    rec.root.updateWorldMatrix(true,true);
   }
 
   /* 走路循环的调试快照（验证/排查用）：速度、混合权重、腿的当前摆角 */
@@ -1200,6 +1313,17 @@ export function createAvatarSystem(opts) {
       right: chainInfo(rec.armIK && rec.armIK.right),
       head: rec.headTracking ? { pitch: rec.headTracking.pitch, target: rec.headPitchTarget } : null,
       calibration: { headHeight: rec.headHeight, poseHeadY: rec.poseHeadY },
+      body: rec.bodyTracking ? {yaw:rec.bodyTracking.yaw,anchor:[rec.bodyTracking.x,rec.bodyTracking.z]} : null,
+      headPose: rec.headTracking?.rawFrame ? (() => {
+        const tr=rec.headTracking,node=rec.vrm.humanoid.getRawBoneNode(tr.head?'head':'neck');
+        const q=node.getWorldQuaternion(new THREE.Quaternion());
+        return {position:node.getWorldPosition(new THREE.Vector3()).toArray(),
+          forward:tr.rawFrame.forward.clone().applyQuaternion(q).toArray(),
+          up:tr.rawFrame.up.clone().applyQuaternion(q).toArray(),
+          target:tr.target.toArray()};
+      })() : null,
+      feet: rec.headTracking?.legs.map(l=>rec.vrm.humanoid.getRawBoneNode(`${l.side}Foot`).getWorldPosition(new THREE.Vector3()).toArray()),
+      footRotations: rec.headTracking?.legs.map(l=>rec.vrm.humanoid.getRawBoneNode(`${l.side}Foot`).getWorldQuaternion(new THREE.Quaternion()).toArray()),
       bones: Array.from(rec.ikBones || []),
     };
   }
