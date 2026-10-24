@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -169,23 +170,64 @@ def login() -> tuple[str, str]:
     return me, token
 
 
+def _atomic_text(path: Path, text: str) -> None:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as out:
+        temporary = Path(out.name)
+        out.write(text)
+        out.flush()
+        os.fsync(out.fileno())
+    try:
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main() -> None:
     args = parse_args()
     room = args.room
     me, token = login()
     join_existing(token, room)
     watermark = _state_file(f"last_id_{room}")
+    stream_state = _state_file(f"inbox_streams_{room}.json")
+    initialized = watermark.exists()
     after = int(watermark.read_text().strip()) if watermark.exists() else 0
-    wait = max(0, min(args.wait, 30))
-    if after:
-        query = f"afterId={after}"
-        if wait:
+    previous_streams = set()
+    if stream_state.exists():
+        previous_streams = {int(mid) for mid in json.loads(stream_state.read_text())["pendingIds"]}
+    room_path = "/api/rooms/" + urllib.parse.quote(room, safe="") + "/messages?"
+    by_id = {}
+
+    def fetch(query, timeout=15):
+        rows = http("GET", room_path + query, token=token, timeout=timeout).get("messages") or []
+        by_id.update((int(row["id"]), row) for row in rows)
+        return rows
+
+    # The server accepts at most 60 explicit stream IDs. Completion reuses the
+    # original ID even after newer messages have advanced the read watermark.
+    waiting = sorted(mid for mid in previous_streams if mid <= after)
+    observed_streams = set()
+    for offset in range(0, len(waiting), 60):
+        batch = waiting[offset:offset + 60]
+        rows = fetch(f"afterId={after}&limit=200&streamIds=" + ",".join(map(str, batch)))
+        observed_streams.update(int(row["id"]) for row in rows if int(row["id"]) in batch)
+    pending_streams = (previous_streams - set(waiting)) | observed_streams
+    # 与服务端 MAX_LONG_POLL_SECONDS 上限保持一致；单条请求最多阻塞 10 分钟
+    wait = max(0, min(args.wait, 600))
+    if initialized:
+        query = f"afterId={after}&limit=200"
+        if wait and not by_id:
             query += f"&wait={wait}"
     else:
         query = "limit=50"
     timeout = wait + 10 if wait else 15
-    payload = http("GET", f"/api/rooms/{room}/messages?{query}", token=token, timeout=timeout)
-    messages = payload.get("messages") or []
+    rows = fetch(query, timeout=timeout)
+    # Drain a known backlog now: SSE might already have notified all of these
+    # IDs in one burst and need not emit another event to prompt a second page.
+    while initialized and len(rows) == 200:
+        cursor = max(int(row["id"]) for row in rows)
+        rows = fetch(f"afterId={cursor}&limit=200")
+    messages = [by_id[mid] for mid in sorted(by_id)]
 
     def is_blank_row(m: dict) -> bool:
         """看不见的私聊被服务端抹成空行（content 空 + 文本类型 + 无附件）——忽略；
@@ -196,27 +238,39 @@ def main() -> None:
             and not m.get("attachmentName")
         )
 
-    def replyable(rows: list, floor: int) -> list:
+    def replyable(rows: list) -> list:
         return [
             m
             for m in rows
             if m.get("username") != me
-            and int(m.get("id") or 0) > floor
+            and (int(m.get("id") or 0) > after or int(m.get("id") or 0) in previous_streams)
             and not m.get("streaming")
+            and not m.get("recalled")
             and not is_blank_row(m)
         ]
 
-    incoming = replyable(messages, after)
+    incoming = replyable(messages)
     max_id = max([after] + [int(m["id"]) for m in messages if m.get("id")])
     # 长轮询时若只看到别人的流式草稿，再按新水位挂起，避免空转
     if wait and not incoming and max_id > after:
-        query = f"afterId={max_id}&wait={wait}"
-        payload = http("GET", f"/api/rooms/{room}/messages?{query}", token=token, timeout=timeout)
-        messages = payload.get("messages") or []
-        incoming = replyable(messages, max_id)
+        rows = fetch(f"afterId={max_id}&limit=200&wait={wait}", timeout=timeout)
+        while len(rows) == 200:
+            cursor = max(int(row["id"]) for row in rows)
+            rows = fetch(f"afterId={cursor}&limit=200")
+        messages = [by_id[mid] for mid in sorted(by_id)]
+        incoming = replyable(messages)
         max_id = max([max_id] + [int(m["id"]) for m in messages if m.get("id")])
-    if not args.peek and max_id > after:
-        watermark.write_text(str(max_id))
+    for m in messages:
+        mid = int(m["id"])
+        if m.get("streaming") and m.get("username") and m.get("username") != me and not m.get("recalled"):
+            pending_streams.add(mid)
+        else:
+            pending_streams.discard(mid)
+    if not args.peek:
+        # Save unfinished IDs BEFORE advancing the cursor: a crash must not
+        # leave a draft behind the watermark with no way to revisit it.
+        _atomic_text(stream_state, json.dumps({"pendingIds": sorted(pending_streams)}))
+        _atomic_text(watermark, str(max_id))
     last_id = after
     if watermark.exists() and not args.peek:
         last_id = int(watermark.read_text().strip())
