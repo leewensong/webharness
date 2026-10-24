@@ -4149,6 +4149,8 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
             if rules is None and template:
                 rules = template["rules"] or None
             # 场景只在建房时生效；加入已有房间不改动其场景
+            if body.scene and body.scene.kind == "library":
+                _require_approved_library_model(conn, _library_ref_id(f"{LIBRARY_REF_PREFIX}{body.scene.id or ''}"), user, purpose="scene")
             map3d = _scene_descriptor_json(body.scene) if body.scene else None
             try:
                 conn.execute(
@@ -4383,7 +4385,10 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
                 "UPDATE rooms SET files_revision = files_revision + 1 WHERE id = ?", (room["id"],)
             )
         if scene_provided:
-            # 换成内置/外链/清空时一并丢弃已上传的场景本体（换回 file 需重新上传）
+            # 资源库场景须为本人已过审模型；换成内置/外链/资源库/清空时一并
+            # 丢弃已上传的场景本体（换回 file 需重新上传）
+            if body.scene and body.scene.kind == "library":
+                _require_approved_library_model(conn, _library_ref_id(f"{LIBRARY_REF_PREFIX}{body.scene.id or ''}"), user, purpose="scene")
             conn.execute(
                 """
                 UPDATE rooms
