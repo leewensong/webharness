@@ -815,8 +815,10 @@ def _room_scene_file_url(room_name: str, version: str | None) -> str:
 
 
 def _room_scene_descriptor(room) -> dict[str, str] | None:
-    """房间场景描述符（rooms.map3d），返回给客户端的形状：kind=builtin/file/url。
-    kind=file 的 url 一律由服务器按当前版本号现算，不采信库里存的 URL。
+    """房间场景描述符（rooms.map3d），返回给客户端的形状：kind=builtin/file/url/library。
+    kind=file 的 url 一律由服务器按当前版本号现算，不采信库里存的 URL；
+    kind=library 改写成带版本号的房间场景代理地址（下载权限在该接口按房间成员
+    判定），渲染端只当它是个普通 url，无需认识资源库。
     描述符残缺或内置 id 已下线时返回 None——渲染端据此回退展厅环境。"""
     raw = _row_get(room, "map3d")
     if not raw:
@@ -832,6 +834,14 @@ def _room_scene_descriptor(room) -> dict[str, str] | None:
         return {"kind": "builtin", "id": desc["id"]}
     if kind == "file":
         return {"kind": "file", "url": _room_scene_file_url(room["name"], _row_get(room, "scene_updated_at"))}
+    if kind == "library":
+        try:
+            library_id = int(desc.get("id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if library_id <= 0:
+            return None
+        return {"kind": "library", "id": str(library_id), "url": _room_scene_file_url(room["name"], _row_get(room, "scene_updated_at"))}
     if kind == "url":
         url = str(desc.get("url") or "").strip()
         return {"kind": "url", "url": url} if url else None
