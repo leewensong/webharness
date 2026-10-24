@@ -22,8 +22,15 @@ ops/
 # 房间共同文件内容（room_files 表元数据，内容按 room_id/file_id 落盘）
 data/files/
 
+# 个人资源库文件内容（元数据在 SQLite，原始版本不可进入仓库）
+data/library/
+
 # 本机 3D 建模实验的工作目录（Blender 资产与预览图，与 webharness 应用无关）
 models/
+
+# 本机生成实验输出（文生图/动画测试帧/3D 管线产物，与产品代码无关）
+output/
+outputs/
 
 # 各会话的本地配置（launch.json / settings.local.json 等）
 .claude/

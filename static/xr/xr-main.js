@@ -16,6 +16,7 @@ import { BodyTracker } from "./xr-body-tracking.js";
 import { createXRFiles } from "./xr-files.js";
 import { createXRWorldUI } from "./xr-world-ui.js";
 import { buildRoomScene, sceneKeyOf } from "./xr-rooms.js";
+import { createTouchControls } from "./xr-touch-controls.js";
 
 const R = 6;             // 消息列半径（米）
 const PANEL_W = 1.12;    // 参考面板世界宽（米）——单面板实际宽 = 气泡 CSS 宽 × PX_PER_M
@@ -57,7 +58,7 @@ export async function createXR(ctx) {
   /* cssText 会整块覆盖 setSize 刚写入的宽高：必须自带 100%×100%，否则 dpr>1 时
      画布按缓冲区像素显示、溢出窗口，整个画面偏移（canvas 是 replaced element，
      inset:0 不会拉伸它） */
-  renderer.domElement.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;";
+  renderer.domElement.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;";
   renderer.xr.enabled = true; /* 沉浸式会话接入（任务 10）；无会话时为普通桌面渲染 */
   renderer.xr.setReferenceSpaceType("local-floor");
   renderer.localClippingEnabled = true; /* scroll panel 视口裁剪（面板材质用 clippingPlanes） */
@@ -133,6 +134,7 @@ export async function createXR(ctx) {
 
   const panels = createPanelSystem({
     t,
+    formatTime: ctx.formatTime,
     panelWidth: PANEL_W,
     refCss: REF_CSS,
     maxW: LOG_W, /* 记录区宽即面板宽上限：再宽的面板也不会伸到右侧滚行条底下 */
@@ -644,10 +646,27 @@ export async function createXR(ctx) {
       border: 1px solid #2c3d58; border-radius: 999px; background: rgba(16, 22, 34, 0.82);
       color: #dfe8f4; outline: none; }
     #xrRoot .xr-send-input:focus { border-color: #5b8cff; }
+    #xrRoot .xr-touch-pad { display: none; position: absolute; pointer-events: auto;
+      left: max(18px, env(safe-area-inset-left)); bottom: max(88px, calc(env(safe-area-inset-bottom) + 76px));
+      flex-direction: column; align-items: center; gap: 6px; touch-action: none; user-select: none; -webkit-user-select: none; }
+    #xrRoot .xr-hud.xr-touch .xr-touch-pad { display: flex; }
+    #xrRoot .xr-touch-label { color: #b6c6de; font-size: 12px; pointer-events: none; }
+    #xrRoot .xr-touch-stick { position: relative; width: 108px; height: 108px; border-radius: 50%;
+      border: 1px solid #6884aa; background: rgba(16,22,34,.72); touch-action: none; cursor: grab; }
+    #xrRoot .xr-touch-arrows { position: absolute; inset: 6px; text-align: center; line-height: 31px;
+      color: #91a5c1; pointer-events: none; }
+    #xrRoot .xr-touch-knob { position: absolute; left: 33px; top: 33px; width: 42px; height: 42px;
+      border-radius: 50%; background: rgba(91,140,255,.8); border: 1px solid #a8c5ff; pointer-events: none; }
+    @media (max-width: 640px) {
+      #xrRoot .xr-top { left: 8px; right: 8px; top: 8px; flex-wrap: wrap; gap: 5px; }
+      #xrRoot .xr-btn { padding: 7px 10px; font-size: 12px; }
+      #xrRoot .xr-hint { top: 88px; right: 10px; font-size: 11px; }
+    }
     /* 沉浸式由世界内 CanvasTexture UI 接管顶部和底部操作栏；DOM 仍保留一个
        透明、可聚焦的输入框，用于唤起系统键盘。无论设备是否授予 dom-overlay，
        都隐藏 DOM 视觉层，避免同一组按钮在视野里出现两份。 */
     #xrRoot .xr-hud.xr-immersive .xr-hint,
+    #xrRoot .xr-hud.xr-immersive .xr-touch-pad,
     #xrRoot .xr-hud.xr-immersive .xr-top { display: none; }
     #xrRoot .xr-hud.xr-immersive .xr-send {
       position: fixed; left: -10000px; bottom: 0; width: 1px; height: 1px;
@@ -677,6 +696,7 @@ export async function createXR(ctx) {
       <button type="button" class="xr-btn" data-act="send"></button>
     </div>`;
   ctx.root.appendChild(hud);
+  const touchControls = createTouchControls({ hud, t });
   const exitBtn = hud.querySelector('[data-act="exit"]');
   const immersiveBtn = hud.querySelector('[data-act="immersive"]');
   const switchImmersiveBtn = hud.querySelector('[data-act="switchImmersive"]');
@@ -1074,6 +1094,8 @@ export async function createXR(ctx) {
   let dragInfo = null;
 
   renderer.domElement.addEventListener("pointerdown", (e) => {
+    if (dragInfo || (e.pointerType === "mouse" && e.button !== 0)) return;
+    if (e.pointerType === "touch") { touchControls.reveal(); e.preventDefault(); }
     const ray = pointerRay(e);
     const drag = dragBegin(ray, false); /* 落在滚行条/记录上 → 拖动滚动；否则环视 */
     if (drag) { drag.o = ray.ray.origin.clone(); drag.d = ray.ray.direction.clone(); }
@@ -1085,6 +1107,7 @@ export async function createXR(ctx) {
   });
   renderer.domElement.addEventListener("pointermove", (e) => {
     if (!dragInfo || dragInfo.id !== e.pointerId) return;
+    if (e.pointerType === "touch") e.preventDefault();
     const dx = e.clientX - dragInfo.x, dy = e.clientY - dragInfo.y;
     dragInfo.x = e.clientX; dragInfo.y = e.clientY;
     dragInfo.moved += Math.abs(dx) + Math.abs(dy);
@@ -1103,7 +1126,15 @@ export async function createXR(ctx) {
       dragInfo = null;
     }
   });
-  renderer.domElement.addEventListener("pointercancel", () => { dragEnd(dragInfo && dragInfo.drag); dragInfo = null; });
+  function cancelCanvasDrag(e) {
+    if (!dragInfo || (e && e.pointerId !== dragInfo.id)) return;
+    dragEnd(dragInfo.drag);
+    dragInfo = null;
+  }
+  renderer.domElement.addEventListener("pointercancel", cancelCanvasDrag);
+  renderer.domElement.addEventListener("lostpointercapture", cancelCanvasDrag);
+  function resetDesktopInput() { keys.clear(); cancelCanvasDrag(); touchControls.reset(); }
+  window.addEventListener("blur", resetDesktopInput);
   /* 悬停（桌面）：鼠标指着记录/滚行条 → 滚行条拇指高亮，也是「可拖动」的提示 */
   renderer.domElement.addEventListener("pointermove", (e) => {
     if (dragInfo) return;
@@ -1305,12 +1336,14 @@ export async function createXR(ctx) {
   window.addEventListener("keyup", onKeyUp);
 
   function updateControls(dt) {
-    let fwd = 0, side = 0;
+    let fwd = touchControls.input.forward, side = touchControls.input.side;
     if (keys.has("w") || keys.has("arrowup")) fwd += 1;
     if (keys.has("s") || keys.has("arrowdown")) fwd -= 1;
     if (keys.has("d")) side += 1;
     if (keys.has("a")) side -= 1;
     if (fwd || side) {
+      const magnitude = Math.max(1, Math.hypot(fwd, side));
+      fwd /= magnitude; side /= magnitude;
       const speed = 2.6 * dt;
       const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw);
       const rx = Math.cos(look.yaw), rz = -Math.sin(look.yaw);
@@ -1663,6 +1696,7 @@ export async function createXR(ctx) {
     xrHandSpaces.push(hand);
   }
   renderer.xr.addEventListener("sessionstart", () => {
+    resetDesktopInput();
     bodyTracker.reset();
     xrInImmersive = true;
     xrPassthrough = activeImmersiveMode === "ar";
@@ -2162,6 +2196,7 @@ export async function createXR(ctx) {
   window.addEventListener("resize", onResize);
 
   function onVis() {
+    if (document.hidden) resetDesktopInput();
     lastT = performance.now(); /* 回前台时重置时钟，避免 dt 跳变 */
   }
   document.addEventListener("visibilitychange", onVis);
@@ -2300,9 +2335,11 @@ export async function createXR(ctx) {
     for (const id of Array.from(chatModels.keys())) removeChatModel(id);
     for (const id of Array.from(placingModels.keys())) removeChatModel(id);
     if (worldUi) { worldUi.dispose(); worldUi = null; }
+    touchControls.dispose();
     if (roomSystem) { try { roomSystem.dispose(); } catch (e) {} roomSystem = null; }
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);
+    window.removeEventListener("blur", resetDesktopInput);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVis);
     try { unsubMsg(); } catch (e) {}

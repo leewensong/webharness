@@ -32,6 +32,13 @@
     .lang-btn:hover { color: var(--text); }
 
     #auth { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+    /* ICP 备案号：法定文案保持中文，不参与语言切换 */
+    .beian {
+      position: fixed; bottom: 10px; left: 0; right: 0; z-index: 40;
+      text-align: center; font-size: 12px; color: var(--muted);
+    }
+    .beian a { color: var(--muted); text-decoration: none; }
+    .beian a:hover { color: var(--text); text-decoration: underline; }
     .auth-card {
       width: min(420px, 100%);
       background: color-mix(in srgb, var(--panel) 88%, transparent);
@@ -83,6 +90,7 @@
     .acct-block { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
     .acct-block h3 { margin: 0 0 10px; font-size: 14px; }
     .acct-block h4 { margin: 14px 0 8px; font-size: 13px; color: var(--muted); font-weight: 500; }
+    #profileTools { display: flex; flex-direction: column; gap: 6px; }
     .acct-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
     .acct-row .acct-name { font-size: 13px; color: var(--muted); min-width: 52px; }
     .acct-row .acct-val { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -132,6 +140,9 @@
     .join-box input, .join-box select { margin: 0 0 8px; }
     .person { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+    .person.offline { opacity: .62; }
+    .person.offline .dot { background: var(--muted); }
+    .mention-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; color: var(--accent); background: #19253a; font-size: 11px; }
     /* ---- v2.4 头像 / 3D 形象 ---- */
     .avatar {
       width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
@@ -621,13 +632,16 @@
       <p class="msg-status" id="authStatus"></p>
       <p class="suggest-link"><a href="javascript:void(0)" onclick="openSuggestion()" data-i18n="suggest">建议反馈</a></p>
     </div>
+    <footer class="beian">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">浙ICP备2026060814号-2</a>
+    </footer>
   </section>
 
   <section id="app" class="hidden">
     <aside class="sidebar">
       <div class="side-top">
         <div><strong>WebHarness.Chat @FXG</strong>
-          <div class="user" id="who" onclick="openProfile()" data-i18n-title="changeAvatarTitle" title="点击更换头像">
+          <div class="user" id="who" onclick="openProfile()" data-i18n-title="changeAvatarTitle" title="打开个人设置">
             <img id="whoAvatar" class="avatar sm" alt="" />
             <span class="who-name" id="whoName"></span>
           </div>
@@ -645,23 +659,18 @@
         <button class="btn full" onclick="openNewRoom()" data-i18n="newRoom">＋ 创建房间</button>
       </div>
       <div class="side-actions">
+        <button class="btn ghost small full" onclick="openFriends()"><span data-i18n="friendsTitle">好友</span> <span id="friendPendingBadge" class="badge hidden"></span></button>
+        <button class="btn ghost small full" onclick="openResources()" data-i18n="libraryStoreTitle">我的资源库 / 商店</button>
         <button class="btn ghost small full" onclick="openAgents()" data-i18n="myAgents">我的 Agent</button>
-        <a class="btn ghost small full" href="/guide" style="text-align:center;text-decoration:none" data-i18n="guideLink">使用说明</a>
-        <button class="btn ghost small full" onclick="openSuggestion()" data-i18n="suggest">建议反馈</button>
-        <button id="adminBtn" class="btn ghost small full hidden" onclick="openAdmin()" data-i18n="adminTitle">平台管理</button>
       </div>
     </aside>
     <main class="chat">
       <div class="chat-top">
         <button class="btn ghost small menu-btn" id="menuBtn" onclick="toggleSidebar()" title="房间列表" data-i18n-title="menuTitle">☰</button>
         <div><h2 id="roomTitle" data-i18n="chooseRoom">选择或加入一个房间</h2><div class="hint" id="pollHint"></div><div class="hint" id="roomTpl" style="display:none"></div></div>
-        <div class="voice-toggles" id="voiceToggles" style="display:none">
-          <button id="autoReadBtn" class="btn ghost small" onclick="toggleAutoRead()" title="自动朗读他人的新消息" data-i18n-title="autoReadTitle">🔊 <span data-i18n="autoRead">自动朗读</span></button>
-          <button id="voiceBtn" class="btn ghost small" onclick="openVoiceSettings()" title="语音设置" data-i18n-title="voiceSettingsTitle">🎙 <span data-i18n="voiceSettings">语音设置</span></button>
-        </div>
-        <button id="manageBtn" class="btn ghost small hidden" onclick="openSettings()" data-i18n="manage">管理</button>
-        <button id="filesBtn" class="btn ghost small hidden" onclick="openFiles()" data-i18n="filesBtn">📁 文件</button>
-        <button class="btn ghost small menu-btn" id="peopleBtn" onclick="togglePresence()" title="在线成员" data-i18n-title="peopleTitle">👥 <span id="peopleCount"></span></button>
+        <button id="manageBtn" class="btn ghost small hidden" onclick="openSettings()" data-i18n="roomSettings">房间设置</button>
+        <button type="button" id="filesBtn" class="btn ghost small hidden" onclick="openFiles()" data-i18n="filesBtn">📁 文件</button>
+        <button class="btn ghost small menu-btn" id="peopleBtn" onclick="togglePresence()" title="房间成员" data-i18n-title="peopleTitle">👥 <span id="peopleCount"></span></button>
         <button id="view3dBtn" class="btn ghost small hidden" onclick="toggleXR()" data-i18n="view3d" data-i18n-title="view3dTitle">3D</button>
       </div>
       <div class="log" id="log"><div class="empty" data-i18n="emptyLog">还没有消息。加入房间后开始聊天。</div></div>
@@ -796,7 +805,7 @@
   </dialog>
 
   <dialog id="myProfile">
-    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="myProfileTitle">我的资料</h2>
+    <h2 style="margin:0 0 12px;font-size:18px" data-i18n="myProfileTitle">个人设置</h2>
     <label data-i18n="avatarLabel">头像</label>
     <div class="avatar-pick">
       <img id="myAvatarImg" class="avatar lg hidden" alt="" />
@@ -834,6 +843,19 @@
       <p class="msg-status" id="acctStatus"></p>
     </div>
     <p class="msg-status" id="myProfileStatus"></p>
+    <div style="margin:12px 0 4px">
+      <label for="timeZoneMode" data-i18n="timeZoneTitle" style="display:block">时间显示</label>
+      <select id="timeZoneMode" onchange="saveTimezoneMode()">
+        <option value="browser" data-i18n="tzBrowser">跟随浏览器时区（缺省）</option>
+        <option value="asia" data-i18n="tzAsia">固定北京时间</option>
+      </select>
+      <p class="hint" data-i18n="timeZoneHint">消息时间随此选项显示；切换后需刷新页面生效</p>
+    </div>
+    <div class="acct-block" id="profileTools">
+      <a class="btn ghost small full" href="/guide" style="text-align:center;text-decoration:none" data-i18n="guideLink">使用说明</a>
+      <button type="button" class="btn ghost small full" onclick="openSuggestion()" data-i18n="suggest">建议反馈</button>
+      <button type="button" id="adminBtn" class="btn ghost small full hidden" onclick="openAdmin()" data-i18n="adminTitle">平台管理</button>
+    </div>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="document.getElementById('myProfile').close()" data-i18n="close">关闭</button>
     </div>
@@ -874,8 +896,17 @@
   </dialog>
 
   <dialog id="settings">
-    <h2 style="margin:0 0 16px;font-size:18px" data-i18n="manageRoom">管理房间</h2>
+    <h2 style="margin:0 0 16px;font-size:18px" data-i18n="roomSettings">房间设置</h2>
+    <div id="roomQuickActions" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+      <div class="voice-toggles" id="voiceToggles" style="display:none">
+        <button type="button" id="autoReadBtn" class="btn ghost small" onclick="toggleAutoRead()" title="自动朗读他人的新消息" data-i18n-title="autoReadTitle">🔊 <span data-i18n="autoRead">自动朗读</span></button>
+      </div>
+      <button type="button" id="voiceBtn" class="btn ghost small" onclick="openVoiceSettings()" title="语音设置" data-i18n-title="voiceSettingsTitle">🎙 <span data-i18n="voiceSettings">语音设置</span></button>
+      <button type="button" id="bringAgentBtn" class="btn ghost small hidden" onclick="document.getElementById('settings').close();bringOwnAgentToRoom()" data-i18n="bringAgent">加入我的 Agent</button>
+      <button type="button" id="leaveRoomBtn" class="btn ghost small hidden" onclick="leaveCurrentRoom()" data-i18n="leaveRoom">退出房间</button>
+    </div>
     <div id="ownerSettings">
+    <h3 style="margin:0 0 12px;font-size:14px" data-i18n="manageRoom">管理房间</h3>
     <label for="editName" data-i18n="roomNameLabel">房间名称</label>
     <input id="editName" />
     <label for="editPassword" data-i18n="newPwdLabel">新加入密码（留空表示不修改）</label>
@@ -907,6 +938,16 @@
     <label for="editRoomAgent" data-i18n="roomAgentLabel">Room Agent（可空）</label>
     <select id="editRoomAgent"></select>
     <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="roomAgentHint">选中的 Agent 未来可按上面的规则执行房间治理。</p>
+    <div id="roomInvitePanel" class="hidden">
+      <h3 style="margin:12px 0 4px;font-size:14px" data-i18n="roomInvitesTitle">邀请好友进入私聊房间</h3>
+      <p class="hint" style="white-space:normal;margin:0 0 8px" data-i18n="roomInvitesHint">只能邀请已接受的好友；好友接受后才能加入。</p>
+      <div class="inline-row" style="gap:8px">
+        <input id="roomInviteUsername" maxlength="32" data-i18n-placeholder="friendUsernamePlaceholder" placeholder="输入好友用户名" />
+        <button type="button" class="btn small" onclick="inviteFriendToRoom()" data-i18n="roomInviteSend">邀请</button>
+      </div>
+      <p class="msg-status" id="roomInviteStatus"></p>
+      <div id="roomInvitesBox" class="agent-list"></div>
+    </div>
     <h3 style="margin:8px 0 4px;font-size:14px" data-i18n="memberPerms">成员权限</h3>
     <div id="membersBox" class="hint" data-i18n="loading">加载中…</div>
     <h3 style="margin:12px 0 4px;font-size:14px" data-i18n="bansTitle">封禁名单</h3>
@@ -954,6 +995,72 @@
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="document.getElementById('agents').close()" data-i18n="close">关闭</button>
       <button type="button" class="btn" onclick="openAgentEditor(null)" data-i18n="createAgent">创建 Agent</button>
+    </div>
+  </dialog>
+
+  <dialog id="friendsDlg">
+    <h2 style="margin:0 0 4px;font-size:18px" data-i18n="friendsTitle">好友</h2>
+    <p class="hint" style="white-space:normal" data-i18n="friendsHint">添加好友后，对方接受时会自动创建你们的双人私聊房间。</p>
+    <div class="inline-row" style="gap:8px">
+      <input id="friendUsername" maxlength="32" data-i18n-placeholder="friendUsernamePlaceholder" placeholder="输入用户名" />
+      <button type="button" class="btn" onclick="sendFriendRequest()" data-i18n="friendAdd">添加</button>
+    </div>
+    <p class="msg-status" id="friendsStatus"></p>
+    <div id="friendsList" class="agent-list"><div class="hint" data-i18n="loading">加载中…</div></div>
+    <h3 style="margin:14px 0 4px;font-size:14px" data-i18n="receivedRoomInvites">收到的房间邀请</h3>
+    <div id="receivedRoomInvites" class="agent-list"><div class="hint" data-i18n="loading">加载中…</div></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('friendsDlg').close()" data-i18n="close">关闭</button>
+    </div>
+  </dialog>
+
+  <dialog id="resourcesDlg" class="files-dlg">
+    <h2 style="margin:0 0 6px;font-size:18px" data-i18n="libraryStoreTitle">我的资源库 / 商店</h2>
+    <div class="files-head">
+      <span id="pointsBalance" class="badge"></span>
+      <span id="libraryQuota" class="hint"></span>
+      <span style="flex:1"></span>
+      <button type="button" class="btn ghost small" id="libraryTabBtn" onclick="showResourceTab('library')" data-i18n="libraryTab">我的资源</button>
+      <button type="button" class="btn ghost small" id="storeTabBtn" onclick="showResourceTab('store')" data-i18n="storeTab">公共商店</button>
+      <button type="button" class="btn small" id="libraryUploadBtn" onclick="$('libraryUploadFile').click()" data-i18n="libraryUpload">上传资源</button>
+    </div>
+    <details style="margin:6px 0 12px">
+      <summary class="hint" data-i18n="pointsHistoryTitle">积分流水</summary>
+      <div id="pointsLedger" class="agent-list"><div class="hint" data-i18n="loading">加载中…</div></div>
+    </details>
+    <input type="file" id="libraryUploadFile" class="hidden" onchange="uploadLibraryResource(event)" />
+    <input type="file" id="libraryVersionFile" class="hidden" onchange="uploadLibraryVersion(event)" />
+    <section id="libraryTab" class="resource-tab">
+      <div id="libraryResourceList" class="agent-list"><div class="hint" data-i18n="loading">加载中…</div></div>
+      <div id="libraryResourceDetail" class="hidden"></div>
+    </section>
+    <section id="storeTab" class="resource-tab hidden">
+      <div class="inline-row" style="gap:8px">
+        <input id="storeQuery" data-i18n-placeholder="storeSearchPlaceholder" placeholder="搜索公共资源" />
+        <select id="storeKind" style="width:auto">
+          <option value="" data-i18n="storeAllKinds">所有类型</option>
+          <option value="markdown">Markdown</option><option value="text">Text</option><option value="image">Image</option>
+          <option value="audio">Audio</option><option value="video">Video</option><option value="model">3D</option><option value="other">Other</option>
+        </select>
+        <button class="btn small" onclick="refreshStore()" data-i18n="storeSearch">搜索</button>
+      </div>
+      <div id="storeResourceList" class="agent-list"><div class="hint" data-i18n="loading">加载中…</div></div>
+    </section>
+    <section id="resourceReviewPanel" class="hidden">
+      <h3 style="margin:14px 0 4px;font-size:14px" data-i18n="resourceReviewTitle">资源审核队列</h3>
+      <div id="resourceReviewList" class="agent-list"></div>
+      <h3 style="margin:14px 0 4px;font-size:14px" data-i18n="campaignGrantTitle">活动积分发放</h3>
+      <div class="inline-row" style="gap:6px;flex-wrap:wrap">
+        <input id="campaignUsername" maxlength="32" data-i18n-placeholder="campaignUsernamePlaceholder" placeholder="人类用户名" style="max-width:150px" />
+        <input id="campaignKey" maxlength="100" data-i18n-placeholder="campaignKeyPlaceholder" placeholder="活动唯一 key" style="max-width:160px" />
+        <input id="campaignAmount" type="number" min="1" max="2000000000" step="1" value="100" style="max-width:100px" />
+        <input id="campaignReason" maxlength="200" data-i18n-placeholder="campaignReasonPlaceholder" placeholder="发放原因" style="max-width:190px" />
+        <button type="button" class="btn small" onclick="grantCampaignPoints()" data-i18n="campaignGrantBtn">发放</button>
+      </div>
+    </section>
+    <p class="msg-status" id="resourcesStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" onclick="document.getElementById('resourcesDlg').close()" data-i18n="close">关闭</button>
     </div>
   </dialog>
 
@@ -1302,10 +1409,10 @@
         composerPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
         composerHint: "支持 Markdown · Mermaid · SVG · ```chart 数据图 · ```a2ui 面板",
         chartInvalid: "[chart 配置无效]", svgInvalid: "[svg 内容无效]", a2uiInvalid: "[a2ui 配置无效]",
-        peopleTitle: "在线成员",
+        peopleTitle: "房间成员",
         attachTitle: "发送附件", imageTitle: "发送图片", micTitle: "语音输入：说话转文字", send: "发送",
-        online: "在线", onlineHint: "5 分钟内有活动", peopleEmpty: "加入房间后显示",
-        manageRoom: "管理房间", roomNameLabel: "房间名称", newPwdLabel: "新加入密码（留空表示不修改）",
+        online: "房间成员", onlineHint: "灰色表示当前不在线", peopleEmpty: "加入房间后显示",
+        roomSettings: "房间设置", manageRoom: "管理房间", roomNameLabel: "房间名称", newPwdLabel: "新加入密码（留空表示不修改）",
         optional: "可选", visibilityLabel: "可见性", muteAll: "全体禁言（仅房主可发言）",
         memberPerms: "成员权限", loading: "加载中…", archiveRoom: "归档房间", removePwd: "取消密码",
         whisperRulesTitle: "私聊权限", whisperRuleType: "类型", whisperRulePriority: "优先级",
@@ -1336,7 +1443,8 @@
         avatarDlgTitle: "设置 3D 替身",
         avatarSetBtn: "设置",
         avatarPendingHint: "已选择，保存后生效",
-        myProfileTitle: "我的资料",
+        myProfileTitle: "个人设置",
+        timeZoneTitle: "时间显示", tzBrowser: "跟随浏览器时区（缺省）", tzAsia: "固定北京时间", timeZoneHint: "消息时间随此选项显示；切换后需刷新页面生效",
         myModelLabel: "3D 形象",
         myModelOwnHint: "也可以用自己的模型：选文件或填外链地址；上传后会替换掉上面的内置选择。",
         createAgent: "创建 Agent", agentNameLabel: "Agent 用户名（不能和已有人类账号重名）",
@@ -1365,10 +1473,52 @@
         suggest: "建议反馈", suggestEmpty: "请填写建议内容", suggestOk: "感谢反馈！已收到你的建议。", submit: "提交",
         authExpired: "登录已过期，请重新登录",
         noRooms: "还没有房间", noPublicRooms: "暂无公开房间", noArchives: "还没有归档",
+        friendsTitle: "好友", friendsHint: "添加好友后，对方接受时会自动创建你们的双人私聊房间。",
+        friendUsernamePlaceholder: "输入用户名", friendAdd: "添加", friendIncoming: "等待你接受",
+        friendOutgoing: "等待对方接受", friendAccept: "接受", friendDecline: "拒绝", friendCancel: "取消请求",
+        friendRemove: "删除好友", friendAdded: "已发送好友请求", friendAccepted: "已成为好友，双人房间已创建",
+        friendDeclined: "已拒绝好友请求", friendCanceled: "已取消好友请求", friendRemoved: "已删除好友", friendEmpty: "暂无好友或待处理请求",
+        receivedRoomInvites: "收到的房间邀请", roomInvitePending: "邀请你加入 {{room}}（来自 {{inviter}}）",
+        roomInviteAccept: "接受并加入", roomInviteDecline: "拒绝邀请", roomInviteJoin: "进入房间",
+        roomInvitesTitle: "邀请好友进入私聊房间", roomInvitesHint: "只能邀请已接受的好友；好友接受后才能加入。",
+        roomInviteSend: "邀请", roomInviteSent: "邀请已发送", roomInviteRevoked: "已撤销邀请", roomInviteEmpty: "还没有邀请",
+        libraryStoreTitle: "我的资源库 / 商店", libraryTab: "我的资源", storeTab: "公共商店",
+        pointsHistoryTitle: "积分流水", pointsTxnSignup: "新用户注册欢迎积分", pointsTxnCampaign: "活动奖励：{{reason}}",
+        pointsTxnPurchase: "商店资源购买", pointsTxnOther: "积分变更", pointsPositive: "+{{n}}", pointsNegative: "−{{n}}",
+        pointsHistoryEmpty: "暂无积分流水。", campaignGrantRequired: "请填写用户名、活动 key、正整数积分和发放原因。", campaignGrantAlreadyDone: "这个活动奖励已经发放过。",
+        campaignGrantTitle: "活动积分发放", campaignUsernamePlaceholder: "人类用户名", campaignKeyPlaceholder: "活动唯一 key",
+        campaignReasonPlaceholder: "发放原因", campaignGrantBtn: "发放", campaignGrantDone: "已向 {{name}} 发放 {{n}} 积分（余额 {{balance}}）",
+        welcomePointsToast: "注册成功，已赠送 {{n}} 欢迎积分",
+        libraryUpload: "上传资源", libraryUploadName: "资源名称", libraryDescription: "描述", librarySaveMeta: "保存资料",
+        libraryEmpty: "资源库还是空的，上传一个文件开始使用。", libraryQuotaFmt: "{{count}} / {{maxCount}} 项 · {{used}} / {{max}}",
+        libraryVersion: "版本 {{n}}", libraryVersionHistory: "资源版本", libraryNewVersion: "上传新版本",
+        libraryDownload: "下载", libraryDetails: "版本/管理", libraryImport: "加入当前房间",
+        libraryPreview: "预览", libraryPreviewUnsupported: "此资源类型请下载后查看。", libraryPreviewFail: "资源预览失败",
+        librarySubmitReview: "提交审核", libraryReviewPending: "审核中", libraryReviewApproved: "已通过审核",
+        libraryReviewRejected: "未通过审核", libraryReviewDraft: "未提交审核", libraryReviewNote: "审核意见：{{note}}",
+        libraryPrice: "积分定价", libraryPublish: "上架 / 更新价格", libraryUnlist: "下架",
+        libraryArchive: "归档资源", libraryArchived: "资源已归档", libraryUploaded: "资源已上传",
+        libraryVersionUploaded: "新版本已上传", libraryReviewSubmitted: "已提交审核", libraryListingSaved: "商店价格已保存",
+        storeSearchPlaceholder: "搜索公共资源", storeAllKinds: "所有类型", storeSearch: "搜索",
+        storeRoomNamePrompt: "加入房间的文件名称（含扩展名）", storeRoomNameRequired: "请先输入房间文件名称。",
+        storeEmpty: "没有找到上架资源。", storeCreator: "创建者 {{name}}", storePrice: "{{n}} 积分",
+        pointsBalance: "积分：{{n}}", resourceReviewEmpty: "当前没有待审核资源。",
+        storeAddToRoom: "购买并加入房间", storeFreeAdd: "加入当前房间", storeBuyConfirm: "用 {{n}} 积分购买并加入当前房间？",
+        storeNeedRoom: "请先加入一个房间，再把资源加入房间共同文件。", storeAdded: "资源已加入房间共同文件",
+        storeInsufficient: "积分不足：需要 {{required}}，当前可用 {{available}}。",
+        resourceReviewTitle: "资源审核队列", resourceReviewApprove: "通过", resourceReviewReject: "拒绝",
+        resourceReviewNotePrompt: "审核意见（可留空）", resourceReviewDone: "审核决定已保存",
+        receivedRoomInvites: "收到的房间邀请", roomInvitePending: "邀请你加入 {{room}}（来自 {{inviter}}）",
+        roomInviteAccept: "接受并加入", roomInviteDecline: "拒绝邀请", roomInviteJoin: "进入房间",
+        roomInvitesTitle: "邀请好友进入私聊房间", roomInvitesHint: "只能邀请已接受的好友；好友接受后才能加入。",
+        roomInviteSend: "邀请", roomInviteSent: "邀请已发送", roomInviteRevoked: "已撤销邀请", roomInviteEmpty: "还没有邀请",
         onlineCountFmt: "{{n}} 在线", unreadAria: "{{n}} 条未读",
         archivedReadOnly: "已归档 · 只读", archivePlaceholder: "归档房间只读", mutedPlaceholder: "你已被禁言",
         mutedWhisperPlaceholder: "公开发言已被禁言；可用 #群组名 或 @@用户名 私聊",
-        onlineFmt: "{{n}} 人 · 5 分钟内", noOnline: "暂无在线用户", meSuffix: "（我）",
+        onlineFmt: "{{n}} 人 · 5 分钟内", roomMembersFmt: "{{online}} 人在线 / {{total}} 位成员", noOnline: "暂无在线用户", meSuffix: "（我）",
+        leaveRoom: "退出房间", leaveRoomConfirm: "确定退出这个房间？你仍会保留历史记录，但需要重新加入才能查看房间。", leftRoomDone: "已退出房间",
+        bringAgent: "加入我的 Agent", agentJoinedRoom: "已将 {{name}} 加入房间", noActiveAgents: "没有可加入的启用中 Agent",
+        mentionAdd: "@TA 留言", mentionBadge: "提醒 @{{name}}",
         roomPwdPrompt: '房间「{{name}}」需要密码：',
         archiveHint: "只读 · 已归档，房间名可再使用", pollingHint: "长轮询 · 有新消息即刷新",
         roomArchived: "房间已归档", noMessages: "还没有消息。来说第一句吧。",
@@ -1380,6 +1530,7 @@
         membersReadOnly: "仅房主、Room Agent 或建房的 Agent 主人可改成员权限与封禁名单。", noMembers: "暂无成员",
         memberCol: "成员", speakCol: "发言", attachCol: "附件", historyCol: "历史",
         kindAgent: "Agent", kindHuman: "人类", permUpdated: "已更新 {{name}} 的权限",
+        memberRemove: "移出房间", memberRemoveConfirm: "确定将 {{name}} 移出房间？该用户将无法继续读取或加入此房间。", memberRemovedDone: "已将 {{name}} 移出房间",
         banBtn: "封禁", banUnban: "解封", banPick: "选择封禁时长",
         ban3m: "3 分钟", ban1h: "1 小时", ban24h: "24 小时", ban1mo: "1 个月", banForever: "永久",
         banActive: "封禁中", banExpired: "已过期", banUntil: "至", banBy: "由 {{name}}",
@@ -1414,7 +1565,7 @@
         avatarHint: "JPG/PNG，≤1MB；不选则自动生成",
         avatarTooBig: "头像不能超过 1MB", avatarBadType: "头像必须是 JPG 或 PNG 图片",
         avatarUpdated: "头像已更新", avatarResetDone: "已恢复缺省头像", avatarUploadFail: "头像上传失败",
-        changeAvatarTitle: "点击更换头像",
+        changeAvatarTitle: "打开个人设置",
         rulesLabel: "房间规则（可空）",
         templateLabel: "模板（可选）",
         templateNone: "不使用模板",
@@ -1449,7 +1600,7 @@
         model3dPlaceholder: "https://…/model.glb",
         model3dArkitLabel: "支持 Apple ARKit 52 表情",
         model3dHumanoidLabel: "支持 Unity Humanoid 全身骨骼",
-        personMenuTitle: "点击可与该成员私聊",
+        personMenuTitle: "点击可 @TA 留言或私聊",
         whisperToLabel: "私聊 →",
         whisperAdd: "加入私聊",
         whisperRemove: "移出私聊",
@@ -1618,10 +1769,10 @@
         composerPlaceholder: "Type a message, Enter to send, Shift+Enter for a newline",
         composerHint: "Markdown · Mermaid · SVG · ```chart charts · ```a2ui panels",
         chartInvalid: "[invalid chart config]", svgInvalid: "[invalid svg content]", a2uiInvalid: "[invalid a2ui config]",
-        peopleTitle: "Online members",
+        peopleTitle: "Room members",
         attachTitle: "Send attachment", imageTitle: "Send image", micTitle: "Voice input: speak to type", send: "Send",
-        online: "Online", onlineHint: "active within 5 min", peopleEmpty: "Shown after joining a room",
-        manageRoom: "Manage room", roomNameLabel: "Room name", newPwdLabel: "New join password (empty = keep current)",
+        online: "Room members", onlineHint: "Gray means currently away", peopleEmpty: "Shown after joining a room",
+        roomSettings: "Room settings", manageRoom: "Manage room", roomNameLabel: "Room name", newPwdLabel: "New join password (empty = keep current)",
         optional: "optional", visibilityLabel: "Visibility", muteAll: "Mute everyone (only the owner can speak)",
         memberPerms: "Member permissions", loading: "Loading…", archiveRoom: "Archive room", removePwd: "Remove password",
         whisperRulesTitle: "Whisper permissions", whisperRuleType: "Type", whisperRulePriority: "Priority",
@@ -1652,7 +1803,8 @@
         avatarDlgTitle: "Set 3D avatar",
         avatarSetBtn: "Set",
         avatarPendingHint: "Chosen — applies when you save",
-        myProfileTitle: "My profile",
+        myProfileTitle: "Personal settings",
+        timeZoneTitle: "Time display", tzBrowser: "Follow browser timezone (default)", tzAsia: "Fixed Beijing time", timeZoneHint: "Message times follow this option; reload the page after switching",
         myModelLabel: "3D avatar",
         myModelOwnHint: "You can also use your own model: pick a file or paste a URL; uploading replaces the built-in choice above.",
         createAgent: "Create Agent", agentNameLabel: "Agent username (must not match an existing human account)",
@@ -1681,10 +1833,52 @@
         suggest: "Feedback", suggestEmpty: "Please enter your suggestion", suggestOk: "Thanks! We've received your suggestion.", submit: "Submit",
         authExpired: "Session expired, please log in again",
         noRooms: "No rooms yet", noPublicRooms: "No public rooms", noArchives: "Nothing archived",
+        friendsTitle: "Friends", friendsHint: "When a friend request is accepted, a private room for the two of you is created automatically.",
+        friendUsernamePlaceholder: "Enter a username", friendAdd: "Add", friendIncoming: "Waiting for your response",
+        friendOutgoing: "Waiting for their response", friendAccept: "Accept", friendDecline: "Decline", friendCancel: "Cancel request",
+        friendRemove: "Remove friend", friendAdded: "Friend request sent", friendAccepted: "You are friends; your private room is ready",
+        friendDeclined: "Friend request declined", friendCanceled: "Friend request canceled", friendRemoved: "Friend removed", friendEmpty: "No friends or pending requests",
+        receivedRoomInvites: "Room invitations", roomInvitePending: "Invitation to {{room}} from {{inviter}}",
+        roomInviteAccept: "Accept & join", roomInviteDecline: "Decline", roomInviteJoin: "Enter room",
+        roomInvitesTitle: "Invite friends to this private room", roomInvitesHint: "Only accepted friends can be invited; they must accept before joining.",
+        roomInviteSend: "Invite", roomInviteSent: "Invitation sent", roomInviteRevoked: "Invitation revoked", roomInviteEmpty: "No invitations yet",
+        libraryStoreTitle: "My Library / Store", libraryTab: "My resources", storeTab: "Public store",
+        pointsHistoryTitle: "Points history", pointsTxnSignup: "New account welcome points", pointsTxnCampaign: "Campaign reward: {{reason}}",
+        pointsTxnPurchase: "Store resource purchase", pointsTxnOther: "Points adjustment", pointsPositive: "+{{n}}", pointsNegative: "−{{n}}",
+        pointsHistoryEmpty: "No points transactions yet.", campaignGrantRequired: "Enter a username, campaign key, positive integer amount, and reason.", campaignGrantAlreadyDone: "This campaign grant was already issued.",
+        campaignGrantTitle: "Campaign points grant", campaignUsernamePlaceholder: "Human username", campaignKeyPlaceholder: "Unique campaign key",
+        campaignReasonPlaceholder: "Reason", campaignGrantBtn: "Grant", campaignGrantDone: "Granted {{n}} points to {{name}} (balance {{balance}})",
+        welcomePointsToast: "Account created — {{n}} welcome points added",
+        libraryUpload: "Upload resource", libraryUploadName: "Resource name", libraryDescription: "Description", librarySaveMeta: "Save details",
+        libraryEmpty: "Your library is empty. Upload a file to get started.", libraryQuotaFmt: "{{count}} / {{maxCount}} items · {{used}} / {{max}}",
+        libraryVersion: "Version {{n}}", libraryVersionHistory: "Resource versions", libraryNewVersion: "Upload new version",
+        libraryDownload: "Download", libraryDetails: "Versions / manage", libraryImport: "Add to current room",
+        libraryPreview: "Preview", libraryPreviewUnsupported: "Download this resource type to view it.", libraryPreviewFail: "Resource preview failed",
+        librarySubmitReview: "Submit for review", libraryReviewPending: "In review", libraryReviewApproved: "Approved",
+        libraryReviewRejected: "Rejected", libraryReviewDraft: "Not submitted", libraryReviewNote: "Review note: {{note}}",
+        libraryPrice: "Price (points)", libraryPublish: "List / update price", libraryUnlist: "Unlist",
+        libraryArchive: "Archive resource", libraryArchived: "Resource archived", libraryUploaded: "Resource uploaded",
+        libraryVersionUploaded: "New version uploaded", libraryReviewSubmitted: "Submitted for review", libraryListingSaved: "Store price saved",
+        storeSearchPlaceholder: "Search public resources", storeAllKinds: "All kinds", storeSearch: "Search",
+        storeRoomNamePrompt: "Room file name (including extension)", storeRoomNameRequired: "Enter a room file name first.",
+        storeEmpty: "No listed resources found.", storeCreator: "Creator {{name}}", storePrice: "{{n}} points",
+        pointsBalance: "Points: {{n}}", resourceReviewEmpty: "No resources are waiting for review.",
+        storeAddToRoom: "Buy and add to room", storeFreeAdd: "Add to current room", storeBuyConfirm: "Spend {{n}} points to add this resource to the current room?",
+        storeNeedRoom: "Join a room first before adding a resource to its shared files.", storeAdded: "Resource added to the room shared files",
+        storeInsufficient: "Not enough points: {{required}} required, {{available}} available.",
+        resourceReviewTitle: "Resource review queue", resourceReviewApprove: "Approve", resourceReviewReject: "Reject",
+        resourceReviewNotePrompt: "Review note (optional)", resourceReviewDone: "Review decision saved",
+        receivedRoomInvites: "Room invitations", roomInvitePending: "Invitation to {{room}} from {{inviter}}",
+        roomInviteAccept: "Accept & join", roomInviteDecline: "Decline", roomInviteJoin: "Enter room",
+        roomInvitesTitle: "Invite friends to this private room", roomInvitesHint: "Only accepted friends can be invited; they must accept before joining.",
+        roomInviteSend: "Invite", roomInviteSent: "Invitation sent", roomInviteRevoked: "Invitation revoked", roomInviteEmpty: "No invitations yet",
         onlineCountFmt: "{{n}} online", unreadAria: "{{n}} unread",
         archivedReadOnly: "Archived · read-only", archivePlaceholder: "Read-only archive", mutedPlaceholder: "You are muted",
         mutedWhisperPlaceholder: "Public speech is muted; you can still whisper via #groupname or @@username",
-        onlineFmt: "{{n}} online · within 5 min", noOnline: "No users online", meSuffix: " (me)",
+        onlineFmt: "{{n}} online · within 5 min", roomMembersFmt: "{{online}} online / {{total}} members", noOnline: "No users online", meSuffix: " (me)",
+        leaveRoom: "Leave room", leaveRoomConfirm: "Leave this room? Your history remains, but you must rejoin to access it again.", leftRoomDone: "You left the room",
+        bringAgent: "Add my Agent", agentJoinedRoom: "{{name}} joined the room", noActiveAgents: "No active Agents available",
+        mentionAdd: "Message @them", mentionBadge: "Mentioned @{{name}}",
         roomPwdPrompt: 'Room "{{name}}" requires a password:',
         archiveHint: "Read-only · archived; the room name can be reused", pollingHint: "Long-polling · refreshes on new messages",
         roomArchived: "Room archived", noMessages: "No messages yet. Say the first word.",
@@ -1696,6 +1890,7 @@
         membersReadOnly: "Only the owner, the Room Agent, or the Agent's master can change permissions and bans.", noMembers: "No members",
         memberCol: "Member", speakCol: "Speak", attachCol: "Files", historyCol: "History",
         kindAgent: "Agent", kindHuman: "Human", permUpdated: "Permissions updated for {{name}}",
+        memberRemove: "Remove from room", memberRemoveConfirm: "Remove {{name}} from this room? They will no longer be able to read or rejoin it.", memberRemovedDone: "{{name}} was removed from the room",
         banBtn: "Ban", banUnban: "Unban", banPick: "Choose a ban duration",
         ban3m: "3 minutes", ban1h: "1 hour", ban24h: "24 hours", ban1mo: "1 month", banForever: "Permanent",
         banActive: "Banned", banExpired: "Expired", banUntil: "until", banBy: "by {{name}}",
@@ -1730,7 +1925,7 @@
         avatarHint: "JPG/PNG, ≤1MB; auto-generated if none",
         avatarTooBig: "Avatar must be under 1MB", avatarBadType: "Avatar must be a JPG or PNG image",
         avatarUpdated: "Avatar updated", avatarResetDone: "Reverted to the default avatar", avatarUploadFail: "Failed to upload avatar",
-        changeAvatarTitle: "Click to change avatar",
+        changeAvatarTitle: "Open personal settings",
         rulesLabel: "Room rules (optional)",
         templateLabel: "Template (optional)",
         templateNone: "No template",
@@ -1765,7 +1960,7 @@
         model3dPlaceholder: "https://…/model.glb",
         model3dArkitLabel: "Supports Apple ARKit 52 blendshapes",
         model3dHumanoidLabel: "Supports Unity Humanoid full-body rig",
-        personMenuTitle: "Click to whisper this member",
+        personMenuTitle: "Click for @mention or whisper",
         whisperToLabel: "Whisper →",
         whisperAdd: "Add to whisper",
         whisperRemove: "Remove from whisper",
@@ -2098,6 +2293,10 @@
       isSuperadmin: false,
       canArchive: false,
       canManage: false,
+      isDirectPair: false,
+      roomId: null,
+      namespaceOwnerName: "",
+      canInviteFriends: false,
       viewingArchive: false,
       archiveId: null,
       perms: { canSpeak: true, canUpload: true },
@@ -2162,7 +2361,7 @@
         const mod = await import("/static/xr/xr-main.js");
         xrSession = await mod.createXR({
           root: $("xrRoot"),
-          t, tf, api,
+          t, tf, api, formatTime: messageTime,
           I18N,
           token: () => store.token,
           username: () => store.username,
@@ -2253,6 +2452,7 @@
       if (!data) return fallback;
       if (typeof data.detail === "string") return data.detail;
       if (Array.isArray(data.detail)) return data.detail.map((x) => x.msg || x).join("; ");
+      if (data.detail && typeof data.detail === "object" && typeof data.detail.message === "string") return data.detail.message;
       return fallback;
     }
 
@@ -2264,7 +2464,31 @@
     function suggestionStatusLabel(status) {
       return t({ new: "adminStatusNew", reviewing: "adminStatusReviewing", planned: "adminStatusPlanned", resolved: "adminStatusResolved", rejected: "adminStatusRejected" }[status] || "adminStatusNew");
     }
-    function adminTime(value) { return value ? new Date(value.replace(" ", "T") + "Z").toLocaleString(LANG === "zh" ? "zh-CN" : "en-US") : ""; }
+    function messageTime(value) {
+      if (!value) return "";
+      const raw = String(value);
+      const iso = raw.replace(" ", "T");
+      // SQLite timestamps are UTC without a suffix; explicit offsets stay intact.
+      const date = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : iso + "Z");
+      if (!Number.isFinite(date.getTime())) return raw;
+      const tz = displayTimeZone();
+      return new Intl.DateTimeFormat(LANG === "zh" ? "zh-CN" : "en-US", {
+        year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+        minute: "2-digit", second: "2-digit", hourCycle: "h23",
+        hour12: false, timeZone: tz, timeZoneName: "short",
+      }).format(date);
+    }
+    function loadTimezoneMode() {
+      try { return localStorage.getItem("timeZoneMode") === "asia" ? "asia" : "browser"; }
+      catch { return "browser"; }
+    }
+    function displayTimeZone() {
+      return loadTimezoneMode() === "asia" ? "Asia/Shanghai" : undefined;
+    }
+    function saveTimezoneMode() {
+      try { localStorage.setItem("timeZoneMode", $("timeZoneMode").value); } catch { /* 私有模式忽略 */ }
+    }
+    function adminTime(value) { return messageTime(value); }
     function clearAdmin() {
       adminPanel.request++; adminPanel.detailRequest++;
       adminPanel.items = []; adminPanel.selected = null; adminPanel.nextBeforeId = null; adminPanel.total = 0;
@@ -2583,6 +2807,7 @@
       $("myProfileStatus").textContent = "";
       setAcctStatus("");
       ["acctOldPwd", "acctNewPwd", "acctNewPwd2"].forEach((id) => { $(id).value = ""; });
+      $("timeZoneMode").value = loadTimezoneMode();
       $("myProfile").showModal();
       await refreshMyProfile();
     }
@@ -2895,7 +3120,7 @@
         if (regAvatarData) body.avatar = regAvatarData;
         if (phone) { body.phone = phone; body.phoneCode = phoneCode; }
         if (email) { body.email = email; body.emailCode = emailCode; }
-        await api("/api/users", { method: "POST", body: JSON.stringify(body) });
+        const registered = await api("/api/users", { method: "POST", body: JSON.stringify(body) });
         regAvatarData = null;
         avResetPending();
         /* 注册成功 → 自动登录（登录表单填上刚注册的凭据） */
@@ -2904,6 +3129,7 @@
         closeRegister();
         switchAuthTab("pwd");
         await login();
+        if (store.token && registered.welcomePoints) voiceToast(tf("welcomePointsToast", { n: registered.welcomePoints }));
         if (modelFile && store.token) await uploadRegModel3d(modelFile, arkit, humanoid);
         else if (builtinId && store.token) await putBuiltinAvatar(builtinId);
       } catch (err) {
@@ -3374,6 +3600,11 @@
       store.isOwner = !!info.isOwner;
       store.canArchive = !!info.canArchive;
       store.canManage = !!info.canManage;
+      store.isDirectPair = !!info.isDirectPair;
+      store.roomId = info.roomId || null;
+      store.namespaceOwnerName = info.namespaceOwnerName || "";
+      store.canInviteFriends = !store.viewingArchive && info.visibility === "private"
+        && !store.isDirectPair && store.namespaceOwnerName.toLowerCase() === store.username.toLowerCase();
       store.perms = info.myPermissions || { canSpeak: true, canUpload: true };
       store.roomAgent = info.roomAgent || "";
       store.scene = info.scene || null;
@@ -3386,8 +3617,11 @@
         + (store.viewingArchive ? t("archivedSuffix") : "");
       $("roomTitle").textContent = title;
       renderRoomTemplate(info);
-      // 治理者（房主 / roomAgent / 建房的 Agent 主人）可开管理面板；归档另看 canArchive（roomAgent 不能归档）
-      $("manageBtn").classList.toggle("hidden", store.viewingArchive || !store.canManage);
+      // 所有活跃成员可开房间设置；治理区与归档按钮仍单独按权限显示。
+      $("manageBtn").classList.toggle("hidden", store.viewingArchive || !info.roomId);
+      $("leaveRoomBtn").classList.toggle("hidden", store.viewingArchive || !info.roomId);
+      $("bringAgentBtn").classList.toggle("hidden", store.viewingArchive || !info.roomId);
+      $("roomInvitePanel").classList.toggle("hidden", !store.canInviteFriends);
       $("composer").classList.toggle("hidden", store.viewingArchive);
       $("ownerSettings").classList.toggle("hidden", !store.canManage);
       $("clearPwdBtn").classList.toggle("hidden", !store.canManage);
@@ -3402,7 +3636,8 @@
         $("editRules").value = info.rules || "";
       }
       const onlineUsers = store.viewingArchive ? [] : (info.onlineUsers || []);
-      renderOnline(onlineUsers);
+      const roomMembers = store.viewingArchive ? [] : (info.roomMembers || onlineUsers);
+      renderOnline(roomMembers);
       if (!store.viewingArchive && store.waitingForAgent) {
         const waitingName = store.waitingForAgent;
         const arrived = onlineUsers.some((member) => member.username === waitingName);
@@ -3446,7 +3681,8 @@
 
     function renderOnline(users) {
       const box = $("people");
-      $("onlineCount").textContent = tf("onlineFmt", { n: users.length });
+      const online = users.filter((u) => !!u.online).length;
+      $("onlineCount").textContent = tf("roomMembersFmt", { online, total: users.length });
       const pc = $("peopleCount");
       if (pc) pc.textContent = users.length ? String(users.length) : "";
       // 房内至少有一个人被禁言时才显示红/绿发言权框，普通聊天房保持原样
@@ -3457,9 +3693,9 @@
         return;
       }
       box.innerHTML = users.map((u) => `
-        <div class="person" data-name="${escapeHtml(u.username)}" data-avatar="${escapeHtml(u.avatarUrl || "")}"
+        <div class="person ${u.online ? "" : "offline"}" data-name="${escapeHtml(u.username)}" data-avatar="${escapeHtml(u.avatarUrl || "")}"
              data-speak="${u.canSpeak === false ? 0 : 1}"
-             title="${u.username === store.username ? "" : escapeHtml(t("personMenuTitle"))}"><span class="dot"></span>
+             title="${u.username === store.username || store.isDirectPair ? "" : escapeHtml(t("personMenuTitle"))}"><span class="dot"></span>
           <img class="avatar" data-src="${escapeHtml(u.avatarUrl || "")}" alt="" />
           <span>${escapeHtml(u.username)}${u.username === store.username ? t("meSuffix") : ""}</span>
         </div>
@@ -3468,14 +3704,64 @@
       box.querySelectorAll(".person").forEach((el) => {
         el.addEventListener("click", (e) => {
           const name = el.dataset.name;
-          if (!name || name === store.username) return;
+          if (!name || name === store.username || store.isDirectPair) return;
+          const items = [{ label: t("mentionAdd"), action: () => prepareMention(name) }];
           if (whisperIndex(name) >= 0) {
-            showPopMenu([{ label: t("whisperRemove"), action: () => removeWhisperTarget(name) }], e.clientX, e.clientY);
+            items.push({ label: t("whisperRemove"), action: () => removeWhisperTarget(name) });
           } else {
-            showPopMenu([{ label: t("whisperAdd"), action: () => addWhisperTarget(name, el.dataset.avatar) }], e.clientX, e.clientY);
+            items.push({ label: t("whisperAdd"), action: () => addWhisperTarget(name, el.dataset.avatar) });
           }
+          showPopMenu(items, e.clientX, e.clientY);
         });
       });
+    }
+
+    function prepareMention(username) {
+      if (!username || store.isDirectPair) return;
+      if (whisperTo.length) clearWhisper(); // @TA 是公开留言，不沿用 @@ 私聊模式
+      const input = $("content");
+      const prefix = `@${username}`;
+      const current = input.value.trimStart();
+      if (!current.toLowerCase().startsWith((prefix + " ").toLowerCase()) && current.toLowerCase() !== prefix.toLowerCase()) {
+        input.value = `${prefix} ${current}`.trimEnd() + (current ? " " : "");
+      }
+      resizeComposer();
+      input.focus();
+    }
+
+    async function leaveCurrentRoom() {
+      if (!store.roomName || store.viewingArchive) return;
+      if (!confirm(t("leaveRoomConfirm"))) return;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/leave`, { method: "POST" });
+        $("settings").close();
+        leaveEndedRoom(t("leftRoomDone"));
+      } catch (err) { setHint(err.message || String(err)); }
+    }
+
+    async function bringOwnAgentToRoom() {
+      if (!store.roomId || store.viewingArchive) return;
+      try {
+        const result = await api("/api/agents");
+        const agents = (result.agents || []).filter((agent) => agent.status === "active");
+        if (!agents.length) { voiceToast(t("noActiveAgents")); return; }
+        const items = agents.map((agent) => ({
+          label: agent.username,
+          action: async () => {
+            try {
+              await api(`/api/rooms/${store.roomId}/agents`, {
+                method: "POST",
+                body: JSON.stringify({ agentUsername: agent.username }),
+              });
+              voiceToast(tf("agentJoinedRoom", { name: agent.username }));
+              const info = await api(`/api/rooms/${store.roomId}`);
+              applyRoom(info);
+              await refreshRooms();
+            } catch (err) { setHint(err.message || String(err)); }
+          },
+        }));
+        showPopMenu(items, window.innerWidth / 2, 80);
+      } catch (err) { setHint(err.message || String(err)); }
     }
 
     async function fillRoomAgentSelect(selectId, selected) {
@@ -3870,11 +4156,15 @@
       clearReply();
       stopVoicePlay();
       store.roomName = ""; store.isOwner = false; store.canArchive = false; store.canManage = false; store.waitingForAgent = "";
+      store.isDirectPair = false;
+      store.roomId = null; store.namespaceOwnerName = ""; store.canInviteFriends = false;
       store.viewingArchive = false; store.archiveId = null; lastId = 0; lastUpdatedAt = "";
       msgIndex.clear(); msgArrival.clear(); pendingVoiceIds.clear();
       saveSession();
       $("roomTitle").textContent = t("chooseRoom");
       $("manageBtn").classList.add("hidden");
+      $("leaveRoomBtn").classList.add("hidden");
+      $("bringAgentBtn").classList.add("hidden");
       $("view3dBtn").classList.add("hidden");
       $("filesBtn").classList.add("hidden");
       roomEvents.emit({ closed: true });
@@ -4496,7 +4786,7 @@
       if (m.whisper) {
         el.className += " whisper";
       }
-      el.innerHTML = `<div class="meta"><img class="avatar sm" data-src="${escapeHtml(m.avatarUrl || "")}" alt="" />${escapeHtml(m.username)} · ${escapeHtml(m.createdAt)}</div><div class="body"></div>`;
+      el.innerHTML = `<div class="meta"><img class="avatar sm" data-src="${escapeHtml(m.avatarUrl || "")}" alt="" />${escapeHtml(m.username)} · ${escapeHtml(messageTime(m.createdAt))}</div><div class="body"></div>`;
       const meta = el.querySelector(".meta");
       const body = el.querySelector(".body");
       if (m.whisper) {
@@ -4509,6 +4799,12 @@
         tag.textContent = members.length ? tf("whisperTagN", { n: members.length + 1 }) : t("whisperTag");
         meta.appendChild(tag);
         if (members.length) meta.insertBefore(buildWhisperMembers(members), tag);
+      }
+      if (m.mentionTo && m.mentionTo.username) {
+        const mention = document.createElement("span");
+        mention.className = "mention-tag";
+        mention.textContent = tf("mentionBadge", { name: m.mentionTo.username });
+        meta.appendChild(mention);
       }
       const menuBtn = document.createElement("button");
       menuBtn.type = "button";
@@ -4711,7 +5007,7 @@
           temp.dataset.msgId = String(sent.id);
           temp.removeAttribute("data-temp-id");
           const meta = temp.querySelector(".meta");
-          if (meta) meta.textContent = `${store.username} · ${sent.createdAt}`;
+          if (meta) meta.textContent = `${store.username} · ${messageTime(sent.createdAt)}`;
           lastId = Math.max(Number(lastId) || 0, Number(sent.id) || 0);
           if (sent.downloadUrl && localUrl) blobCache.set(sent.downloadUrl, localUrl);
         } else {
@@ -4728,6 +5024,7 @@
     // ---------- 房间管理 ----------
 
     async function openSettings() {
+      if (!store.roomName || store.viewingArchive) return;
       $("editPassword").value = "";
       $("settingsStatus").textContent = "";
       $("settings").showModal();
@@ -4753,6 +5050,7 @@
       $("editSceneFile").value = "";
       await loadSceneOptions("editScene", store.scene);
       $("editSceneState").textContent = sceneStatusText(store.scene);
+      if (store.canInviteFriends) await refreshRoomInvites();
     }
 
     function renderWhisperRules(rules) {
@@ -4829,6 +5127,11 @@
       return `<button class="btn ghost small" data-ban="${escapeHtml(m.username)}">${t("banBtn")}</button>`;
     }
 
+    function memberRemoveCell(m) {
+      if (m.isOwner || m.isRoomAgent || m.isAgentMaster) return "";
+      return `<button class="btn ghost small" data-remove-member="${escapeHtml(m.username)}">${t("memberRemove")}</button>`;
+    }
+
     function renderMembers(members) {
       const box = $("membersBox");
       if (!members.length) { box.textContent = t("noMembers"); return; }
@@ -4843,7 +5146,7 @@
               <td><input type="checkbox" data-p="canEditFiles" ${m.canEditFiles !== false ? "checked" : ""} /></td>
               <td><input type="checkbox" data-p="canViewHistory" ${m.canViewHistory ? "checked" : ""} /></td>
               <td><button class="btn ghost small" data-save="${escapeHtml(m.username)}">${t("save")}</button></td>
-              <td>${memberBanCell(m)}</td>
+              <td>${memberBanCell(m)} ${memberRemoveCell(m)}</td>
             </tr>`).join("")}
         </table>`;
       box.querySelectorAll("[data-save]").forEach((btn) => {
@@ -4851,6 +5154,9 @@
       });
       box.querySelectorAll("[data-unban]").forEach((btn) => {
         btn.addEventListener("click", () => unbanMember(btn.dataset.unban));
+      });
+      box.querySelectorAll("[data-remove-member]").forEach((btn) => {
+        btn.addEventListener("click", () => removeRoomMember(btn.dataset.removeMember));
       });
       box.querySelectorAll("[data-ban]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -4936,6 +5242,15 @@
         });
         setHint(tf("permUpdated", { name: username }));
       } catch (err) { setHint(err.message); }
+    }
+
+    async function removeRoomMember(username) {
+      if (!confirm(tf("memberRemoveConfirm", { name: username }))) return;
+      try {
+        await api(`/api/rooms/${encodeURIComponent(store.roomName)}/members/${encodeURIComponent(username)}`, { method: "DELETE" });
+        setSettingsStatus(tf("memberRemovedDone", { name: username }));
+        await refreshMembersAndBans();
+      } catch (err) { setSettingsStatus(err.message || String(err)); }
     }
 
     async function saveRoom() {
@@ -5423,6 +5738,566 @@
       $("agents").showModal();
       await refreshAgents();
     }
+
+    async function openFriends() {
+      $("friendUsername").value = "";
+      $("friendsStatus").textContent = "";
+      $("friendsDlg").showModal();
+      await refreshFriends();
+      await refreshIncomingRoomInvites();
+    }
+
+    async function refreshFriends() {
+      const box = $("friendsList");
+      try {
+        const data = await api("/api/friends?status=all");
+        const friends = (data.friends || []).filter((item) => item.status === "accepted" || item.status === "pending");
+        const pendingCount = friends.filter((item) => item.status === "pending").length;
+        $("friendPendingBadge").textContent = pendingCount ? String(pendingCount) : "";
+        $("friendPendingBadge").classList.toggle("hidden", !pendingCount);
+        if (!friends.length) { box.innerHTML = `<div class="hint">${escapeHtml(t("friendEmpty"))}</div>`; return; }
+        box.innerHTML = friends.map((friend) => {
+          const state = friend.status === "accepted"
+            ? ""
+            : `<span class="badge">${escapeHtml(t(friend.incoming ? "friendIncoming" : "friendOutgoing"))}</span>`;
+          let actions = "";
+          if (friend.status === "accepted") {
+            actions = `<button class="btn ghost small" data-fremove="${escapeHtml(friend.username)}">${escapeHtml(t("friendRemove"))}</button>`;
+          } else if (friend.incoming) {
+            actions = `<button class="btn small" data-faccept="${friend.id}">${escapeHtml(t("friendAccept"))}</button>
+              <button class="btn ghost small" data-fdecline="${friend.id}">${escapeHtml(t("friendDecline"))}</button>`;
+          } else {
+            actions = `<button class="btn ghost small" data-fcancel="${friend.id}">${escapeHtml(t("friendCancel"))}</button>`;
+          }
+          return `<div class="agent-row"><span class="who-cell"><img class="avatar" data-src="${escapeHtml(friend.avatarUrl || "")}" alt="" />
+            <span>${escapeHtml(friend.username)} ${state}</span></span><span class="ops">${actions}</span></div>`;
+        }).join("");
+        box.querySelectorAll("[data-faccept]").forEach((btn) => btn.addEventListener("click", () => friendAction(`/api/friends/requests/${btn.dataset.faccept}/accept`, "POST", "friendAccepted")));
+        box.querySelectorAll("[data-fdecline]").forEach((btn) => btn.addEventListener("click", () => friendAction(`/api/friends/requests/${btn.dataset.fdecline}/decline`, "POST", "friendDeclined")));
+        box.querySelectorAll("[data-fcancel]").forEach((btn) => btn.addEventListener("click", () => friendAction(`/api/friends/requests/${btn.dataset.fcancel}`, "DELETE", "friendCanceled")));
+        box.querySelectorAll("[data-fremove]").forEach((btn) => btn.addEventListener("click", () => friendAction(`/api/friends/${encodeURIComponent(btn.dataset.fremove)}`, "DELETE", "friendRemoved")));
+        hydrateImages(box);
+      } catch (err) { box.textContent = err.message || String(err); }
+    }
+
+    async function refreshIncomingRoomInvites() {
+      const box = $("receivedRoomInvites");
+      try {
+        const data = await api("/api/room-invites");
+        const invites = (data.invites || []).filter((invite) => invite.status === "pending" || invite.status === "accepted");
+        if (!invites.length) { box.innerHTML = `<div class="hint">${escapeHtml(t("roomInviteEmpty"))}</div>`; return; }
+        box.innerHTML = invites.map((invite) => {
+          const label = tf("roomInvitePending", { room: invite.roomName, inviter: invite.inviter });
+          const actions = invite.status === "accepted"
+            ? `<button class="btn small" data-rjoin="${invite.id}" data-room-id="${invite.roomId}" data-room-name="${escapeHtml(invite.roomName)}">${escapeHtml(t("roomInviteJoin"))}</button>`
+            : `<button class="btn small" data-raccept="${invite.id}" data-room-id="${invite.roomId}" data-room-name="${escapeHtml(invite.roomName)}">${escapeHtml(t("roomInviteAccept"))}</button>
+               <button class="btn ghost small" data-rdecline="${invite.id}">${escapeHtml(t("roomInviteDecline"))}</button>`;
+          return `<div class="agent-row"><span>${escapeHtml(label)}</span><span class="ops">${actions}</span></div>`;
+        }).join("");
+        box.querySelectorAll("[data-raccept]").forEach((btn) => btn.addEventListener("click", () => acceptAndJoinRoomInvite(btn)));
+        box.querySelectorAll("[data-rjoin]").forEach((btn) => btn.addEventListener("click", () => openRoomById(Number(btn.dataset.roomId), btn.dataset.roomName)));
+        box.querySelectorAll("[data-rdecline]").forEach((btn) => btn.addEventListener("click", () => respondRoomInvite(btn.dataset.rdecline, false)));
+      } catch (err) { box.textContent = err.message || String(err); }
+    }
+
+    async function acceptAndJoinRoomInvite(button) {
+      const id = button.dataset.raccept;
+      try {
+        await api(`/api/room-invites/${id}/accept`, { method: "POST" });
+        await refreshIncomingRoomInvites();
+        await refreshRooms();
+        await openRoomById(Number(button.dataset.roomId), button.dataset.roomName);
+      } catch (err) { $("friendsStatus").textContent = err.message || String(err); }
+    }
+
+    async function respondRoomInvite(id, accept) {
+      try {
+        await api(`/api/room-invites/${id}/${accept ? "accept" : "decline"}`, { method: "POST" });
+        await refreshIncomingRoomInvites();
+        await refreshRooms();
+      } catch (err) { $("friendsStatus").textContent = err.message || String(err); }
+    }
+
+    async function openRoomById(roomId, roomName) {
+      try {
+        const info = await api("/api/rooms", { method: "POST", body: JSON.stringify({ roomId, roomName }) });
+        $("friendsDlg").close();
+        await enterRoom(info);
+      } catch (err) {
+        if (err.message.includes("需要房间密码") || err.message.includes("requires a password")) {
+          const password = prompt(tf("roomPwdPrompt", { name: roomName }));
+          if (!password) return;
+          try {
+            const info = await api("/api/rooms", { method: "POST", body: JSON.stringify({ roomId, roomName, password }) });
+            $("friendsDlg").close();
+            await enterRoom(info);
+          } catch (retryError) { $("friendsStatus").textContent = retryError.message || String(retryError); }
+        } else {
+          $("friendsStatus").textContent = err.message || String(err);
+        }
+      }
+    }
+
+    async function refreshRoomInvites() {
+      const box = $("roomInvitesBox");
+      if (!store.canInviteFriends || !store.roomId) return;
+      try {
+        const data = await api(`/api/rooms/${store.roomId}/invites`);
+        const invites = data.invites || [];
+        if (!invites.length) { box.innerHTML = `<div class="hint">${escapeHtml(t("roomInviteEmpty"))}</div>`; return; }
+        box.innerHTML = invites.map((invite) => `<div class="agent-row"><span>${escapeHtml(invite.invitee)} <span class="badge">${escapeHtml(invite.status)}</span></span>
+          ${invite.status === "pending" ? `<button class="btn ghost small" data-rrevoke="${invite.id}">${escapeHtml(t("cancel"))}</button>` : ""}</div>`).join("");
+        box.querySelectorAll("[data-rrevoke]").forEach((btn) => btn.addEventListener("click", () => revokeRoomInvite(btn.dataset.rrevoke)));
+      } catch (err) { box.textContent = err.message || String(err); }
+    }
+
+    async function inviteFriendToRoom() {
+      const username = $("roomInviteUsername").value.trim();
+      if (!username || !store.roomId) return;
+      try {
+        await api(`/api/rooms/${store.roomId}/invites`, { method: "POST", body: JSON.stringify({ username }) });
+        $("roomInviteUsername").value = "";
+        $("roomInviteStatus").textContent = t("roomInviteSent");
+        await refreshRoomInvites();
+      } catch (err) { $("roomInviteStatus").textContent = err.message || String(err); }
+    }
+
+    async function revokeRoomInvite(inviteId) {
+      try {
+        await api(`/api/rooms/${store.roomId}/invites/${inviteId}`, { method: "DELETE" });
+        $("roomInviteStatus").textContent = t("roomInviteRevoked");
+        await refreshRoomInvites();
+      } catch (err) { $("roomInviteStatus").textContent = err.message || String(err); }
+    }
+
+    async function friendAction(path, method, successKey) {
+      try {
+        await api(path, { method });
+        $("friendsStatus").textContent = t(successKey);
+        await refreshFriends();
+        await refreshRooms();
+      } catch (err) { $("friendsStatus").textContent = err.message || String(err); }
+    }
+
+    async function sendFriendRequest() {
+      const username = $("friendUsername").value.trim();
+      if (!username) return;
+      try {
+        await api("/api/friends/requests", { method: "POST", body: JSON.stringify({ username }) });
+        $("friendUsername").value = "";
+        $("friendsStatus").textContent = t("friendAdded");
+        await refreshFriends();
+      } catch (err) { $("friendsStatus").textContent = err.message || String(err); }
+    }
+
+    // ---------- 个人资源库 / 公共商店 ----------
+    let selectedLibraryResourceId = null;
+    let versionUploadTargetId = null;
+    let currentPointsBalance = 0;
+
+    async function openResources() {
+      $("resourcesStatus").textContent = "";
+      $("resourcesDlg").showModal();
+      $("resourceReviewPanel").classList.toggle("hidden", !store.isSuperadmin);
+      await Promise.all([refreshPointsBalance(), refreshPointsTransactions(), refreshLibrary()]);
+      if (store.isSuperadmin) await refreshResourceReviews();
+    }
+
+    function showResourceTab(tab) {
+      const library = tab === "library";
+      $("libraryTab").classList.toggle("hidden", !library);
+      $("storeTab").classList.toggle("hidden", library);
+      $("libraryUploadBtn").classList.toggle("hidden", !library);
+      if (!library) refreshStore();
+    }
+
+    async function refreshPointsBalance() {
+      try {
+        const data = await api("/api/points");
+        currentPointsBalance = Number(data.balance) || 0;
+        $("pointsBalance").textContent = tf("pointsBalance", { n: currentPointsBalance });
+      } catch (err) { $("pointsBalance").textContent = err.message || String(err); }
+    }
+
+    async function refreshPointsTransactions() {
+      const box = $("pointsLedger");
+      try {
+        const [account, data] = await Promise.all([api("/api/points"), api("/api/points/transactions")]);
+        const rows = data.transactions || [];
+        if (!rows.length) { box.innerHTML = `<div class="hint">${escapeHtml(t("pointsHistoryEmpty"))}</div>`; return; }
+        box.innerHTML = rows.map((row) => {
+          const metadata = row.metadata || {};
+          const label = row.transactionType === "signup_grant"
+            ? t("pointsTxnSignup")
+            : row.transactionType === "campaign_grant"
+              ? tf("pointsTxnCampaign", { reason: metadata.reason || metadata.campaignKey || "" })
+              : row.transactionType === "purchase" ? t("pointsTxnPurchase") : t("pointsTxnOther");
+          let signed = 0;
+          if (row.transactionType === "signup_grant" || row.transactionType === "campaign_grant") signed = row.amount;
+          else if (row.payerUserId === account.userId && row.payeeUserId !== account.userId) signed = -row.amount;
+          else if (row.payeeUserId === account.userId && row.payerUserId !== account.userId) signed = row.amount;
+          const signedText = signed < 0 ? tf("pointsNegative", { n: Math.abs(signed) }) : tf("pointsPositive", { n: signed });
+          return `<div class="agent-row"><span><strong>${escapeHtml(label)}</strong>
+            <small class="hint">${escapeHtml(metadata.campaignKey || "")} · ${escapeHtml(row.createdAt || "")}</small></span>
+            <span class="badge ${signed < 0 ? "off" : ""}">${escapeHtml(signedText)}</span></div>`;
+        }).join("");
+      } catch (err) { box.textContent = err.message || String(err); }
+    }
+
+    async function grantCampaignPoints() {
+      const username = $("campaignUsername").value.trim();
+      const campaignKey = $("campaignKey").value.trim();
+      const amount = Number($("campaignAmount").value);
+      const reason = $("campaignReason").value.trim();
+      if (!username || !campaignKey || !reason || !Number.isInteger(amount) || amount < 1) {
+        $("resourcesStatus").textContent = t("campaignGrantRequired");
+        return;
+      }
+      try {
+        const result = await api("/api/admin/points/grants", {
+          method: "POST",
+          body: JSON.stringify({ username, campaignKey, amount, reason }),
+        });
+        $("resourcesStatus").textContent = result.idempotent
+          ? t("campaignGrantAlreadyDone")
+          : tf("campaignGrantDone", { name: result.username, n: result.amount, balance: result.balance });
+        await refreshPointsTransactions();
+        $("campaignUsername").value = "";
+        $("campaignReason").value = "";
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function refreshLibrary() {
+      const box = $("libraryResourceList");
+      box.innerHTML = `<div class="hint">${escapeHtml(t("loading"))}</div>`;
+      try {
+        const data = await api("/api/library/resources");
+        const quota = data.quota || {};
+        $("libraryQuota").textContent = tf("libraryQuotaFmt", {
+          count: quota.resourceCount || 0,
+          maxCount: quota.maxResources || 0,
+          used: fmtSize(quota.usedBytes || 0),
+          max: fmtSize(quota.maxBytes || 0),
+        });
+        const resources = data.resources || [];
+        if (!resources.length) {
+          box.innerHTML = `<div class="hint">${escapeHtml(t("libraryEmpty"))}</div>`;
+          return;
+        }
+        box.innerHTML = resources.map((resource) => {
+          const current = resource.currentVersion;
+          const status = current ? resourceReviewLabel(current.reviewStatus) : "";
+          return `<div class="agent-row">
+            <span class="who-cell"><span><strong>${escapeHtml(resource.name)}</strong>
+              ${current ? `<span class="badge">${escapeHtml(current.kind)}</span> <span class="badge ${current.reviewStatus === "approved" ? "" : "off"}">${escapeHtml(status)}</span>` : ""}
+              <small class="hint">${current ? `${fmtSize(current.size)} · v${current.versionNo}` : escapeHtml(resource.status)}</small></span></span>
+            <span class="ops">
+              <button class="btn ghost small" data-library-detail="${resource.id}">${escapeHtml(t("libraryDetails"))}</button>
+              ${current ? `<button class="btn ghost small" data-library-import="${resource.id}" data-version-id="${current.id}">${escapeHtml(t("libraryImport"))}</button>` : ""}
+              ${resource.status === "active" ? `<button class="btn ghost small" data-library-archive="${resource.id}">${escapeHtml(t("libraryArchive"))}</button>` : ""}
+            </span>
+          </div>`;
+        }).join("");
+        box.querySelectorAll("[data-library-detail]").forEach((btn) => btn.addEventListener("click", () => openLibraryDetails(Number(btn.dataset.libraryDetail))));
+        box.querySelectorAll("[data-library-import]").forEach((btn) => btn.addEventListener("click", () => importLibraryVersion(Number(btn.dataset.libraryImport), Number(btn.dataset.versionId))));
+        box.querySelectorAll("[data-library-archive]").forEach((btn) => btn.addEventListener("click", () => archiveLibraryResource(Number(btn.dataset.libraryArchive))));
+      } catch (err) { box.textContent = err.message || String(err); }
+    }
+
+    function resourceReviewLabel(status) {
+      return ({
+        draft: "libraryReviewDraft",
+        pending_review: "libraryReviewPending",
+        approved: "libraryReviewApproved",
+        rejected: "libraryReviewRejected",
+        withdrawn: "libraryReviewRejected",
+      })[status] ? t(({draft:"libraryReviewDraft",pending_review:"libraryReviewPending",approved:"libraryReviewApproved",rejected:"libraryReviewRejected",withdrawn:"libraryReviewRejected"})[status]) : (status || "");
+    }
+
+    async function openLibraryDetails(resourceId) {
+      try {
+        const resource = await api(`/api/library/resources/${resourceId}`);
+        selectedLibraryResourceId = resourceId;
+        renderLibraryDetails(resource);
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    function renderLibraryDetails(resource) {
+      const box = $("libraryResourceDetail");
+      box.classList.remove("hidden");
+      box.querySelectorAll("video,audio").forEach((media) => {
+        if (media.dataset.objectUrl) URL.revokeObjectURL(media.dataset.objectUrl);
+      });
+      const versions = resource.versions || [];
+      box.innerHTML = `<div class="card" style="margin-top:12px">
+        <h3 style="margin:0 0 8px;font-size:15px">${escapeHtml(resource.name)}</h3>
+        <label>${escapeHtml(t("libraryUploadName"))}</label>
+        <input id="libraryMetaName" value="${escapeHtml(resource.name)}" maxlength="128" />
+        <label>${escapeHtml(t("libraryDescription"))}</label>
+        <input id="libraryMetaDescription" value="${escapeHtml(resource.description || "")}" maxlength="500" />
+        <div class="ops" style="margin:8px 0"><button class="btn small" data-library-save="${resource.id}">${escapeHtml(t("librarySaveMeta"))}</button>
+          ${resource.status === "active" ? `<button class="btn ghost small" data-library-new-version="${resource.id}">${escapeHtml(t("libraryNewVersion"))}</button>` : ""}</div>
+        <h4 style="margin:12px 0 6px">${escapeHtml(t("libraryVersionHistory"))}</h4>
+        <div id="libraryPreviewBox" class="hidden" style="margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:8px;max-height:40vh;overflow:auto"></div>
+        <div class="agent-list">${versions.map((version) => {
+          const listing = version.listing;
+          const listingStatus = listing ? `${t("storePrice", { n: listing.pricePoints })} · ${listing.status}` : "";
+          const reviewNote = version.reviewNote ? `<div class="hint">${escapeHtml(tf("libraryReviewNote", { note: version.reviewNote }))}</div>` : "";
+          const listingControls = version.reviewStatus === "approved" && version.scanStatus === "clean" && resource.status === "active"
+            ? `<div class="inline-row" style="gap:6px;margin:6px 0"><label class="hint">${escapeHtml(t("libraryPrice"))}</label>
+                <input type="number" min="0" max="2000000000" step="1" value="${listing ? listing.pricePoints : 0}" data-list-price="${version.id}" style="width:110px" />
+                <button class="btn ghost small" data-list-version="${version.id}">${escapeHtml(t("libraryPublish"))}</button>
+            ${listing && listing.status === "listed" ? `<button class="btn ghost small" data-unlist-version="${listing.id}">${escapeHtml(t("libraryUnlist"))}</button>` : ""}</div>`
+            : "";
+          return `<div class="agent-row"><span><strong>${escapeHtml(tf("libraryVersion", { n: version.versionNo }))}</strong>
+            <span class="badge">${escapeHtml(version.kind)}</span> <span class="badge ${version.reviewStatus === "approved" ? "" : "off"}">${escapeHtml(resourceReviewLabel(version.reviewStatus))}</span>
+            <small class="hint">${fmtSize(version.size)} · ${escapeHtml(version.createdAt || "")}</small>${reviewNote}${listingStatus ? `<small class="hint">${escapeHtml(listingStatus)}</small>` : ""}</span>
+            <span class="ops"><button class="btn ghost small" data-resource-preview="${version.id}" data-resource-id="${resource.id}" data-resource-name="${escapeHtml(version.name)}" data-kind="${escapeHtml(version.kind)}" data-mime="${escapeHtml(version.mime)}">${escapeHtml(t("libraryPreview"))}</button>
+            <button class="btn ghost small" data-resource-download="${version.id}" data-resource-id="${resource.id}" data-resource-name="${escapeHtml(version.name)}">${escapeHtml(t("libraryDownload"))}</button>
+            <button class="btn ghost small" data-resource-import="${version.id}" data-resource-id="${resource.id}">${escapeHtml(t("libraryImport"))}</button>
+            ${version.reviewStatus === "draft" || version.reviewStatus === "rejected" ? `<button class="btn ghost small" data-review-submit="${version.id}" data-resource-id="${resource.id}">${escapeHtml(t("librarySubmitReview"))}</button>` : ""}</span></div>${listingControls}`;
+        }).join("")}</div>
+      </div>`;
+      box.querySelector("[data-library-save]")?.addEventListener("click", () => saveLibraryMetadata(resource.id));
+      box.querySelector("[data-library-new-version]")?.addEventListener("click", () => { versionUploadTargetId = resource.id; $("libraryVersionFile").click(); });
+      box.querySelectorAll("[data-resource-download]").forEach((btn) => btn.addEventListener("click", () => downloadLibraryFile(resource.id, Number(btn.dataset.resourceDownload), btn.dataset.resourceName)));
+      box.querySelectorAll("[data-resource-preview]").forEach((btn) => btn.addEventListener("click", () => previewLibraryVersion(resource.id, Number(btn.dataset.resourcePreview), btn.dataset.resourceName, btn.dataset.kind, btn.dataset.mime)));
+      box.querySelectorAll("[data-resource-import]").forEach((btn) => btn.addEventListener("click", () => importLibraryVersion(Number(btn.dataset.resourceId), Number(btn.dataset.resourceImport))));
+      box.querySelectorAll("[data-review-submit]").forEach((btn) => btn.addEventListener("click", () => submitLibraryReview(Number(btn.dataset.resourceId), Number(btn.dataset.reviewSubmit))));
+      box.querySelectorAll("[data-list-version]").forEach((btn) => btn.addEventListener("click", () => publishLibraryVersion(resource.id, Number(btn.dataset.listVersion))));
+      box.querySelectorAll("[data-unlist-version]").forEach((btn) => btn.addEventListener("click", () => unlistResource(Number(btn.dataset.unlistVersion))));
+    }
+
+    async function uploadLibraryResource(event) {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = "";
+      if (!file) return;
+      const description = prompt(t("libraryDescription"), "");
+      if (description === null) return;
+      const form = new FormData();
+      form.append("file", file);
+      form.append("name", file.name);
+      form.append("description", description);
+      try {
+        await api("/api/library/resources", { method: "POST", body: form });
+        $("resourcesStatus").textContent = t("libraryUploaded");
+        await refreshLibrary();
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function uploadLibraryVersion(event) {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = "";
+      const resourceId = versionUploadTargetId;
+      versionUploadTargetId = null;
+      if (!file || !resourceId) return;
+      const form = new FormData();
+      form.append("file", file);
+      form.append("name", file.name);
+      try {
+        await api(`/api/library/resources/${resourceId}/versions`, { method: "POST", body: form });
+        $("resourcesStatus").textContent = t("libraryVersionUploaded");
+        await refreshLibrary();
+        await openLibraryDetails(resourceId);
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function saveLibraryMetadata(resourceId) {
+      try {
+        await api(`/api/library/resources/${resourceId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name: $("libraryMetaName").value.trim(), description: $("libraryMetaDescription").value }),
+        });
+        $("resourcesStatus").textContent = t("librarySaveMeta");
+        await refreshLibrary();
+        await openLibraryDetails(resourceId);
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function archiveLibraryResource(resourceId) {
+      if (!confirm(t("libraryArchive"))) return;
+      try {
+        await api(`/api/library/resources/${resourceId}`, { method: "DELETE" });
+        $("resourcesStatus").textContent = t("libraryArchived");
+        $("libraryResourceDetail").classList.add("hidden");
+        await refreshLibrary();
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function submitLibraryReview(resourceId, versionId) {
+      try {
+        await api(`/api/library/resources/${resourceId}/versions/${versionId}/submit`, { method: "POST" });
+        $("resourcesStatus").textContent = t("libraryReviewSubmitted");
+        await refreshLibrary();
+        await openLibraryDetails(resourceId);
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function publishLibraryVersion(resourceId, versionId) {
+      const priceInput = document.querySelector(`[data-list-price="${versionId}"]`);
+      const pricePoints = Number(priceInput && priceInput.value);
+      if (!Number.isInteger(pricePoints) || pricePoints < 0) { $("resourcesStatus").textContent = t("libraryPrice"); return; }
+      try {
+        await api(`/api/library/resources/${resourceId}/versions/${versionId}/listing`, {
+          method: "POST", body: JSON.stringify({ pricePoints }),
+        });
+        $("resourcesStatus").textContent = t("libraryListingSaved");
+        await refreshLibrary();
+        await openLibraryDetails(resourceId);
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function unlistResource(listingId) {
+      try {
+        await api(`/api/library/listings/${listingId}`, { method: "DELETE" });
+        $("resourcesStatus").textContent = t("libraryUnlist");
+        await refreshLibrary();
+        if (selectedLibraryResourceId) await openLibraryDetails(selectedLibraryResourceId);
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function downloadLibraryFile(resourceId, versionId, name) {
+      await downloadProtectedFile(`/api/library/resources/${resourceId}/versions/${versionId}/content`, name);
+    }
+
+    async function downloadProtectedFile(url, name) {
+      try {
+        const response = await fetch(url, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(errorText(body, `HTTP ${response.status}`));
+        }
+        const blob = await response.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = name || "resource";
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
+    async function previewLibraryVersion(resourceId, versionId, name, kind, mime) {
+      const box = $("libraryPreviewBox");
+      if (!box) return;
+      box.classList.remove("hidden");
+      box.innerHTML = `<div class="hint">${escapeHtml(t("loading"))}</div>`;
+      try {
+        const url = `/api/library/resources/${resourceId}/versions/${versionId}/content`;
+        const response = await fetch(url, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (["markdown", "text", "svg"].includes(kind)) {
+          const text = await response.text();
+          if (kind === "markdown") {
+            box.className = "md-body";
+            renderBody(box, text, false);
+          } else if (kind === "svg") {
+            box.className = "";
+            box.innerHTML = DOMPurify.sanitize(text, { USE_PROFILES: { svg: true } });
+          } else {
+            box.className = "";
+            box.innerHTML = "";
+            const pre = document.createElement("pre");
+            pre.textContent = text;
+            box.appendChild(pre);
+          }
+          return;
+        }
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        box.className = "";
+        if (kind === "image") {
+          box.innerHTML = `<img src="${objectUrl}" alt="${escapeHtml(name)}" style="max-width:100%;max-height:34vh;border-radius:8px" />`;
+        } else if (kind === "video") {
+          box.innerHTML = `<video controls style="max-width:100%;max-height:34vh"></video>`;
+          box.querySelector("video").src = objectUrl;
+        } else if (kind === "audio") {
+          box.innerHTML = `<audio controls style="width:100%"></audio>`;
+          box.querySelector("audio").src = objectUrl;
+        } else {
+          URL.revokeObjectURL(objectUrl);
+          box.innerHTML = `<div class="hint">${escapeHtml(t("libraryPreviewUnsupported"))}</div>`;
+        }
+      } catch (err) {
+        box.innerHTML = `<div class="hint">${escapeHtml(t("libraryPreviewFail"))}: ${escapeHtml(err.message || String(err))}</div>`;
+      }
+    }
+
+    async function importLibraryVersion(resourceId, versionId, listingId = null, name = null, price = 0) {
+      if (!store.roomId) { $("resourcesStatus").textContent = t("storeNeedRoom"); return; }
+      const targetName = prompt(t("storeRoomNamePrompt"), name || "");
+      if (targetName === null) return;
+      if (!targetName.trim()) { $("resourcesStatus").textContent = t("storeRoomNameRequired"); return; }
+      if (price && !confirm(tf("storeBuyConfirm", { n: price }))) return;
+      const idempotencyKey = (crypto.randomUUID ? crypto.randomUUID() : `import-${Date.now()}-${Math.random()}`);
+      try {
+        await api(`/api/rooms/${store.roomId}/files/from-library`, {
+          method: "POST",
+          body: JSON.stringify({ resourceId, resourceVersionId: versionId, listingId, name: targetName.trim(), idempotencyKey }),
+        });
+        $("resourcesStatus").textContent = t("storeAdded");
+        await Promise.all([refreshPointsBalance(), refreshPointsTransactions(), refreshRooms()]);
+      } catch (err) {
+        if (err.status === 402) {
+          await refreshPointsBalance();
+          $("resourcesStatus").textContent = tf("storeInsufficient", { required: price, available: currentPointsBalance });
+        } else { $("resourcesStatus").textContent = err.message || String(err); }
+      }
+    }
+
+    async function refreshStore() {
+      const box = $("storeResourceList");
+      box.innerHTML = `<div class="hint">${escapeHtml(t("loading"))}</div>`;
+      const params = new URLSearchParams();
+      const query = $("storeQuery").value.trim();
+      const kind = $("storeKind").value;
+      if (query) params.set("q", query);
+      if (kind) params.set("kind", kind);
+      try {
+        const data = await api(`/api/store/resources?${params}`);
+        const resources = data.resources || [];
+        if (!resources.length) { box.innerHTML = `<div class="hint">${escapeHtml(t("storeEmpty"))}</div>`; return; }
+        box.innerHTML = resources.map((item) => `<div class="agent-row">
+          <span><strong>${escapeHtml(item.name)}</strong> <span class="badge">${escapeHtml(item.kind)}</span>
+            <small class="hint">${escapeHtml(tf("storeCreator", { name: item.seller }))} · ${fmtSize(item.size)} · v${item.versionNo}</small>
+            ${item.description ? `<small class="hint">${escapeHtml(item.description)}</small>` : ""}</span>
+          <span class="ops"><span class="badge">${escapeHtml(tf("storePrice", { n: item.pricePoints }))}</span>
+            <button class="btn small" data-store-add="${item.resourceId}" data-version-id="${item.resourceVersionId}" data-listing-id="${item.listingId}" data-name="${escapeHtml(item.name)}" data-price="${item.pricePoints}">${escapeHtml(item.pricePoints ? t("storeAddToRoom") : t("storeFreeAdd"))}</button></span>
+        </div>`).join("");
+        box.querySelectorAll("[data-store-add]").forEach((btn) => btn.addEventListener("click", () => {
+          importLibraryVersion(Number(btn.dataset.storeAdd), Number(btn.dataset.versionId), Number(btn.dataset.listingId), btn.dataset.name, Number(btn.dataset.price));
+        }));
+      } catch (err) { box.textContent = err.message || String(err); }
+    }
+
+    async function refreshResourceReviews() {
+      const box = $("resourceReviewList");
+      if (!store.isSuperadmin) return;
+      try {
+        const data = await api("/api/admin/resource-reviews");
+        const reviews = data.reviews || [];
+        if (!reviews.length) { box.innerHTML = `<div class="hint">${escapeHtml(t("resourceReviewEmpty"))}</div>`; return; }
+        box.innerHTML = reviews.map((review) => `<div class="agent-row"><span><strong>${escapeHtml(review.resourceName)} · v${review.versionNo}</strong>
+          <small class="hint">${escapeHtml(review.ownerName)} · ${escapeHtml(review.kind)} · ${fmtSize(review.size)}</small></span>
+          <span class="ops"><button class="btn ghost small" data-review-download="${review.contentUrl}" data-name="${escapeHtml(review.name)}">${escapeHtml(t("libraryDownload"))}</button>
+          <button class="btn small" data-review-decision="approved" data-version="${review.id}">${escapeHtml(t("resourceReviewApprove"))}</button>
+          <button class="btn ghost small" data-review-decision="rejected" data-version="${review.id}">${escapeHtml(t("resourceReviewReject"))}</button></span></div>`).join("");
+        box.querySelectorAll("[data-review-download]").forEach((btn) => btn.addEventListener("click", () => downloadProtectedFile(btn.dataset.reviewDownload, btn.dataset.name)));
+        box.querySelectorAll("[data-review-decision]").forEach((btn) => btn.addEventListener("click", () => decideResourceReview(Number(btn.dataset.version), btn.dataset.reviewDecision)));
+      } catch (err) { box.textContent = err.message || String(err); }
+    }
+
+    async function decideResourceReview(versionId, decision) {
+      const note = prompt(t("resourceReviewNotePrompt"), "");
+      if (note === null) return;
+      try {
+        await api(`/api/admin/resource-reviews/${versionId}`, {
+          method: "POST", body: JSON.stringify({ decision, note }),
+        });
+        $("resourcesStatus").textContent = t("resourceReviewDone");
+        await Promise.all([refreshResourceReviews(), refreshLibrary()]);
+      } catch (err) { $("resourcesStatus").textContent = err.message || String(err); }
+    }
+
 
     async function refreshAgents() {
       const data = await api("/api/agents");

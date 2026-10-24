@@ -4,7 +4,8 @@
 
 export const XR_I18N = {
   zh: {
-    xrHintDesktop: "拖拽环视 · 滚轮走近 · W/S 移动 · 拖右侧滚行条或 ←/→ 翻阅历史 · F 跟随最新 · Esc 返回 2D",
+    xrHintDesktop: "拖拽环视 · 触屏用左下摇杆移动 · 滚轮走近 · W/S 移动 · 拖右侧滚行条或 ←/→ 翻阅历史 · F 跟随最新 · Esc 返回 2D",
+    xrTouchMove: "移动",
     xrMsgCount: "共 {{n}} 条",
     xrFollowOn: "跟随最新：开",
     xrFollowOff: "跟随最新：关",
@@ -71,13 +72,15 @@ export const XR_I18N = {
     xrFileActions: "动作",
     xrFileReshow: "再显示在房间里",
     xrFileHidden: "已收起",
+    xrFileAnimNext: "下一段动画",
     xrUndoDone: "已撤销：{{what}}",
     xrUndoEmpty: "没有可撤销的操作",
     xrUndoGone: "文件已不存在",
     xrAdjHint: "拖模型移动 · 摇杆/滚轮调整 · 点「完成」结束",
   },
   en: {
-    xrHintDesktop: "Drag to look around · wheel to move · W/S walk · drag the scrollbar or ←/→ to browse history · F follow latest · Esc back to 2D",
+    xrTouchMove: "Move",
+    xrHintDesktop: "Drag to look · touch joystick to walk · wheel to move · W/S walk · drag the scrollbar or ←/→ to browse history · F follow latest · Esc back to 2D",
     xrMsgCount: "{{n}} messages",
     xrFollowOn: "Follow latest: on",
     xrFollowOff: "Follow latest: off",
@@ -144,6 +147,7 @@ export const XR_I18N = {
     xrFileActions: "Actions",
     xrFileReshow: "Show in room again",
     xrFileHidden: "Unplaced",
+    xrFileAnimNext: "Next clip",
     xrUndoDone: "Undone: {{what}}",
     xrUndoEmpty: "Nothing to undo",
     xrUndoGone: "That file no longer exists",

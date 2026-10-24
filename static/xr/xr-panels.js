@@ -211,7 +211,7 @@ export function createPanelSystem(opts) {
     body = body.replace(/```[a-zA-Z0-9_-]*\n?[\s\S]*?```/g, "［代码块］")
       .replace(/!\[[^\]]*\]\([^)]*\)/g, "🖼")
       .replace(/[#*_>`~]/g, "");
-    const head = `${m.username || "?"} · ${m.createdAt || ""}`;
+    const head = `${m.username || "?"} · ${opts.formatTime ? opts.formatTime(m.createdAt) : (m.createdAt || "")}`;
     const tag = m.whisper ? " 🔒" : "";
     return { head, body, tag };
   }

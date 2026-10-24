@@ -442,6 +442,14 @@ export function createXRFiles(opts) {
       const placed = !!(curFile.world && curFile.world.visible);
       if (canEdit()) items.push({ act: "menuReshow", label: placed ? t("xrFileUnplace") : t("xrFileReshow"), dim: placementPending(curFile.id) });
       if (!placed && placeChatModel) items.push({ act: "menuTemp", label: t(tempFileId === curFile.id ? "xrFileHideModel" : "xrFileTemp") });
+      /* GLB 内置动画控制：仅已摆入且带动画；无动画不发条目（纯本地操作，无需 canEdit） */
+      const rec = worldRecs.get(curFile.id);
+      if (rec && rec.state === "ready" && rec.clips && rec.clips.length) {
+        items.push({ act: "menuAnimToggle", label: (rec.animPaused ? "▶ " : "⏸ ") + t(rec.animPaused ? "xrFilePlay" : "xrFilePause") });
+        if (rec.clips.length > 1) {
+          items.push({ act: "menuAnimNext", label: "⇄ " + t("xrFileAnimNext") + " " + (rec.animIndex + 1) + "/" + rec.clips.length });
+        }
+      }
     }
     items.push({ act: "menuUndo", label: t("xrAdjUndo"), dim: undoStack.length === 0 });
     items.push({ act: "menuClose", label: t("xrFileClose") });
@@ -494,6 +502,21 @@ export function createXRFiles(opts) {
       toggleFilePlacement(f);
     } else if (act === "menuTemp") {
       toggleTempPreview(f);
+    } else if (act === "menuAnimToggle") {
+      const rec = worldRecs.get(f.id);
+      if (rec && rec.mixer) {
+        rec.animPaused = !rec.animPaused;
+        flash((rec.animPaused ? "⏸ " : "▶ ") + t(rec.animPaused ? "xrFilePause" : "xrFilePlay"));
+      }
+    } else if (act === "menuAnimNext") {
+      const rec = worldRecs.get(f.id);
+      if (rec && rec.mixer && rec.clips && rec.clips.length > 1) {
+        rec.animIndex = (rec.animIndex + 1) % rec.clips.length;
+        rec.action.stop();
+        rec.action = rec.mixer.clipAction(rec.clips[rec.animIndex]);
+        rec.action.play();
+        rec.animPaused = false;
+      }
     } else if (act === "menuUndo") {
       await undoLast();
     }
@@ -801,6 +824,11 @@ export function createXRFiles(opts) {
   function removeWorld(id) {
     const rec = worldRecs.get(id);
     if (!rec) return;
+    if (rec.mixer) {
+      rec.mixer.stopAllAction();
+      rec.mixer.uncacheRoot(rec.mixer.getRoot());
+      rec.mixer = null;
+    }
     if (saveTimers.has(id)) { clearTimeout(saveTimers.get(id)); saveTimers.delete(id); }
     worldGroup.remove(rec.holder);
     disposeObjectTree(rec.holder);
@@ -840,9 +868,17 @@ export function createXRFiles(opts) {
         applyPose(rec);
         loadWorldModel(rec);
       } else {
-        rec.file = f;
-        rec.pendingPlace = false; /* 另一客户端已摆入，按远端位姿显示，不重新计算 */
-        if (rec.state === "ready") applyPose(rec);
+        /* 文件内容被替换（updatedAt 变化）→ 重建模型；加载中不重建，等这轮完成后再看 */
+        if (rec.loadedAt && f.updatedAt !== rec.loadedAt && rec.state !== "loading") {
+          removeWorld(f.id);
+          rec = newRec(f);
+          applyPose(rec);
+          loadWorldModel(rec);
+        } else {
+          rec.file = f;
+          rec.pendingPlace = false; /* 另一客户端已摆入，按远端位姿显示，不重新计算 */
+          if (rec.state === "ready") applyPose(rec);
+        }
       }
     }
   }
@@ -850,6 +886,7 @@ export function createXRFiles(opts) {
   function loadWorldModel(rec) {
     (async () => {
       try {
+        rec.loadedAt = rec.file.updatedAt; /* 内容替换后 syncWorld 据此重建模型 */
         const blob = await fetchBlob(rec.file.contentUrl);
         if (!currentWorldRec(rec)) return;
         const buf = await blob.arrayBuffer();
@@ -870,6 +907,18 @@ export function createXRFiles(opts) {
         rec.holder.add(model);
         rec.box = box;
         rec.state = "ready";
+        /* GLB/GLTF 内置动画（建议 #4）：只播第一段，避免互相覆盖的 clips 同时启动；
+           mixer 作用在 model 内部节点上，与 holder 的摆放位姿分层不冲突。 */
+        const clips = Array.isArray(gltf.animations) ? gltf.animations : [];
+        rec.clips = clips;
+        rec.mixer = null;
+        if (clips.length) {
+          rec.mixer = new THREE.AnimationMixer(model);
+          rec.animIndex = 0;
+          rec.animPaused = false;
+          rec.action = rec.mixer.clipAction(clips[0]);
+          rec.action.play();
+        }
         if (rec.pendingPlace) doInitialPlace(rec);
         else applyPose(rec);
       } catch (err) {
@@ -1564,12 +1613,13 @@ export function createXRFiles(opts) {
   pollTimer = setInterval(pollOnce, POLL_MS);
   pollOnce();
 
-  function tick(dt) { /* 动画钩子：摆入模型的自转推进（v2.28.2） */
+  function tick(dt) { /* 动画钩子：摆入模型的自转推进（v2.28.2）+ GLB 内置动画推进 */
     if (!dt) return;
     for (const rec of worldRecs.values()) {
       if (rec.spinY && rec.state === "ready" && !(adjust && adjust.fileId === rec.file.id)) {
         rec.holder.rotation.y += (rec.spinY * Math.PI) / 180 * dt;
       }
+      if (rec.mixer && rec.state === "ready" && !rec.animPaused) rec.mixer.update(dt);
     }
   }
 
@@ -1632,6 +1682,13 @@ export function createXRFiles(opts) {
       undo: () => undoLast(),
       menuItems: () => (menu ? menu.items.map((i) => ({ act: i.act, label: i.label, dim: !!i.dim })) : null),
       menuRects: () => menuHotspots.map((h) => ({ ...h })),
+      /* GLB 内置动画验证面：clips 段数 / 当前段 / 是否暂停 / mixer 时钟 */
+      anim: (id) => {
+        const f = curFile && curFile.id === id ? curFile : filesCache.find((x) => x.id === id);
+        const rec = f && worldRecs.get(f.id);
+        if (!rec || !rec.mixer) return null;
+        return { clips: rec.clips.length, index: rec.animIndex, paused: !!rec.animPaused, time: rec.mixer.time };
+      },
       flash: () => (performance.now() < flashUntil ? flashMsg : ""),
       /* 画布像素断言：某横带里「较亮的已绘制像素」数量（验证闪讯/文字真的画上去了） */
       barPixels: (y0, y1) => {

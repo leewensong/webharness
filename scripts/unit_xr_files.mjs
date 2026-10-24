@@ -38,12 +38,30 @@ window.setInterval = callback => { poll = callback; return 1; };
 window.clearInterval = () => {};
 const originalFetch = window.fetch.bind(window);
 const positions = new Float32Array([-.5, -.5, 0, .5, -.5, 0, 0, .5, .5]);
-const buffer = btoa(String.fromCharCode(...new Uint8Array(positions.buffer)));
+/* 动画轨道：t=[0,.5]，四元数恒等→90°X；两条 animation 共用以验证 clip 切换 */
+const times = new Float32Array([0, .5]);
+const quats = new Float32Array([0, 0, 0, 1, Math.SQRT1_2, 0, 0, Math.SQRT1_2]);
+const modelBytes = new Uint8Array(76);
+modelBytes.set(new Uint8Array(positions.buffer), 0);
+modelBytes.set(new Uint8Array(times.buffer), 36);
+modelBytes.set(new Uint8Array(quats.buffer), 44);
+const buffer = btoa(String.fromCharCode(...modelBytes));
 const gltf = JSON.stringify({ asset: { version: '2.0' }, scene: 0, scenes: [{ nodes: [0] }],
   nodes: [{ mesh: 0 }], meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
-  buffers: [{ byteLength: positions.byteLength, uri: 'data:application/octet-stream;base64,' + buffer }],
-  bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: positions.byteLength }],
-  accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [-.5, -.5, 0], max: [.5, .5, .5] }] });
+  buffers: [{ byteLength: modelBytes.byteLength, uri: 'data:application/octet-stream;base64,' + buffer }],
+  bufferViews: [
+    { buffer: 0, byteOffset: 0, byteLength: positions.byteLength },
+    { buffer: 0, byteOffset: 36, byteLength: times.byteLength },
+    { buffer: 0, byteOffset: 44, byteLength: quats.byteLength },
+  ],
+  accessors: [
+    { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [-.5, -.5, 0], max: [.5, .5, .5] },
+    { bufferView: 1, componentType: 5126, count: 2, type: 'SCALAR', min: [0], max: [.5] },
+    { bufferView: 2, componentType: 5126, count: 2, type: 'VEC4', min: [-1, -1, -1, -1], max: [1, 1, 1, 1] },
+  ],
+  animations: ['jump', 'spinA'].map(name => ({ name,
+    channels: [{ sampler: 0, target: { node: 0, path: 'rotation' } }],
+    samplers: [{ input: 1, output: 2, interpolation: 'LINEAR' }] })) });
 const parse = GLTFLoader.prototype.parse;
 GLTFLoader.prototype.parse = function(data, path, onLoad, onError) {
   return parse.call(this, data, path, result => {
@@ -83,6 +101,8 @@ let scene, camera, files, app;
 if (location.search.includes('main')) {
   const { createXR } = await import('/static/xr/xr-main.js');
   const root = document.createElement('div');
+  root.id = 'xrRoot';
+  root.style.cssText = 'position:fixed;inset:0';
   document.body.appendChild(root);
   app = await createXR({ root, api, roomName: () => 'test', filesCanEdit: () => state.editable,
     roomInfo: () => ({ onlineUsers: [] }), username: () => 'test', token: () => 'test-token',
@@ -144,8 +164,8 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await new Promise(resolve => server?.close(resolve)); });
 
-async function withPage(fn, fullXR = false) {
-  const page = await browser.newPage();
+async function withPage(fn, fullXR = false, pageOptions = {}) {
+  const page = await browser.newPage(pageOptions);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   try {
@@ -159,6 +179,56 @@ async function withPage(fn, fullXR = false) {
     throw error;
   } finally { await page.close(); }
 }
+
+test('touch joystick is visible, walks continuously, and stops on release', () => withPage(async page => {
+  const pad = page.locator('.xr-touch-stick');
+  assert.equal(await pad.isVisible(), true);
+  assert.equal(await page.locator('#xrRoot canvas').first().evaluate(el => getComputedStyle(el).touchAction), 'none');
+  const box = await pad.boundingBox();
+  const session = await page.context().newCDPSession(page);
+  const start = await page.evaluate(() => __test.camera.position.z);
+  const touch = { id: 1, x: box.x + box.width / 2, y: box.y + box.height / 2 - 27 };
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [touch] });
+  await page.waitForTimeout(700);
+  const moved = await page.evaluate(() => __test.camera.position.z);
+  assert.ok(moved < start - .2, 'holding the left stick moves the camera for longer than half a second');
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(100);
+  const stopped = await page.evaluate(() => __test.camera.position.z);
+  await page.waitForTimeout(150);
+  assert.equal(await page.evaluate(() => __test.camera.position.z), stopped);
+  if (process.env.XR_TOUCH_QA_PNG) await page.screenshot({ path: process.env.XR_TOUCH_QA_PNG });
+}, true, { hasTouch: true, viewport: { width: 390, height: 844 } }));
+
+test('trusted touch drag survives browser gesture arbitration and a second finger', () => withPage(async page => {
+  const session = await page.context().newCDPSession(page);
+  const first = { id: 2, x: 320, y: 400 };
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });
+  const initialYaw = await page.evaluate(() => __test.camera.rotation.y);
+  for (let i = 1; i <= 8; i++) {
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...first, x: 320 - i * 12, y: 400 + i * 5 }] });
+    await page.waitForTimeout(90);
+  }
+  assert.notEqual(await page.evaluate(() => __xrDebug.dragState()), null, 'touch drag remains active after 720ms');
+  assert.ok(Math.abs(await page.evaluate(() => __test.camera.rotation.y) - initialYaw) > .15);
+  await page.locator('#xrRoot canvas').first().dispatchEvent('pointercancel', { pointerId: 999, pointerType: 'touch' });
+  assert.notEqual(await page.evaluate(() => __xrDebug.dragState()), null, 'unrelated pointer cancellation must not end the drag');
+  const box = await page.locator('.xr-touch-stick').boundingBox();
+  const second = { id: 3, x: box.x + box.width / 2, y: box.y + box.height / 2 - 27 };
+  const current = { ...first, x: 224, y: 440 };
+  const before = await page.evaluate(() => [__test.camera.position.x, __test.camera.position.z]);
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [current, second] });
+  await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...current, x: 200 }, second] });
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => [__test.camera.position.x, __test.camera.position.z]);
+  assert.ok(Math.hypot(after[0] - before[0], after[1] - before[1]) > .05, 'second finger can walk while the first looks around');
+  await session.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+  assert.equal(await page.evaluate(() => __xrDebug.dragState()), null);
+  await page.waitForTimeout(100);
+  const stopped = await page.evaluate(() => [__test.camera.position.x, __test.camera.position.z]);
+  await page.waitForTimeout(150);
+  assert.deepEqual(await page.evaluate(() => [__test.camera.position.x, __test.camera.position.z]), stopped);
+}, true, { hasTouch: true, viewport: { width: 390, height: 844 } }));
 async function ready(page, id) {
   await page.waitForFunction(id => __test.records().some(r => r.id === id && r.children[0] === 'Group'), id);
 }
@@ -404,4 +474,63 @@ test('loading failure can be retried without leaving a placeholder', () => withP
   await page.waitForFunction(() => __test.files._dbg.state().world === 0);
   await page.evaluate(() => { __test.state.fail.delete(1); __test.files._dbg.placeById(1); });
   await ready(page, 1);
+}));
+
+test('placed models play their first built-in animation and expose pause via the action menu', () => withPage(async page => {
+  const openMenu = () => page.evaluate(async () => {
+    if (__test.files._dbg.menuItems()) __test.click('menu'); /* 已开着时点 ⋯=收起，先关 */
+    __test.click('menu');
+  });
+  const menuAct = async act => {
+    await openMenu();
+    await page.evaluate(act => {
+      const items = __test.files._dbg.menuItems();
+      const r = __test.files._dbg.menuRects()[items.findIndex(i => i.act === act)];
+      __test.files._dbg.click(r.x + r.w / 2, r.y + r.h / 2);
+    }, act);
+  };
+  await page.evaluate(() => __test.files._dbg.placeById(1));
+  await ready(page, 1);
+  assert.deepEqual(await page.evaluate(() => __test.files._dbg.anim(1).clips), 2, 'both GLTF clips kept');
+  assert.deepEqual(await page.evaluate(() => __test.files._dbg.anim(1).index), 0, 'first clip plays by default');
+  assert.equal(await page.evaluate(() => __test.files._dbg.anim(1).paused), false);
+  await page.evaluate(() => __test.files.tick(.2));
+  assert.ok(await page.evaluate(() => __test.files._dbg.anim(1).time > 0), 'tick advances the mixer');
+  await page.evaluate(() => { __test.files._dbg.openById(1); __test.click('menu'); });
+  const acts = await page.evaluate(() => __test.files._dbg.menuItems().map(i => i.act));
+  assert.deepEqual(acts, ['menuReshow', 'menuAnimToggle', 'menuAnimNext', 'menuUndo', 'menuClose'], 'animation items lead the action menu');
+  await menuAct('menuAnimToggle');
+  assert.equal(await page.evaluate(() => __test.files._dbg.anim(1).paused), true, 'toggle pauses');
+  const pausedAt = await page.evaluate(() => __test.files._dbg.anim(1).time);
+  await page.evaluate(() => __test.files.tick(.3));
+  assert.deepEqual(await page.evaluate(() => __test.files._dbg.anim(1).time), pausedAt, 'paused mixer does not advance');
+  await menuAct('menuAnimToggle');
+  assert.equal(await page.evaluate(() => __test.files._dbg.anim(1).paused), false, 'toggle resumes');
+  await menuAct('menuAnimNext');
+  const switched = await page.evaluate(() => __test.files._dbg.anim(1));
+  assert.equal(switched.index, 1, 'next clip is selected');
+  assert.equal(switched.paused, false, 'switching clears pause');
+  await page.evaluate(() => __test.files._dbg.unplaceById(1));
+  await page.waitForFunction(() => __test.files._dbg.anim(1) === null);
+}));
+
+test('replaced model content rebuilds the world model and its mixer', () => withPage(async page => {
+  await page.evaluate(() => __test.files._dbg.placeById(1));
+  await ready(page, 1);
+  const loadsAfterFirst = await page.evaluate(() => __test.state.loads.get(1));
+  await page.evaluate(async () => {
+    const f = __test.state.files.find(f => f.id === 1);
+    f.updatedAt = '2026-10-06 12:00:00';
+    __test.remote(1, true);
+    await __test.poll();
+  });
+  await ready(page, 1);
+  assert.equal(await page.evaluate(() => __test.state.loads.get(1)), loadsAfterFirst + 1, 'changed content is fetched again');
+  assert.equal(await page.evaluate(() => __test.files._dbg.anim(1) !== null), true, 'loader rebuilt the mixer');
+}));
+
+test('unanimated or unplaced models expose no animation entries', () => withPage(async page => {
+  await page.evaluate(() => { __test.files._dbg.openById(1); __test.click('menu'); });
+  const items = await page.evaluate(() => __test.files._dbg.menuItems());
+  assert.deepEqual(items.map(i => i.act), ['menuReshow', 'menuTemp', 'menuUndo', 'menuClose'], 'no animation items without a loaded rec');
 }));
