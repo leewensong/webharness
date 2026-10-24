@@ -25,7 +25,8 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from pydantic import BaseModel, Field, ValidationError
 
 from . import auth, config, ratelimit, verify_codes
-from .db import FILES_DIR, UPLOADS_DIR, get_db, init_db, seed_builtin_templates
+from .db import FILES_DIR, LIBRARY_DIR, UPLOADS_DIR, get_db, init_db, seed_builtin_templates
+from .message_events import install_message_events
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
@@ -43,7 +44,9 @@ MAX_MODEL3D_BYTES = 20 * 1024 * 1024
 # 只影响房间场景上传，附件与 3D 形象的 20MB 上限不变。
 MAX_ROOM_SCENE_BYTES = 50 * 1024 * 1024
 MAX_RULES_CHARS = 32000
-MAX_LONG_POLL_SECONDS = 30
+# 长轮询单次阻塞上限：值班 Agent 用 10 分钟档挂机等待服务器唤醒（客户端半小时兜底检查存活）。
+# nginx 对应 location / 的 proxy_read_timeout 必须大于该值。
+MAX_LONG_POLL_SECONDS = 600
 MAX_VOICE_BYTES = 10 * 1024 * 1024
 MAX_STREAM_IDS = 60
 # ---------- 房间封禁（v2.23）----------
@@ -62,6 +65,11 @@ MAX_FILE_TEXT_BYTES = 2 * 1024 * 1024
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_FILES_PER_ROOM = 200
 MAX_FILE_DESCRIPTION_CHARS = 500
+# 个人资源库配额（当前为本地服务默认值，后续可搬到 config/env）。版本历史也占用
+# 存储配额，避免通过无限上传新版本绕过总量限制。
+MAX_LIBRARY_RESOURCES = 100
+MAX_LIBRARY_TOTAL_BYTES = 500 * 1024 * 1024
+WELCOME_POINTS = 1000
 # 同时常驻展示（world_visible=1）的 3D 模型上限，超限开启返回 400
 MAX_WORLD_MODELS = 6
 # 文本类文件扩展名白名单：命中才归 kind=text（未命中的未知扩展名即使恰为 UTF-8 也归 other，
@@ -85,6 +93,8 @@ IMAGE_MIME_BY_EXT = {
 # 发送者和房主可见；连续多个 @@用户名 前缀表示多个接收者（v2.5）。
 # 名字规则与用户名一致（[\w.\-]+），后跟空白/结尾避免「@@bob你好」这类连写被误解析。
 WHISPER_RE = re.compile(r"^@@([\w.\-]+)(?:\s+|$)")
+# @TA 与 @@ 私聊不同：只附加公开消息的提醒目标，不改变消息可见性。
+MENTION_RE = re.compile(r"^@(?!@)([\w.\-]+)(?:\s+|$)")
 GROUP_RE = re.compile(r"^#([\w.\-]+)(?:\s+|$)")
 AUDIO_MIME_BY_EXT = {
     ".webm": "audio/webm",
@@ -246,7 +256,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.30.0",
+    version="2.31.2",
     description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（≤20MB 的 GLB/GLTF 或外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或上传的自包含 GLB（≤50MB），或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | url | none}` 设定，`POST/DELETE /api/rooms/{room}/scene` 上传与清除，`GET /api/rooms/{room}/scene` 下载上传件（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可继续上传自己的 GLB/VRM 或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。Agent 创建支持可选的同名房间：人类在 Web UI 勾选后，`POST /api/agents` 的 `createRoom:true` 会原子创建同名私有房间并把新 Agent 设为 roomAgent，响应含 `room`；超级管理员使用 `/api/admin` 与 `/api/admin/suggestions` 查看、筛选、处理建议，Web UI 侧栏提供平台管理入口。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。房间内 3D 位姿流（v2.26）：`POST /api/rooms/{room}/presence` 上报（头/身体 + 可选双手 + 可选 state）、`/presence/leave` 离开、`GET /presence` 全量快照（返回 `logId` 作增量游标）、`GET /presence/delta` 增量。增量支持 `fmt=bin` 返回**二进制脏位帧**（u32 成员 id + kind + 脏位掩码 + 按需字段；位置量化到厘米、角度到 int16、四元数到 int16），并**按请求者到各成员的水平距离分级**：<5m 全量（含双手与状态）、5–15m 位置+朝向、>15m 仅位置；静止成员若没有脏字段则一个字节都不发。游标用 `sinceId`（增量日志 id，单调递增；时间戳游标会漏同一毫秒的事件），返回 `X-Presence-Id`/`X-Presence-Reset`。`hold`（毫秒）为服务端节流：不足则等满再返回，客户端「返回就再发」即得稳定 tick（10Hz 传 100），避免「谁写入就唤醒谁」在高频下的惊群。预留脏位 16/32 给全身骨骼与 ARKit52 面部。Agent 可在上报时自报**能力档** `level`（1=只报位姿；2=再加双手；3=再加全身骨骼与表情，骨骼块尚未实现、表情走 state 已可用），服务端按档强制（声明 level 1 却带 hands 直接 400），档位落在 `room_presence.level` 并随全量快照透出，不传则按载荷推断（有 hands 记 2，否则 1）。房间列表排序（v2.27）：「我的」列表缺省按「我参与的更新时间」降序——我在房里看到的最新一条**可见**消息的时间（别人之间我看不到的私聊不算；房主与 roomAgent 照旧可见全部私聊）。该值只增不减、随我进房读消息或自己发言而推进，所以不进房间它就一直变旧、排名往下掉，进去看一眼但没人说话也不会提高；从没进过的房间按创建时间兜底。Agent 主人与房主同级（v2.28）：房间由 Agent 创建时，该 Agent 的人类主人（agent.owner_id）取得与房主/roomAgent 同级的治理权——房间详情新增 `canManage` 字段；可改房间设置（改名/密码/可见性/全体禁言/rules/共同文件锁）、成员权限、私聊白黑名单、封禁，可见全部私聊与完整历史，并与房主、roomAgent 一样不可被限制或封禁。归档权维持原样：房主或 Agent 主人可归档，roomAgent 不可。摆入模型自转（v2.28.2）：placement 的 pose 新增 `spin`（绕 Y 自转角速度，度/秒，负=反向，|spin|≤360）；不带 spin 字段时保留原值，显式传 0 关闭；XR 客户端每帧推进自转（调整拖拽中暂停）。",
     lifespan=lifespan,
 )
@@ -347,16 +357,18 @@ class AgentLoginRequest(BaseModel):
 
 
 class RoomSceneInput(BaseModel):
-    """建房/改房时传入的 3D 场景引用（rooms.map3d）。只接受「选内置」「填外链」
-    与「清空」三种；上传的 GLB 由 multipart 接口 POST /api/rooms/{room}/scene 写入。
-    kind=none 是显式清空——不用 null 区分，避免「未传」与「传 null」混淆。"""
-    kind: Literal["builtin", "url", "none"]
+    """建房/改房时传入的 3D 场景引用（rooms.map3d）。接受「选内置」「填外链」
+    「选资源库已过审模型」与「清空」四种；v2.32 起不再支持直接上传。"""
+    kind: Literal["builtin", "url", "library", "none"]
     id: str | None = Field(default=None, max_length=64)
     url: str | None = Field(default=None, max_length=2048)
 
 
 class RoomRequest(BaseModel):
-    roomName: str = Field(min_length=1, max_length=64, pattern=NAME_PATTERN)
+    # 新客户端优先使用 roomId/roomKey；roomName 保留给旧客户端兼容。
+    roomId: int | None = Field(default=None, ge=1)
+    roomKey: str | None = Field(default=None, min_length=3, max_length=160)
+    roomName: str | None = Field(default=None, min_length=1, max_length=64, pattern=NAME_PATTERN)
     password: str | None = Field(default=None, max_length=128)
     visibility: Literal["private", "public"] | None = None
     rules: str | None = Field(default=None, max_length=MAX_RULES_CHARS)
@@ -379,6 +391,104 @@ class RoomUpdate(BaseModel):
     roomAgent: str | None = Field(default=None, max_length=32)
     # 3D 场景：不传（字段缺席）表示不改；显式传 null 表示清除场景，回到展厅环境
     scene: RoomSceneInput | None = None
+
+
+class FriendRequestCreate(BaseModel):
+    username: str = Field(min_length=2, max_length=32, pattern=NAME_PATTERN)
+
+
+class InviteCreate(BaseModel):
+    username: str = Field(min_length=2, max_length=32, pattern=NAME_PATTERN)
+
+
+class RoomAgentJoinRequest(BaseModel):
+    agentUsername: str = Field(min_length=2, max_length=32, pattern=NAME_PATTERN)
+
+
+class LibraryResourceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class ResourceReviewDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    note: str = Field(default="", max_length=2000)
+
+
+class ResourceListingCreate(BaseModel):
+    pricePoints: int = Field(ge=0, le=2_000_000_000)
+
+
+class ResourceListingUpdate(BaseModel):
+    pricePoints: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    listed: bool | None = None
+
+
+class LibraryImportRequest(BaseModel):
+    resourceId: int = Field(ge=1)
+    resourceVersionId: int = Field(ge=1)
+    listingId: int | None = Field(default=None, ge=1)
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    idempotencyKey: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class PointsCampaignGrant(BaseModel):
+    username: str = Field(min_length=2, max_length=32, pattern=NAME_PATTERN)
+    campaignKey: str = Field(min_length=3, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+    amount: int = Field(ge=1, le=2_000_000_000)
+    reason: str = Field(min_length=1, max_length=200)
+
+
+def _grant_points(
+    conn,
+    *,
+    user_id: int,
+    amount: int,
+    transaction_type: Literal["signup_grant", "campaign_grant"],
+    idempotency_key: str,
+    reason: str,
+    campaign_key: str | None = None,
+) -> bool:
+    """Credit one human wallet and its immutable ledger row in the caller's transaction."""
+    metadata = {"reason": reason}
+    if campaign_key is not None:
+        metadata["campaignKey"] = campaign_key
+    metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+    inserted = conn.execute(
+        """
+        INSERT INTO point_transactions (
+            idempotency_key, transaction_type, payer_user_id, payee_user_id,
+            amount, status, metadata
+        )
+        VALUES (?, ?, ?, ?, ?, 'committed', ?)
+        ON CONFLICT(idempotency_key) DO NOTHING
+        """,
+        (idempotency_key, transaction_type, user_id, user_id, amount, metadata_json),
+    )
+    if inserted.rowcount == 0:
+        prior = conn.execute(
+            "SELECT transaction_type, payer_user_id, payee_user_id, amount, metadata FROM point_transactions WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        if not prior or (
+            prior["transaction_type"] != transaction_type
+            or prior["payer_user_id"] != user_id
+            or prior["payee_user_id"] != user_id
+            or prior["amount"] != amount
+            or prior["metadata"] != metadata_json
+        ):
+            raise _friend_error("points_idempotency_conflict", "相同幂等键已用于不同积分发放", 409)
+        return False
+    conn.execute(
+        """
+        INSERT INTO point_accounts (user_id, balance) VALUES (?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            balance = point_accounts.balance + excluded.balance,
+            updated_at = datetime('now')
+        """,
+        (user_id, amount),
+    )
+    return True
 
 
 class PermissionUpdate(BaseModel):
@@ -509,14 +619,14 @@ def require_user(authorization: Annotated[str | None, Header(alias="Authorizatio
     # token_epoch，与库里对不上即失效（也让禁用账号的旧 token 立刻作废）。
     with get_db() as conn:
         row = conn.execute(
-            "SELECT username, kind, status, token_epoch, is_superadmin FROM users WHERE id = ?", (user["id"],)
+            "SELECT username, kind, owner_id, status, token_epoch, is_superadmin FROM users WHERE id = ?", (user["id"],)
         ).fetchone()
     if not row or row["status"] != "active":
         raise HTTPException(status_code=401, detail="账号不可用")
     if int(row["token_epoch"] or 0) != user["epoch"]:
         raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录")
     # 权限与身份均以当前库记录为准，不信任 token 中的角色快照；撤权无需重新登录。
-    user.update(username=row["username"], kind=row["kind"],
+    user.update(username=row["username"], kind=row["kind"], owner_id=row["owner_id"],
                 isSuperadmin=row["kind"] == "human" and bool(row["is_superadmin"]))
     return user
 
@@ -542,6 +652,13 @@ def require_superadmin(user: CurrentUser, response: Response):
 
 
 SuperAdmin = Annotated[dict, Depends(require_superadmin)]
+
+
+def _effective_human_id(user: dict) -> int:
+    """Agent 与主人共享好友/资源命名空间；Agent 本身仍保留审计身份。"""
+    if user.get("kind") == "agent" and user.get("owner_id"):
+        return int(user["owner_id"])
+    return int(user["id"])
 
 
 @app.exception_handler(verify_codes.VerifyError)
@@ -579,6 +696,23 @@ def _builtin_avatar_id(value: str | None) -> str | None:
     if avatar_id not in BUILTIN_AVATAR_BY_ID:
         raise HTTPException(status_code=400, detail="未知的内置 3D 形象")
     return avatar_id
+
+
+# model3d_url / rooms.map3d 里的资源库引用前缀：`library:<resourceId>`。
+# 只有 review_status=approved 的资源能被引用（v2.32 起个人形象与房间场景
+# 不再支持直接上传，自定义模型必须先传资源库并过审）。
+LIBRARY_REF_PREFIX = "library:"
+
+
+def _library_ref_id(value: str | None) -> int | None:
+    """解析 `library:<resourceId>` 引用；不是这个前缀返回 None，是前缀但
+    id 不是正整数则 400（同 builtin 的「写不进去的引用直接拒绝」原则）。"""
+    if not value or not value.startswith(LIBRARY_REF_PREFIX):
+        return None
+    raw = value[len(LIBRARY_REF_PREFIX):].strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        raise HTTPException(status_code=400, detail="资源库引用必须是 library:<资源ID>")
+    return int(raw)
 
 
 def _default_avatar_svg(username: str) -> bytes:
@@ -706,13 +840,18 @@ def _room_scene_descriptor(room) -> dict[str, str] | None:
 
 def _scene_descriptor_json(scene: "RoomSceneInput") -> str | None:
     """把客户端的场景引用规整成待存进 rooms.map3d 的 JSON 文本；kind=none 返回 None
-    （清空）。上传件（kind=file）不走这里——它由 multipart 上传接口写入并顺带置描述符。"""
+    （清空）。kind=library 的 id 存资源 id 字符串，读取侧按 int 解析。"""
     if scene.kind == "none":
         return None
     if scene.kind == "builtin":
         if scene.id not in BUILTIN_SCENE_IDS:
             raise HTTPException(status_code=400, detail="未知的内置 3D 场景")
         return json.dumps({"kind": "builtin", "id": scene.id}, ensure_ascii=False)
+    if scene.kind == "library":
+        library_id = _library_ref_id(f"{LIBRARY_REF_PREFIX}{scene.id or ''}")
+        if library_id is None:
+            raise HTTPException(status_code=400, detail="资源库场景需要有效的资源 ID")
+        return json.dumps({"kind": "library", "id": library_id}, ensure_ascii=False)
     url = (scene.url or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="外部 3D 场景需要 url")
@@ -752,7 +891,12 @@ def _profile_fields(row) -> dict:
     has_file = _row_get(row, "has_model3d")
     if has_file is None:
         has_file = _row_get(row, "model3d") is not None
-    if external:
+    # 资源库引用改写成按引用授权的代理地址：任何客户端拿到后带自己的
+    # token 就能下载（权限在下载接口按「同房间成员/资源主」判定），渲染端
+    # 不需要认识 library: 前缀。
+    if external and _library_ref_id(external) is not None:
+        model_url = _model3d_file_url(username, _row_get(row, "model3d_updated_at"))
+    elif external:
         model_url = external
     elif has_file:
         model_url = _model3d_file_url(username, _row_get(row, "model3d_updated_at"))
@@ -787,23 +931,109 @@ def _get_user(conn, username: str):
     ).fetchone()
 
 
+def _user_by_id(conn, user_id: int):
+    return conn.execute(
+        "SELECT id, username, kind, owner_id, status, avatar_updated_at FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+
+
 ROOM_SELECT = """
         SELECT r.id, r.name, r.created_by, r.password_hash, r.visibility, r.muted,
                r.ended_at, r.archived_at, r.created_at, r.rules, r.room_agent_id, r.template,
                r.map3d, r.scene_updated_at, r.files_locked, r.files_revision,
+               r.namespace_owner_id,
+               r.room_type, r.pair_user_a_id, r.pair_user_b_id,
                u.username AS ownerName, u.kind AS creatorKind, u.owner_id AS creatorOwnerId,
+               u.username AS creatorName, no.username AS namespaceOwnerName,
                ra.username AS roomAgentName
         FROM rooms r
         JOIN users u ON u.id = r.created_by
+        LEFT JOIN users no ON no.id = r.namespace_owner_id
         LEFT JOIN users ra ON ra.id = r.room_agent_id
 """
 
 
-def _get_room(conn, room_name: str):
+def _room_reference_error() -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "room_reference_required",
+            "message": "同名私聊房间不止一个，请使用 roomId 或 roomKey",
+        },
+    )
+
+
+def _active_rooms_by_name(conn, room_name: str):
     return conn.execute(
-        ROOM_SELECT + " WHERE r.name = ? AND r.archived_at IS NULL",
+        ROOM_SELECT + " WHERE r.name = ? COLLATE NOCASE AND r.archived_at IS NULL",
         (room_name,),
+    ).fetchall()
+
+
+def _get_room(conn, room_name: str, user_id: int | None = None):
+    # 让既有 `/api/rooms/{room_name}/...` 路由也能渐进接受稳定 roomId/roomKey，
+    # 不必一次性复制几十个端点；新客户端优先传 roomId 或完整 roomKey。
+    if str(room_name).isdigit():
+        return _get_room_by_id(conn, int(room_name))
+    if ":" in str(room_name):
+        return _get_room_by_key(conn, str(room_name))
+    rows = _active_rooms_by_name(conn, room_name)
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    if user_id is not None:
+        candidates = [
+            row for row in rows
+            if row["namespace_owner_id"] == user_id
+            or row["created_by"] == user_id
+            or conn.execute(
+                "SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?",
+                (row["id"], user_id),
+            ).fetchone()
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+    raise _room_reference_error()
+
+
+def _get_room_by_key(conn, room_key: str):
+    if ":" not in room_key:
+        return None
+    owner_name, room_name = room_key.split(":", 1)
+    owner_name = owner_name.strip()
+    room_name = room_name.strip()
+    if not owner_name or not room_name:
+        return None
+    return conn.execute(
+        ROOM_SELECT
+        + " WHERE no.username = ? COLLATE NOCASE AND r.name = ? COLLATE NOCASE"
+        + " AND r.archived_at IS NULL",
+        (owner_name, room_name),
     ).fetchone()
+
+
+def _resolve_room_reference(
+    conn,
+    *,
+    room_id: int | None = None,
+    room_key: str | None = None,
+    room_name: str | None = None,
+    user_id: int | None = None,
+):
+    if room_id is not None:
+        return _get_room_by_id(conn, room_id)
+    if room_key:
+        return _get_room_by_key(conn, room_key)
+    if room_name:
+        return _get_room(conn, room_name, user_id=user_id)
+    return None
+
+
+def _room_key(room) -> str:
+    namespace = room["namespaceOwnerName"] or room["ownerName"]
+    return f"{namespace}:{room['name']}"
 
 
 def _get_room_by_id(conn, room_id: int):
@@ -838,11 +1068,56 @@ def _mark_room_read(conn, room_id: int, user_id: int) -> None:
     )
 
 
-def _member(conn, room_id: int, user_id: int):
+def _member_any(conn, room_id: int, user_id: int):
     return conn.execute(
         "SELECT * FROM room_members WHERE room_id = ? AND user_id = ?",
         (room_id, user_id),
     ).fetchone()
+
+
+def _member(conn, room_id: int, user_id: int):
+    return conn.execute(
+        """
+        SELECT * FROM room_members
+        WHERE room_id = ? AND user_id = ? AND membership_status = 'active'
+        """,
+        (room_id, user_id),
+    ).fetchone()
+
+
+def _active_room_members(conn, room) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT m.*, u.username, u.kind, u.avatar_updated_at AS avatarV,
+               CASE WHEN m.last_seen_at > datetime('now', ?)
+                    AND NOT EXISTS (
+                        SELECT 1 FROM room_bans b WHERE b.room_id = m.room_id AND b.user_id = m.user_id
+                          AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                    ) THEN 1 ELSE 0 END AS online
+        FROM room_members m JOIN users u ON u.id = m.user_id
+        WHERE m.room_id = ? AND m.membership_status = 'active'
+        ORDER BY m.joined_at ASC, m.user_id ASC
+        """,
+        (ONLINE_WINDOW, room["id"]),
+    ).fetchall()
+    return [
+        {
+            "userId": row["user_id"],
+            "username": row["username"],
+            "kind": row["kind"],
+            "avatarUrl": _avatar_url(row["username"], row["avatarV"]),
+            "joinedAt": row["joined_at"],
+            "online": bool(row["online"]),
+            "inRoom": bool(row["online"]),
+            "canSpeak": _is_room_governor(room, row["user_id"])
+            or (not room["muted"] and bool(row["can_speak"])),
+            "canUpload": bool(row["can_upload"]),
+            "canViewHistory": bool(row["can_view_history"]),
+            "canEditFiles": bool(row["can_edit_files"]),
+            "isRoomOwner": row["user_id"] == room["created_by"],
+        }
+        for row in rows
+    ]
 
 
 def _online_users(conn, room) -> list[dict]:
@@ -863,7 +1138,8 @@ def _online_users(conn, room) -> list[dict]:
                (u.model3d IS NOT NULL) AS has_model3d
         FROM room_members m
         JOIN users u ON u.id = m.user_id
-        WHERE m.room_id = ? AND m.last_seen_at > datetime('now', ?)
+        WHERE m.room_id = ? AND m.membership_status = 'active'
+          AND m.last_seen_at > datetime('now', ?)
           -- 被封禁者立即从在线列表消失，不等 last_seen_at 自然过期
           AND NOT EXISTS (
               SELECT 1 FROM room_bans b
@@ -892,8 +1168,8 @@ def _online_users(conn, room) -> list[dict]:
     ]
 
 
-def _require_active_room(conn, room_name: str):
-    room = _get_room(conn, room_name)
+def _require_active_room(conn, room_name: str, user_id: int | None = None):
+    room = _get_room(conn, room_name, user_id=user_id)
     if not room:
         raise HTTPException(status_code=404, detail="房间不存在，请先创建或加入")
     if _is_ended(room):
@@ -922,7 +1198,7 @@ def _reject_if_banned(conn, room, user_id: int) -> None:
 
 
 def _require_membership(conn, room_name: str, user_id: int):
-    room = _require_active_room(conn, room_name)
+    room = _require_active_room(conn, room_name, user_id=user_id)
     _reject_if_banned(conn, room, user_id)
     member = _member(conn, room["id"], user_id)
     if not member:
@@ -991,7 +1267,9 @@ def _require_archive_access(conn, room_id: int, user: dict):
     room = _get_room_by_id(conn, room_id)
     if not room or not room["archived_at"]:
         raise HTTPException(status_code=404, detail="归档不存在")
-    member = _member(conn, room["id"], user["id"])
+    member = _member_any(conn, room["id"], user["id"])
+    if member and member["membership_status"] == "removed":
+        member = None
     if not _can_archive(user, room) and not member:
         raise HTTPException(status_code=403, detail="无权查看该归档")
     return room, member
@@ -1069,6 +1347,30 @@ def _whisper_targets(conn, room, content: str, sender_id: int | None = None) -> 
     if group_names and not targets:
         raise HTTPException(status_code=400, detail=f"群组 #{group_names[0]} 没有可发送的成员（成员需在房间内且不是你自己）")
     return targets
+
+
+def _mention_target(conn, room, content: str):
+    """解析开头单一 @TA 标记。direct pair 天然双人可见，不附加 mention 语义。"""
+    if _row_get(room, "room_type", "standard") == "direct_pair":
+        return None
+    rest = content or ""
+    while True:
+        prefix = GROUP_RE.match(rest) or WHISPER_RE.match(rest)
+        if not prefix:
+            break
+        rest = rest[prefix.end():]
+    match = MENTION_RE.match(rest)
+    if not match:
+        return None
+    name = match.group(1)
+    target = _get_user(conn, name)
+    if not target or not _member(conn, room["id"], target["id"]):
+        raise _friend_error(
+            "mention_target_not_member",
+            f"@{name} 不是当前房间的活动成员",
+            400,
+        )
+    return target
 
 
 def _check_whisper_targets(conn, room_id: int, sender_name: str, targets: list) -> None:
@@ -1236,9 +1538,14 @@ def _validate_group_members(conn, room_id: int, names: list[str]) -> list[int]:
 def _room_dict(room, user_id: int, online: list[dict] | None = None) -> dict:
     data = {
         "roomId": room["id"],
+        "roomKey": _room_key(room),
         "roomName": room["name"],
         "ownerName": room["ownerName"],
+        "creatorName": room["creatorName"],
+        "namespaceOwnerName": room["namespaceOwnerName"] or room["ownerName"],
         "visibility": room["visibility"],
+        "roomType": _row_get(room, "room_type", "standard"),
+        "isDirectPair": _row_get(room, "room_type", "standard") == "direct_pair",
         "hasPassword": bool(room["password_hash"]),
         "muted": bool(room["muted"]),
         "isOwner": room["created_by"] == user_id,
@@ -1321,6 +1628,14 @@ def _message_dict(row, room_name: str, *, room=None, user_id: int | None = None,
         "createdAt": row["createdAt"],
         "streaming": bool(_row_get(row, "streaming", 0)),
         "whisper": bool(_row_get(row, "whisper_to") or _row_get(row, "whisper_to_ids")),
+        "mentionTo": (
+            {
+                "username": _row_get(row, "mentionUsername"),
+                "avatarUrl": _avatar_url(_row_get(row, "mentionUsername"), _row_get(row, "mentionAvatarV")),
+            }
+            if _row_get(row, "mention_to") and _row_get(row, "mentionUsername")
+            else None
+        ),
         "recalled": bool(_row_get(row, "recalled", 0)),
         "updatedAt": _row_get(row, "updatedAt") or row["createdAt"],
     }
@@ -1355,9 +1670,14 @@ def _message_dicts(conn, rows, room_name: str, *, room=None, user_id: int | None
 def _room_list_dict(row, user_id: int) -> dict:
     return {
         "roomId": row["id"],
+        "roomKey": f"{row['namespaceOwnerName'] or row['ownerName']}:{row['name']}",
         "roomName": row["name"],
         "ownerName": row["ownerName"],
+        "creatorName": row["creatorName"],
+        "namespaceOwnerName": row["namespaceOwnerName"] or row["ownerName"],
         "visibility": row["visibility"],
+        "roomType": _row_get(row, "room_type", "standard"),
+        "isDirectPair": _row_get(row, "room_type", "standard") == "direct_pair",
         "hasPassword": bool(row["password_hash"]),
         "muted": bool(row["muted"]),
         "isOwner": row["created_by"] == user_id,
@@ -1378,11 +1698,17 @@ def _room_list_dict(row, user_id: int) -> dict:
 
 ROOM_LIST_SQL = """
     SELECT r.id, r.name, r.created_by, r.password_hash, r.visibility, r.muted,
-           r.created_at, r.archived_at, r.map3d, r.scene_updated_at, u.username AS ownerName, u.owner_id AS creatorOwnerId,
+           r.created_at, r.archived_at, r.map3d, r.scene_updated_at,
+           r.namespace_owner_id,
+           r.room_type, r.pair_user_a_id, r.pair_user_b_id,
+           u.username AS ownerName, u.username AS creatorName,
+           no.username AS namespaceOwnerName, u.owner_id AS creatorOwnerId,
            ra.username AS roomAgentName,
-           (SELECT COUNT(*) FROM room_members m2 WHERE m2.room_id = r.id) AS memberCount,
+           (SELECT COUNT(*) FROM room_members m2
+             WHERE m2.room_id = r.id AND m2.membership_status = 'active') AS memberCount,
            (SELECT COUNT(*) FROM room_members m3
-             WHERE m3.room_id = r.id AND m3.last_seen_at > datetime('now', ?)) AS onlineCount,
+             WHERE m3.room_id = r.id AND m3.membership_status = 'active'
+               AND m3.last_seen_at > datetime('now', ?)) AS onlineCount,
            CASE WHEN m.user_id IS NULL THEN 0 ELSE 1 END AS joined,
            COALESCE((
              SELECT COUNT(*) FROM messages msg
@@ -1401,8 +1727,9 @@ ROOM_LIST_SQL = """
            ), 0) AS unreadCount
     FROM rooms r
     JOIN users u ON u.id = r.created_by
+    LEFT JOIN users no ON no.id = r.namespace_owner_id
     LEFT JOIN users ra ON ra.id = r.room_agent_id
-    LEFT JOIN room_members m ON m.room_id = r.id AND m.user_id = ?
+    LEFT JOIN room_members m ON m.room_id = r.id AND m.user_id = ? AND m.membership_status = 'active'
 """
 
 
@@ -1572,10 +1899,20 @@ def create_user(body: UserCreate):
             # 唯一索引兜底（上面的检查有竞态窗口）
             raise HTTPException(status_code=409, detail="用户名或联系方式已被占用") from exc
         user = _get_user(conn, body.username)
+        _grant_points(
+            conn,
+            user_id=user["id"],
+            amount=WELCOME_POINTS,
+            transaction_type="signup_grant",
+            idempotency_key=f"signup-welcome:{user['id']}",
+            reason="New human account welcome grant",
+            campaign_key=None,
+        )
     return {
         "userId": user["id"],
         "username": user["username"],
         "createdAt": user["created_at"],
+        "welcomePoints": WELCOME_POINTS,
         **_profile_fields(user),
     }
 
@@ -1944,9 +2281,23 @@ def create_agent(body: AgentCreate, user: HumanUser):
                 status_code=409,
                 detail=f"用户名 {body.username} 已被人类账号占用，请给 Agent 换一个名字（例如 {body.username}-bot）",
             )
-        # 预检同名房间，避免已经写入 Agent 后才发现房间冲突；get_db 会在异常时整体回滚。
-        if body.createRoom and _get_room(conn, body.username):
-            raise HTTPException(status_code=409, detail=f"同名房间 {body.username} 已存在，请取消选项或更换 Agent 名称")
+        # 预检同名房间，避免已经写入 Agent 后才发现房间冲突；private 房间按主人
+        # 的命名空间判定，public 房间仍是全局名称。
+        if body.createRoom:
+            existing_room = conn.execute(
+                """
+                SELECT 1 FROM rooms
+                WHERE name = ? COLLATE NOCASE AND archived_at IS NULL
+                  AND (
+                    visibility = 'public'
+                    OR (visibility = 'private' AND namespace_owner_id = ?)
+                  )
+                LIMIT 1
+                """,
+                (body.username, user["id"]),
+            ).fetchone()
+            if existing_room:
+                raise HTTPException(status_code=409, detail=f"同名房间 {body.username} 已存在，请取消选项或更换 Agent 名称")
         now = _db_now(conn)
         conn.execute(
             """
@@ -1975,14 +2326,14 @@ def create_agent(body: AgentCreate, user: HumanUser):
         if body.createRoom:
             # 私有、无密码的新房间与普通「创建房间」默认一致；房主人类立即加入，
             # 新 Agent 只登记为 roomAgent，待其自行登录后加入。
-            conn.execute(
+            cur = conn.execute(
                 """
-                INSERT INTO rooms (name, created_by, password_hash, visibility, room_agent_id)
-                VALUES (?, ?, NULL, 'private', ?)
+                INSERT INTO rooms (name, created_by, namespace_owner_id, password_hash, visibility, room_agent_id)
+                VALUES (?, ?, ?, NULL, 'private', ?)
                 """,
-                (body.username, user["id"], agent["id"]),
+                (body.username, user["id"], user["id"], agent["id"]),
             )
-            room = _get_room(conn, body.username)
+            room = _get_room_by_id(conn, cur.lastrowid)
             watermark = conn.execute(
                 "SELECT COALESCE(MAX(id), 0) AS w FROM messages WHERE room_id = ?",
                 (room["id"],),
@@ -2137,45 +2488,63 @@ def delete_my_avatar(user: CurrentUser, as_username: Annotated[str | None, Query
 
 @app.get("/api/users/{username}/model3d")
 def get_model3d(username: str, user: CurrentUser):
+    """下载账号的 3D 形象文件。来源有二（按 model3d_url 形态区分）：
+    - `library:<id>` 资源库引用：请求者须是资源主本人（或名下 Agent），或与
+      被引用账号至少同在一个未归档房间——按引用授权，资源被撤销/打回后即失效。
+    - 旧版直传 BLOB（model3d 列）：保留到存量数据迁移完。
+    找不到或无权一律 404（不泄露存在性）。"""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT model3d, model3d_mime FROM users WHERE username = ?",
+            "SELECT id, model3d, model3d_mime, model3d_url FROM users WHERE username = ?",
             (username,),
         ).fetchone()
-    if not row or not row["model3d"]:
-        raise HTTPException(status_code=404, detail="该账号没有上传 3D 模型文件")
-    return Response(
-        row["model3d"],
-        media_type=row["model3d_mime"] or "model/gltf-binary",
-        headers={"Cache-Control": "private, max-age=86400"},
-    )
-
-
-@app.post("/api/me/model3d")
-async def set_my_model3d(
-    user: CurrentUser,
-    file: UploadFile = File(...),
-    as_username: Annotated[str | None, Query(alias="as")] = None,
-    arkit: Annotated[bool | None, Query()] = None,
-    humanoid: Annotated[bool | None, Query()] = None,
-):
-    data = await file.read()
-    mime = _validate_model3d_bytes(data)
-    with get_db() as conn:
-        target = _resolve_profile_target(conn, user, as_username)
-        arkit_flag = int(target["model3d_arkit"] or 0) if arkit is None else int(arkit)
-        humanoid_flag = int(target["model3d_humanoid"] or 0) if humanoid is None else int(humanoid)
-        conn.execute(
-            """
-            UPDATE users
-            SET model3d = ?, model3d_mime = ?, model3d_url = NULL,
-                model3d_arkit = ?, model3d_humanoid = ?, model3d_updated_at = ?
-            WHERE id = ?
-            """,
-            (data, mime, arkit_flag, humanoid_flag, _db_now(conn), target["id"]),
+        if not row:
+            raise HTTPException(status_code=404, detail="该账号没有上传 3D 模型文件")
+        library_id = _library_ref_id(_row_get(row, "model3d_url"))
+        if library_id is not None:
+            resource = _library_resource(conn, library_id)
+            if not resource or resource["status"] != "active":
+                raise HTTPException(status_code=404, detail="该账号没有上传 3D 模型文件")
+            version = conn.execute(
+                "SELECT * FROM library_resource_versions WHERE id = ?",
+                (resource["current_version_id"],),
+            ).fetchone()
+            if not version or version["review_status"] != "approved" or version["scan_status"] != "clean":
+                raise HTTPException(status_code=404, detail="该账号没有上传 3D 模型文件")
+            if not _library_can_manage(resource, user) and not _shares_room(conn, row["id"], user):
+                raise HTTPException(status_code=404, detail="该账号没有上传 3D 模型文件")
+            resp = _library_version_file_response(version)
+            resp.headers["Cache-Control"] = "private, max-age=86400"
+            return resp
+        if not row["model3d"]:
+            raise HTTPException(status_code=404, detail="该账号没有上传 3D 模型文件")
+        return Response(
+            row["model3d"],
+            media_type=row["model3d_mime"] or "model/gltf-binary",
+            headers={"Cache-Control": "private, max-age=86400"},
         )
-        row = _get_user_by_id(conn, target["id"])
-    return {"username": row["username"], **_profile_fields(row)}
+
+
+def _shares_room(conn, target_user_id: int, user: dict) -> bool:
+    """请求者与目标账号是否同在一个未归档房间（形象代理下载的授权依据）。
+    Agent 按主人折算（资源库命名空间同理），避免「主人看得见、Agent 看不见」。"""
+    effective_id = _effective_human_id(user)
+    if effective_id == target_user_id:
+        return True
+    row = conn.execute(
+        """
+        SELECT 1 FROM room_members m1
+        JOIN room_members m2 ON m2.room_id = m1.room_id
+        JOIN rooms r ON r.id = m1.room_id AND r.archived_at IS NULL
+        LEFT JOIN users u1 ON u1.id = m1.user_id
+        LEFT JOIN users u2 ON u2.id = m2.user_id
+        WHERE COALESCE(u1.owner_id, m1.user_id) = ?
+          AND COALESCE(u2.owner_id, m2.user_id) = ?
+        LIMIT 1
+        """,
+        (target_user_id, effective_id),
+    ).fetchone()
+    return row is not None
 
 
 @app.put("/api/me/model3d")
@@ -2189,8 +2558,12 @@ def set_my_model3d_url(
         raise HTTPException(status_code=400, detail="没有需要修改的字段")
     # 内置形象引用（builtin:<id>）在这里就校验，未知 id 直接 400
     builtin_id = _builtin_avatar_id(url)
+    library_id = _library_ref_id(url) if builtin_id is None else None
     with get_db() as conn:
         target = _resolve_profile_target(conn, user, as_username)
+        # 资源库引用必须是本人/本 Agent 名下、已过审的模型资源
+        if library_id is not None:
+            _require_approved_library_model(conn, library_id, user, purpose="avatar")
         # 内置形象的能力位由目录决定（这些 VRM 确实有表情与骨骼），免得调用方漏填；
         # 显式传了 body.arkit/humanoid 时仍以调用方为准，外链与原有行为一字不变。
         if builtin_id:
@@ -2235,21 +2608,1527 @@ def delete_my_model3d(user: CurrentUser, as_username: Annotated[str | None, Quer
     return {"username": target["username"], "model3dUrl": None, "model3dArkit": False, "model3dHumanoid": False}
 
 
+# ---------- 个人文件资源库（版本化、默认私有） ----------
+
+LIBRARY_SELECT = """
+    SELECT r.*, owner.username AS owner_name, owner.kind AS owner_kind,
+           econ.username AS economic_owner_name,
+           v.id AS current_version_id_joined, v.version_no AS current_version_no,
+           v.name AS current_version_name, v.kind AS current_kind, v.mime AS current_mime,
+           v.size AS current_size, v.sha256 AS current_sha256,
+           v.scan_status AS current_scan_status, v.review_status AS current_review_status,
+           v.created_at AS current_version_created_at,
+           (SELECT rr.note FROM resource_reviews rr WHERE rr.resource_version_id = v.id ORDER BY rr.id DESC LIMIT 1) AS current_review_note,
+           l.id AS current_listing_id, l.price_points AS current_listing_price, l.status AS current_listing_status
+    FROM library_resources r
+    JOIN users owner ON owner.id = r.owner_account_id
+    JOIN users econ ON econ.id = r.economic_owner_id
+    LEFT JOIN library_resource_versions v ON v.id = r.current_version_id
+    LEFT JOIN resource_listings l ON l.resource_version_id = v.id
+"""
+
+
+def _library_resource(conn, resource_id: int):
+    return conn.execute(LIBRARY_SELECT + " WHERE r.id = ?", (resource_id,)).fetchone()
+
+
+def _library_version(conn, resource_id: int, version_id: int):
+    return conn.execute(
+        """
+        SELECT v.*, r.owner_account_id, r.economic_owner_id, r.status AS resource_status,
+               r.name AS resource_name, owner.username AS owner_name,
+               econ.username AS economic_owner_name
+        FROM library_resource_versions v
+        JOIN library_resources r ON r.id = v.resource_id
+        JOIN users owner ON owner.id = r.owner_account_id
+        JOIN users econ ON econ.id = r.economic_owner_id
+        WHERE v.resource_id = ? AND v.id = ?
+        """,
+        (resource_id, version_id),
+    ).fetchone()
+
+
+def _library_can_manage(resource, user: dict) -> bool:
+    effective_id = _effective_human_id(user)
+    return resource is not None and (
+        resource["owner_account_id"] == effective_id
+        or resource["economic_owner_id"] == effective_id
+    )
+
+
+def _require_approved_library_model(conn, resource_id: int, user: dict, *, purpose: str):
+    """形象/房间场景引用资源库模型时的统一校验：资源必须存在、active、归当前
+    用户（或其名下 Agent）管理，且当前版本已过审。purpose 仅用于错误提示。"""
+    resource = _library_resource(conn, resource_id)
+    if not resource or resource["status"] != "active" or not _library_can_manage(resource, user):
+        raise HTTPException(status_code=404, detail="资源不存在")
+    version = conn.execute(
+        "SELECT * FROM library_resource_versions WHERE id = ?", (resource["current_version_id"],)
+    ).fetchone()
+    if not version or version["kind"] != "model":
+        label = "3D 形象" if purpose == "avatar" else "房间场景"
+        raise _friend_error("resource_kind_mismatch", f"{label}只能引用模型类资源", 409)
+    if version["review_status"] != "approved" or version["scan_status"] != "clean":
+        raise _friend_error("resource_not_approved", "资源尚未通过审核，请先在「我的资源库」提交审核", 409)
+    return resource, version
+
+
+def _library_version_file_response(version) -> FileResponse:
+    """把资源库版本的内容文件作为下载响应（媒体类型取版本 mime）。"""
+    path = LIBRARY_DIR / version["content_path"]
+    if not version["content_path"] or not path.is_file():
+        raise HTTPException(status_code=404, detail="资源文件缺失")
+    return FileResponse(path, media_type=version["mime"] or "application/octet-stream")
+
+
+def _library_resource_url(resource_id: int) -> str:
+    return f"/api/library/resources/{resource_id}"
+
+
+def _library_version_dict(row, *, include_content_url: bool = False) -> dict:
+    data = {
+        "id": row["id"],
+        "resourceId": row["resource_id"],
+        "versionNo": row["version_no"],
+        "name": row["name"],
+        "kind": row["kind"],
+        "mime": row["mime"],
+        "size": row["size"],
+        "sha256": row["sha256"],
+        "scanStatus": row["scan_status"],
+        "reviewStatus": row["review_status"],
+        "reviewNote": _row_get(row, "review_note", ""),
+        "createdBy": row["created_by"],
+        "createdAt": row["created_at"],
+        "listing": (
+            {
+                "id": _row_get(row, "listing_id"),
+                "pricePoints": _row_get(row, "listing_price", 0),
+                "status": _row_get(row, "listing_status"),
+            }
+            if _row_get(row, "listing_id") is not None
+            else None
+        ),
+    }
+    if include_content_url:
+        data["contentUrl"] = f"/api/library/resources/{row['resource_id']}/versions/{row['id']}/content"
+    return data
+
+
+def _library_resource_dict(conn, row, *, include_versions: bool = False) -> dict:
+    data = {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "status": row["status"],
+        "ownerAccountId": row["owner_account_id"],
+        "ownerName": row["owner_name"],
+        "economicOwnerName": row["economic_owner_name"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "currentVersion": None,
+        "url": _library_resource_url(row["id"]),
+    }
+    if row["current_version_id_joined"]:
+        data["currentVersion"] = {
+            "id": row["current_version_id_joined"],
+            "versionNo": row["current_version_no"],
+            "name": row["current_version_name"],
+            "kind": row["current_kind"],
+            "mime": row["current_mime"],
+            "size": row["current_size"],
+            "sha256": row["current_sha256"],
+            "scanStatus": row["current_scan_status"],
+            "reviewStatus": row["current_review_status"],
+            "reviewNote": _row_get(row, "current_review_note", ""),
+            "createdAt": row["current_version_created_at"],
+            "listing": (
+                {
+                    "id": _row_get(row, "current_listing_id"),
+                    "pricePoints": _row_get(row, "current_listing_price", 0),
+                    "status": _row_get(row, "current_listing_status"),
+                }
+                if _row_get(row, "current_listing_id") is not None
+                else None
+            ),
+            "contentUrl": f"/api/library/resources/{row['id']}/versions/{row['current_version_id_joined']}/content",
+        }
+    if include_versions:
+        versions = conn.execute(
+            """
+            SELECT v.*, l.id AS listing_id, l.price_points AS listing_price, l.status AS listing_status,
+                   (SELECT rr.note FROM resource_reviews rr WHERE rr.resource_version_id = v.id ORDER BY rr.id DESC LIMIT 1) AS review_note
+            FROM library_resource_versions v
+            LEFT JOIN resource_listings l ON l.resource_version_id = v.id
+            WHERE v.resource_id = ? ORDER BY v.version_no DESC
+            """,
+            (row["id"],),
+        ).fetchall()
+        data["versions"] = [_library_version_dict(version, include_content_url=True) for version in versions]
+    return data
+
+
+def _library_upload_metadata(file_name: str | None, content_type: str | None, data: bytes):
+    name = _validate_file_name(file_name or "")
+    kind, mime = _classify_file(name, content_type, data)
+    limit = _file_size_limit(kind)
+    if len(data) > limit:
+        raise HTTPException(status_code=413, detail=f"资源超过 {limit // (1024 * 1024)}MB 上限")
+    return name, kind, mime, hashlib.sha256(data).hexdigest()
+
+
+def _enforce_library_quota(conn, owner_account_id: int, incoming_bytes: int, *, new_resource: bool = False) -> None:
+    resource_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM library_resources WHERE owner_account_id = ? AND status != 'deleted'",
+        (owner_account_id,),
+    ).fetchone()["c"]
+    if new_resource and resource_count >= MAX_LIBRARY_RESOURCES:
+        raise _friend_error(
+            "library_quota_exceeded",
+            f"资源数量已达上限（{MAX_LIBRARY_RESOURCES}）",
+            413,
+            resourceCount=resource_count,
+            maxResources=MAX_LIBRARY_RESOURCES,
+        )
+    total = conn.execute(
+        """
+        SELECT COALESCE(SUM(v.size), 0) AS total
+        FROM library_resource_versions v
+        JOIN library_resources r ON r.id = v.resource_id
+        WHERE r.owner_account_id = ? AND r.status != 'deleted'
+        """,
+        (owner_account_id,),
+    ).fetchone()["total"]
+    if total + incoming_bytes > MAX_LIBRARY_TOTAL_BYTES:
+        raise _friend_error(
+            "library_quota_exceeded",
+            "资源库存储配额已用尽",
+            413,
+            usedBytes=total,
+            requestedBytes=incoming_bytes,
+            maxBytes=MAX_LIBRARY_TOTAL_BYTES,
+        )
+
+
+def _library_relative_path(owner_id: int, resource_id: int, version_id: int, name: str) -> str:
+    ext = _file_storage_ext(name)
+    return f"{owner_id}/{resource_id}/{version_id}{ext}"
+
+
+def _library_write_version(owner_id: int, resource_id: int, version_id: int, name: str, data: bytes) -> str:
+    relative = _library_relative_path(owner_id, resource_id, version_id, name)
+    destination = LIBRARY_DIR / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _write_file_bytes(destination, data)
+    return relative
+
+
+@app.get("/api/library/resources")
+def list_library_resources(user: CurrentUser):
+    owner_id = _effective_human_id(user)
+    with get_db() as conn:
+        rows = conn.execute(
+            LIBRARY_SELECT
+            + " WHERE r.status != 'deleted' AND (r.owner_account_id = ? OR r.economic_owner_id = ?)"
+            + " ORDER BY r.updated_at DESC, r.id DESC",
+            (owner_id, owner_id),
+        ).fetchall()
+        resources = [_library_resource_dict(conn, row) for row in rows]
+        total_bytes = conn.execute(
+            """
+            SELECT COALESCE(SUM(v.size), 0) AS total
+            FROM library_resource_versions v
+            JOIN library_resources r ON r.id = v.resource_id
+            WHERE r.owner_account_id = ? AND r.status != 'deleted'
+            """,
+            (owner_id,),
+        ).fetchone()["total"]
+    return {
+        "resources": resources,
+        "quota": {
+            "resourceCount": len(resources),
+            "maxResources": MAX_LIBRARY_RESOURCES,
+            "usedBytes": total_bytes,
+            "maxBytes": MAX_LIBRARY_TOTAL_BYTES,
+        },
+    }
+
+
+@app.post("/api/library/resources")
+async def create_library_resource(
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    name: Annotated[str | None, Form()] = None,
+    description: Annotated[str, Form()] = "",
+):
+    data = await file.read()
+    filename, kind, mime, sha256 = _library_upload_metadata(name or file.filename, file.content_type, data)
+    if len(description) > 500:
+        raise HTTPException(status_code=422, detail="资源描述最多 500 字符")
+    created_path: Path | None = None
+    try:
+        with get_db() as conn:
+            account = conn.execute(
+                "SELECT id, kind, owner_id FROM users WHERE id = ?", (user["id"],)
+            ).fetchone()
+            owner_id = account["owner_id"] if account["kind"] == "agent" and account["owner_id"] else account["id"]
+            economic_owner_id = owner_id
+            _enforce_library_quota(conn, owner_id, len(data), new_resource=True)
+            cur = conn.execute(
+                """
+                INSERT INTO library_resources (owner_account_id, economic_owner_id, name, description)
+                VALUES (?, ?, ?, ?)
+                """,
+                (owner_id, economic_owner_id, filename, description),
+            )
+            resource_id = cur.lastrowid
+            version_cur = conn.execute(
+                """
+                INSERT INTO library_resource_versions
+                    (resource_id, version_no, name, kind, mime, size, sha256, content_path, scan_status, created_by)
+                VALUES (?, 1, ?, ?, ?, ?, ?, '', 'clean', ?)
+                """,
+                (resource_id, filename, kind, mime, len(data), sha256, user["id"]),
+            )
+            version_id = version_cur.lastrowid
+            relative = _library_write_version(owner_id, resource_id, version_id, filename, data)
+            created_path = LIBRARY_DIR / relative
+            conn.execute(
+                "UPDATE library_resource_versions SET content_path = ? WHERE id = ?",
+                (relative, version_id),
+            )
+            conn.execute(
+                "UPDATE library_resources SET current_version_id = ?, updated_at = datetime('now') WHERE id = ?",
+                (version_id, resource_id),
+            )
+            row = _library_resource(conn, resource_id)
+            result = _library_resource_dict(conn, row, include_versions=True)
+    except Exception:
+        if created_path:
+            created_path.unlink(missing_ok=True)
+        raise
+    return result
+
+
+@app.get("/api/library/resources/{resource_id}")
+def get_library_resource(resource_id: int, user: CurrentUser):
+    with get_db() as conn:
+        row = _library_resource(conn, resource_id)
+        if not row or row["status"] == "deleted" or not _library_can_manage(row, user):
+            raise HTTPException(status_code=404, detail="资源不存在")
+        return _library_resource_dict(conn, row, include_versions=True)
+
+
+@app.patch("/api/library/resources/{resource_id}")
+def update_library_resource(resource_id: int, body: LibraryResourceUpdate, user: CurrentUser):
+    if body.name is None and body.description is None:
+        raise HTTPException(status_code=400, detail="没有需要修改的字段")
+    with get_db() as conn:
+        row = _library_resource(conn, resource_id)
+        if not row or row["status"] == "deleted" or not _library_can_manage(row, user):
+            raise HTTPException(status_code=404, detail="资源不存在")
+        name = _validate_file_name(body.name) if body.name is not None else row["name"]
+        description = row["description"] if body.description is None else body.description
+        conn.execute(
+            "UPDATE library_resources SET name = ?, description = ?, updated_at = datetime('now') WHERE id = ?",
+            (name, description, resource_id),
+        )
+        row = _library_resource(conn, resource_id)
+        result = _library_resource_dict(conn, row, include_versions=True)
+    return result
+
+
+@app.delete("/api/library/resources/{resource_id}")
+def archive_library_resource(resource_id: int, user: CurrentUser):
+    with get_db() as conn:
+        row = _library_resource(conn, resource_id)
+        if not row or row["status"] == "deleted" or not _library_can_manage(row, user):
+            raise HTTPException(status_code=404, detail="资源不存在")
+        conn.execute(
+            "UPDATE library_resources SET status = 'archived', deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            (resource_id,),
+        )
+    return {"archived": True, "resourceId": resource_id}
+
+
+@app.post("/api/library/resources/{resource_id}/versions")
+async def create_library_version(
+    resource_id: int,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    name: Annotated[str | None, Form()] = None,
+):
+    data = await file.read()
+    with get_db() as conn:
+        resource = _library_resource(conn, resource_id)
+        if not resource or resource["status"] != "active" or not _library_can_manage(resource, user):
+            raise HTTPException(status_code=404, detail="资源不存在或已归档")
+        fallback_name = resource["current_version_name"] or resource["name"]
+        filename, kind, mime, sha256 = _library_upload_metadata(name or file.filename or fallback_name, file.content_type, data)
+        _enforce_library_quota(conn, resource["owner_account_id"], len(data))
+        duplicate = conn.execute(
+            "SELECT id FROM library_resource_versions WHERE resource_id = ? AND sha256 = ?",
+            (resource_id, sha256),
+        ).fetchone()
+        if duplicate:
+            raise _friend_error("resource_version_conflict", "该资源已经存在相同内容版本", 409, versionId=duplicate["id"])
+        version_no = conn.execute(
+            "SELECT COALESCE(MAX(version_no), 0) + 1 AS next_no FROM library_resource_versions WHERE resource_id = ?",
+            (resource_id,),
+        ).fetchone()["next_no"]
+        version_cur = conn.execute(
+            """
+            INSERT INTO library_resource_versions
+                (resource_id, version_no, name, kind, mime, size, sha256, content_path, scan_status, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, '', 'clean', ?)
+            """,
+            (resource_id, version_no, filename, kind, mime, len(data), sha256, user["id"]),
+        )
+        version_id = version_cur.lastrowid
+        owner_id = resource["owner_account_id"]
+        relative = _library_relative_path(owner_id, resource_id, version_id, filename)
+        destination = LIBRARY_DIR / relative
+        try:
+            _library_write_version(owner_id, resource_id, version_id, filename, data)
+            conn.execute("UPDATE library_resource_versions SET content_path = ? WHERE id = ?", (relative, version_id))
+            conn.execute(
+                """
+                UPDATE library_resources
+                SET name = ?, current_version_id = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (filename, version_id, resource_id),
+            )
+            row = _library_resource(conn, resource_id)
+            result = _library_resource_dict(conn, row, include_versions=True)
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+    return result
+
+
+@app.get("/api/library/resources/{resource_id}/versions/{version_id}/content")
+def download_library_version(resource_id: int, version_id: int, user: CurrentUser):
+    with get_db() as conn:
+        version = _library_version(conn, resource_id, version_id)
+        if not version or version["resource_status"] == "deleted" or not (
+            _library_can_manage(version, user) or user["isSuperadmin"]
+        ):
+            raise HTTPException(status_code=404, detail="资源版本不存在")
+        path = LIBRARY_DIR / version["content_path"]
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="资源文件缺失")
+        content_path = path
+        filename = version["name"]
+        mime = version["mime"]
+    return _file_response(content_path, filename, inline=False, media_type=mime)
+
+
+
+
+@app.post("/api/library/resources/{resource_id}/versions/{version_id}/submit")
+def submit_resource_review(resource_id: int, version_id: int, user: CurrentUser):
+    with get_db() as conn:
+        resource = _library_resource(conn, resource_id)
+        version = _library_version(conn, resource_id, version_id)
+        if not resource or not version or not _library_can_manage(resource, user):
+            raise HTTPException(status_code=404, detail="资源版本不存在")
+        if version["scan_status"] not in ("clean", "pending"):
+            raise _friend_error("moderation_required", "资源未通过安全扫描，不能提交审核", 409)
+        conn.execute(
+            "UPDATE library_resource_versions SET review_status = 'pending_review' WHERE id = ?",
+            (version_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO resource_reviews (resource_version_id, reviewer_user_id, decision, note, scan_status)
+            VALUES (?, ?, 'submitted', '', ?)
+            """,
+            (version_id, user["id"], version["scan_status"]),
+        )
+        row = _library_version(conn, resource_id, version_id)
+    return {"version": _library_version_dict(row, include_content_url=True), "submitted": True}
+
+
+@app.get("/api/admin/resource-reviews")
+def list_resource_reviews(user: SuperAdmin):
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT v.*, r.name AS resource_name, r.owner_account_id,
+                   owner.username AS owner_name
+            FROM library_resource_versions v
+            JOIN library_resources r ON r.id = v.resource_id
+            JOIN users owner ON owner.id = r.owner_account_id
+            WHERE v.review_status = 'pending_review'
+            ORDER BY v.created_at ASC, v.id ASC
+            """
+        ).fetchall()
+    return {
+        "reviews": [
+            {
+                **_library_version_dict(row, include_content_url=True),
+                "resourceName": row["resource_name"],
+                "ownerName": row["owner_name"],
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.post("/api/admin/resource-reviews/{version_id}")
+def decide_resource_review(version_id: int, body: ResourceReviewDecision, user: SuperAdmin):
+    with get_db() as conn:
+        version = conn.execute(
+            "SELECT * FROM library_resource_versions WHERE id = ?", (version_id,)
+        ).fetchone()
+        if not version:
+            raise HTTPException(status_code=404, detail="资源版本不存在")
+        if body.decision == "approved" and version["scan_status"] != "clean":
+            # 当前服务尚未接入外部杀毒服务；上传时的基础魔数/大小校验将 pending
+            # 标为 clean。未来异步扫描失败时仍可阻止批准。
+            raise _friend_error("moderation_required", "资源尚未通过安全扫描", 409)
+        conn.execute(
+            "UPDATE library_resource_versions SET review_status = ? WHERE id = ?",
+            (body.decision, version_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO resource_reviews (resource_version_id, reviewer_user_id, decision, note, scan_status)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (version_id, user["id"], body.decision, body.note, version["scan_status"]),
+        )
+        row = conn.execute("SELECT * FROM library_resource_versions WHERE id = ?", (version_id,)).fetchone()
+    result = _library_version_dict(row, include_content_url=False)
+    result["reviewNote"] = body.note
+    return {"version": result, "decision": body.decision}
+
+
+@app.post("/api/library/resources/{resource_id}/versions/{version_id}/listing")
+def create_resource_listing(resource_id: int, version_id: int, body: ResourceListingCreate, user: CurrentUser):
+    with get_db() as conn:
+        resource = _library_resource(conn, resource_id)
+        version = _library_version(conn, resource_id, version_id)
+        if not resource or not version or not _library_can_manage(resource, user):
+            raise HTTPException(status_code=404, detail="资源版本不存在")
+        if resource["status"] != "active":
+            raise _friend_error("resource_not_listed", "已归档资源不能上架", 409)
+        if version["review_status"] != "approved" or version["scan_status"] != "clean":
+            raise _friend_error("resource_not_approved", "资源版本尚未通过审核", 409)
+        seller_id = resource["economic_owner_id"]
+        existing = conn.execute(
+            "SELECT * FROM resource_listings WHERE resource_version_id = ?", (version_id,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE resource_listings
+                SET seller_user_id = ?, price_points = ?, status = 'listed', listed_at = COALESCE(listed_at, datetime('now')),
+                    unlisted_at = NULL, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (seller_id, body.pricePoints, existing["id"]),
+            )
+            listing_id = existing["id"]
+            idempotent = True
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO resource_listings (resource_version_id, seller_user_id, price_points, status, listed_at)
+                VALUES (?, ?, ?, 'listed', datetime('now'))
+                """,
+                (version_id, seller_id, body.pricePoints),
+            )
+            listing_id = cur.lastrowid
+            idempotent = False
+        listing = conn.execute("SELECT * FROM resource_listings WHERE id = ?", (listing_id,)).fetchone()
+    return {"listing": _listing_dict(listing), "idempotent": idempotent}
+
+
+def _listing_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "resourceVersionId": row["resource_version_id"],
+        "sellerUserId": row["seller_user_id"],
+        "pricePoints": row["price_points"],
+        "status": row["status"],
+        "listedAt": row["listed_at"],
+        "unlistedAt": row["unlisted_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+@app.patch("/api/library/listings/{listing_id}")
+def update_resource_listing(listing_id: int, body: ResourceListingUpdate, user: CurrentUser):
+    if body.pricePoints is None and body.listed is None:
+        raise HTTPException(status_code=400, detail="没有需要修改的字段")
+    with get_db() as conn:
+        listing = conn.execute(
+            """
+            SELECT l.*, r.owner_account_id, r.economic_owner_id, v.review_status, v.scan_status
+            FROM resource_listings l
+            JOIN library_resource_versions v ON v.id = l.resource_version_id
+            JOIN library_resources r ON r.id = v.resource_id
+            WHERE l.id = ?
+            """,
+            (listing_id,),
+        ).fetchone()
+        if not listing or not _library_can_manage(listing, user):
+            raise HTTPException(status_code=404, detail="资源 listing 不存在")
+        price = listing["price_points"] if body.pricePoints is None else body.pricePoints
+        status = listing["status"]
+        if body.listed is not None:
+            if body.listed:
+                if listing["review_status"] != "approved" or listing["scan_status"] != "clean":
+                    raise _friend_error("resource_not_approved", "资源版本尚未通过审核", 409)
+                status = "listed"
+            else:
+                status = "withdrawn"
+        conn.execute(
+            """
+            UPDATE resource_listings
+            SET price_points = ?, status = ?, listed_at = CASE WHEN ? = 'listed' THEN COALESCE(listed_at, datetime('now')) ELSE listed_at END,
+                unlisted_at = CASE WHEN ? != 'listed' THEN datetime('now') ELSE unlisted_at END,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (price, status, status, status, listing_id),
+        )
+        listing = conn.execute("SELECT * FROM resource_listings WHERE id = ?", (listing_id,)).fetchone()
+    return {"listing": _listing_dict(listing)}
+
+
+@app.delete("/api/library/listings/{listing_id}")
+def delete_resource_listing(listing_id: int, user: CurrentUser):
+    with get_db() as conn:
+        listing = conn.execute(
+            """
+            SELECT l.*, r.owner_account_id, r.economic_owner_id
+            FROM resource_listings l
+            JOIN library_resource_versions v ON v.id = l.resource_version_id
+            JOIN library_resources r ON r.id = v.resource_id
+            WHERE l.id = ?
+            """,
+            (listing_id,),
+        ).fetchone()
+        if not listing or not _library_can_manage(listing, user):
+            raise HTTPException(status_code=404, detail="资源 listing 不存在")
+        conn.execute(
+            "UPDATE resource_listings SET status = 'withdrawn', unlisted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            (listing_id,),
+        )
+    return {"unlisted": True, "listingId": listing_id}
+
+
+STORE_SELECT = """
+    SELECT l.*, v.resource_id, v.version_no, v.name AS version_name, v.kind, v.mime, v.size,
+           v.sha256, v.scan_status, v.review_status,
+           r.name AS resource_name, r.description, r.owner_account_id,
+           seller.username AS seller_name
+    FROM resource_listings l
+    JOIN library_resource_versions v ON v.id = l.resource_version_id
+    JOIN library_resources r ON r.id = v.resource_id
+    JOIN users seller ON seller.id = l.seller_user_id
+"""
+
+
+def _store_dict(row) -> dict:
+    return {
+        "listingId": row["id"],
+        "resourceId": row["resource_id"],
+        "resourceVersionId": row["resource_version_id"],
+        "resourceName": row["resource_name"],
+        "name": row["version_name"],
+        "description": row["description"],
+        "kind": row["kind"],
+        "mime": row["mime"],
+        "size": row["size"],
+        "versionNo": row["version_no"],
+        "seller": row["seller_name"],
+        "pricePoints": row["price_points"],
+        "status": row["status"],
+        "listedAt": row["listed_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+@app.get("/api/store/resources")
+def list_store_resources(
+    user: CurrentUser,
+    kind: str | None = None,
+    q: str | None = None,
+):
+    clauses = ["l.status = 'listed'", "v.review_status = 'approved'", "v.scan_status = 'clean'", "r.status = 'active'"]
+    params: list = []
+    if kind:
+        clauses.append("v.kind = ?")
+        params.append(kind)
+    if q:
+        clauses.append("(r.name LIKE ? OR r.description LIKE ? OR v.name LIKE ?)")
+        pattern = f"%{q}%"
+        params.extend((pattern, pattern, pattern))
+    with get_db() as conn:
+        rows = conn.execute(STORE_SELECT + " WHERE " + " AND ".join(clauses) + " ORDER BY l.listed_at DESC, l.id DESC", params).fetchall()
+    return {"resources": [_store_dict(row) for row in rows]}
+
+
+@app.get("/api/store/resources/{resource_id}")
+def get_store_resource(resource_id: int, user: CurrentUser):
+    with get_db() as conn:
+        rows = conn.execute(
+            STORE_SELECT
+            + " WHERE l.status = 'listed' AND v.review_status = 'approved' AND v.scan_status = 'clean'"
+            + " AND r.status = 'active' AND r.id = ? ORDER BY v.version_no DESC",
+            (resource_id,),
+        ).fetchall()
+    if not rows:
+        raise _friend_error("resource_not_listed", "资源未上架", 404)
+    return {"resourceId": resource_id, "listings": [_store_dict(row) for row in rows]}
+
+
+def _economic_user_id(conn, user_id: int) -> int:
+    row = conn.execute("SELECT id, kind, owner_id FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=401, detail="账号不存在")
+    return int(row["owner_id"] if row["kind"] == "agent" and row["owner_id"] else row["id"])
+
+
+def _ensure_points_account(conn, user_id: int):
+    conn.execute(
+        "INSERT INTO point_accounts (user_id, balance) VALUES (?, 0) ON CONFLICT(user_id) DO NOTHING",
+        (user_id,),
+    )
+
+
+@app.post("/api/admin/points/grants")
+def grant_campaign_points(body: PointsCampaignGrant, user: SuperAdmin):
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="活动发放原因不能为空")
+    with get_db() as conn:
+        target = conn.execute(
+            "SELECT id, username, kind, status FROM users WHERE username = ? COLLATE NOCASE",
+            (body.username,),
+        ).fetchone()
+        if not target or target["kind"] != "human" or target["status"] != "active":
+            raise _friend_error("points_grant_target_not_found", "活动积分只能发放给启用中的人类账号", 404)
+        key = f"campaign:{body.campaignKey}:user:{target['id']}"
+        granted = _grant_points(
+            conn,
+            user_id=target["id"],
+            amount=body.amount,
+            transaction_type="campaign_grant",
+            idempotency_key=key,
+            reason=reason,
+            campaign_key=body.campaignKey,
+        )
+        balance = conn.execute(
+            "SELECT balance FROM point_accounts WHERE user_id = ?", (target["id"],)
+        ).fetchone()["balance"]
+        transaction = conn.execute(
+            "SELECT id FROM point_transactions WHERE idempotency_key = ?", (key,)
+        ).fetchone()
+    return {
+        "username": target["username"],
+        "amount": body.amount,
+        "balance": balance,
+        "transactionId": transaction["id"],
+        "campaignKey": body.campaignKey,
+        "idempotent": not granted,
+    }
+
+
+@app.get("/api/points")
+def get_points(user: CurrentUser):
+    with get_db() as conn:
+        economic_id = _economic_user_id(conn, user["id"])
+        _ensure_points_account(conn, economic_id)
+        row = conn.execute("SELECT user_id, balance, updated_at FROM point_accounts WHERE user_id = ?", (economic_id,)).fetchone()
+    return {"userId": row["user_id"], "balance": row["balance"], "updatedAt": row["updated_at"]}
+
+
+@app.get("/api/points/transactions")
+def list_point_transactions(user: CurrentUser):
+    with get_db() as conn:
+        economic_id = _economic_user_id(conn, user["id"])
+        rows = conn.execute(
+            """
+            SELECT * FROM point_transactions
+            WHERE payer_user_id = ? OR payee_user_id = ?
+            ORDER BY created_at DESC, id DESC LIMIT 200
+            """,
+            (economic_id, economic_id),
+        ).fetchall()
+    return {
+        "transactions": [
+            {
+                "id": row["id"],
+                "idempotencyKey": row["idempotency_key"],
+                "payerUserId": row["payer_user_id"],
+                "payeeUserId": row["payee_user_id"],
+                "amount": row["amount"],
+                "transactionType": row["transaction_type"],
+                "metadata": json.loads(row["metadata"] or "{}"),
+                "resourceId": row["resource_id"],
+                "resourceVersionId": row["resource_version_id"],
+                "roomId": row["room_id"],
+                "status": row["status"],
+                "createdAt": row["created_at"],
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.post("/api/rooms/{room_ref}/files/from-library")
+def import_library_resource(room_ref: str, body: LibraryImportRequest, user: CurrentUser):
+    created_path: Path | None = None
+    with get_db() as conn:
+        room, member = _require_membership(conn, room_ref, user["id"])
+        _check_file_edit_allowed(room, member, user["id"])
+        resource = _library_resource(conn, body.resourceId)
+        version = _library_version(conn, body.resourceId, body.resourceVersionId)
+        if not resource or not version or resource["status"] == "deleted":
+            raise _friend_error("resource_not_found", "资源版本不存在", 404)
+        if not _library_can_manage(resource, user) and resource["status"] != "active":
+            raise _friend_error("resource_not_found", "资源版本不存在", 404)
+        purchaser_id = _economic_user_id(conn, user["id"])
+        existing_license = conn.execute(
+            """
+            SELECT l.*, f.name AS file_name
+            FROM room_resource_licenses l
+            LEFT JOIN room_files f ON f.id = l.room_file_id
+            WHERE l.room_id = ? AND l.purchaser_user_id = ? AND l.resource_version_id = ?
+            """,
+            (room["id"], purchaser_id, body.resourceVersionId),
+        ).fetchone()
+        if existing_license and existing_license["room_file_id"]:
+            return {
+                "roomId": room["id"],
+                "roomKey": _room_key(room),
+                "licenseId": existing_license["id"],
+                "fileId": existing_license["room_file_id"],
+                "charged": False,
+                "idempotent": True,
+            }
+        is_owner = _library_can_manage(resource, user)
+        listing = None
+        if is_owner:
+            price = 0
+        else:
+            listing = conn.execute(
+                STORE_SELECT + " WHERE l.id = ? AND l.resource_version_id = ? AND l.status = 'listed'",
+                (body.listingId, body.resourceVersionId),
+            ).fetchone() if body.listingId else None
+            if not listing or listing["review_status"] != "approved" or listing["scan_status"] != "clean":
+                raise _friend_error("resource_not_listed", "资源未上架或 listing 已失效", 403)
+            price = int(listing["price_points"])
+        target_name = _validate_file_name(body.name or version["name"])
+        existing_file = conn.execute(
+            "SELECT id FROM room_files WHERE room_id = ? AND name = ? COLLATE NOCASE",
+            (room["id"], target_name),
+        ).fetchone()
+        if existing_file:
+            raise _friend_error("room_file_name_conflict", "房间中已存在同名共同文件", 409)
+        source_path = LIBRARY_DIR / version["content_path"]
+        if not source_path.is_file():
+            raise HTTPException(status_code=404, detail="资源文件缺失")
+        seller_id = resource["economic_owner_id"]
+        idempotency_key = body.idempotencyKey or f"room-import:{room['id']}:{purchaser_id}:{body.resourceVersionId}"
+        prior_transaction = conn.execute(
+            "SELECT * FROM point_transactions WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
+        if prior_transaction:
+            raise _friend_error("license_exists", "该导入请求已经处理", 409, transactionId=prior_transaction["id"])
+        if price and purchaser_id == seller_id:
+            price = 0
+        if price:
+            _ensure_points_account(conn, purchaser_id)
+            _ensure_points_account(conn, seller_id)
+            updated = conn.execute(
+                "UPDATE point_accounts SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ? AND balance >= ?",
+                (price, purchaser_id, price),
+            )
+            if updated.rowcount != 1:
+                raise _friend_error("insufficient_points", "积分不足", 402, required=price)
+            conn.execute(
+                "UPDATE point_accounts SET balance = balance + ?, updated_at = datetime('now') WHERE user_id = ?",
+                (price, seller_id),
+            )
+        elif purchaser_id != seller_id:
+            _ensure_points_account(conn, purchaser_id)
+            _ensure_points_account(conn, seller_id)
+        now = _db_now(conn)
+        conn.execute(
+            """
+            INSERT INTO point_transactions
+                (idempotency_key, payer_user_id, payee_user_id, amount, resource_id, resource_version_id, room_id, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'committed')
+            """,
+            (idempotency_key, purchaser_id, seller_id, price, body.resourceId, body.resourceVersionId, room["id"]),
+        )
+        transaction_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        conn.execute(
+            """
+            INSERT INTO room_files (
+                room_id, name, kind, mime, size, description, created_by, created_at, updated_by, updated_at,
+                source_resource_id, source_resource_version_id, source_purchased_by, source_detached
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            """,
+            (
+                room["id"], target_name, version["kind"], version["mime"], version["size"], resource["description"],
+                user["id"], now, user["id"], now, body.resourceId, body.resourceVersionId, user["id"],
+            ),
+        )
+        file_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        rel_path = f"{room['id']}/{file_id}{_file_storage_ext(target_name)}"
+        destination = FILES_DIR / rel_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _write_file_bytes(destination, source_path.read_bytes())
+            created_path = destination
+            conn.execute("UPDATE room_files SET content_path = ? WHERE id = ?", (rel_path, file_id))
+            conn.execute(
+                """
+                INSERT INTO room_resource_licenses
+                    (room_id, purchaser_user_id, resource_id, resource_version_id, listing_id, price_points, transaction_id, room_file_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (room["id"], purchaser_id, body.resourceId, body.resourceVersionId, listing["id"] if listing else None, price, transaction_id, file_id),
+            )
+            license_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+            conn.execute("UPDATE point_transactions SET license_id = ? WHERE id = ?", (license_id, transaction_id))
+            conn.execute("UPDATE room_files SET source_license_id = ? WHERE id = ?", (license_id, file_id))
+            _bump_files_revision(conn, room["id"])
+            payload = _single_file_payload(conn, room["name"], room["id"], file_id)
+            room_id = room["id"]
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+    notify_room(room_id)
+    payload.update({"licenseId": license_id, "charged": bool(price), "pricePoints": price, "idempotent": False})
+    return payload
+
+# ---------- 好友关系与 private 房间邀请 ----------
+
+def _friend_pair(user_id: int, other_id: int) -> tuple[int, int]:
+    return (user_id, other_id) if user_id < other_id else (other_id, user_id)
+
+
+def _get_friendship(conn, user_id: int, other_id: int):
+    a, b = _friend_pair(user_id, other_id)
+    return conn.execute(
+        "SELECT * FROM user_friendships WHERE user_a_id = ? AND user_b_id = ?",
+        (a, b),
+    ).fetchone()
+
+
+def _pair_ids(user_a_id: int, user_b_id: int) -> tuple[int, int]:
+    return (user_a_id, user_b_id) if user_a_id < user_b_id else (user_b_id, user_a_id)
+
+
+def _direct_pair_room(conn, user_a_id: int, user_b_id: int):
+    a, b = _pair_ids(user_a_id, user_b_id)
+    return conn.execute(
+        ROOM_SELECT
+        + " WHERE r.room_type = 'direct_pair' AND r.pair_user_a_id = ? AND r.pair_user_b_id = ?"
+        + " AND r.archived_at IS NULL",
+        (a, b),
+    ).fetchone()
+
+
+def _ensure_direct_pair_room(conn, user_a_id: int, user_b_id: int):
+    """好友接受事务内创建/复用双人房；调用方已保证双方是 accepted human。"""
+    a, b = _pair_ids(user_a_id, user_b_id)
+    existing = _direct_pair_room(conn, a, b)
+    if existing:
+        for member_id in (a, b):
+            conn.execute(
+                """
+                INSERT INTO room_members (room_id, user_id)
+                VALUES (?, ?)
+                ON CONFLICT(room_id, user_id) DO UPDATE SET last_seen_at = datetime('now')
+                """,
+                (existing["id"], member_id),
+            )
+        return existing, False
+    owner = _user_by_id(conn, a)
+    base_name = f"与{_user_by_id(conn, b)['username']}的私聊"
+    name = base_name
+    suffix = 2
+    while conn.execute(
+        "SELECT 1 FROM rooms WHERE namespace_owner_id = ? AND name = ? COLLATE NOCASE AND archived_at IS NULL",
+        (a, name),
+    ).fetchone():
+        name = f"{base_name} {suffix}"
+        suffix += 1
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO rooms (
+                name, created_by, namespace_owner_id, room_type, pair_user_a_id, pair_user_b_id,
+                password_hash, visibility
+            )
+            VALUES (?, ?, ?, 'direct_pair', ?, ?, NULL, 'private')
+            """,
+            (name, a, a, a, b),
+        )
+    except sqlite3.IntegrityError:
+        existing = _direct_pair_room(conn, a, b)
+        if not existing:
+            raise
+        return existing, False
+    room = _get_room_by_id(conn, cur.lastrowid)
+    watermark = conn.execute(
+        "SELECT COALESCE(MAX(id), 0) AS w FROM messages WHERE room_id = ?", (room["id"],)
+    ).fetchone()["w"]
+    for member_id in (a, b):
+        conn.execute(
+            """
+            INSERT INTO room_members (room_id, user_id, first_visible_msg_id, last_read_msg_id)
+            VALUES (?, ?, ?, ?)
+            """,
+            (room["id"], member_id, watermark, watermark),
+        )
+    return room, True
+
+
+def _are_friends(conn, user_id: int, other_id: int) -> bool:
+    row = _get_friendship(conn, user_id, other_id)
+    return bool(row and row["status"] == "accepted")
+
+
+def _friendship_dict(conn, row, viewer_id: int) -> dict:
+    other_id = row["user_b_id"] if row["user_a_id"] == viewer_id else row["user_a_id"]
+    other = conn.execute(
+        """
+        SELECT id, username, kind, status, avatar_updated_at
+        FROM users WHERE id = ?
+        """,
+        (other_id,),
+    ).fetchone()
+    return {
+        "id": row["id"],
+        "username": other["username"],
+        "kind": other["kind"],
+        "status": row["status"],
+        "requestedBy": row["requested_by"],
+        "incoming": row["requested_by"] != viewer_id,
+        "avatarUrl": _avatar_url(other["username"], other["avatar_updated_at"]),
+        "createdAt": row["created_at"],
+        "respondedAt": row["responded_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def _friend_error(code: str, message: str, status_code: int = 409, **extra) -> HTTPException:
+    detail = {"code": code, "message": message}
+    detail.update(extra)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _room_namespace_owner_id(room) -> int:
+    return int(room["namespace_owner_id"] or room["created_by"])
+
+
+def _room_namespace_owner_is_human(room) -> bool:
+    # namespace_owner_id 已由迁移回填；creatorKind 仅作旧库/测试行的安全兜底。
+    return room["namespaceOwnerName"] is not None and (
+        room["creatorKind"] == "human" or room["namespace_owner_id"] != room["created_by"]
+    )
+
+
+def _has_accepted_room_invite(conn, room_id: int, user_id: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM room_invites
+        WHERE room_id = ? AND invitee_user_id = ? AND status = 'accepted'
+          AND (expires_at IS NULL OR expires_at > datetime('now'))
+        LIMIT 1
+        """,
+        (room_id, user_id),
+    ).fetchone()
+    return bool(row)
+
+
+def _require_private_join_access(conn, room, user: dict) -> None:
+    """private 新成员的好友/邀请门槛；房间治理者与建房 Agent 维持旧语义。"""
+    if room["visibility"] != "private":
+        return
+    if _row_get(room, "room_type", "standard") == "direct_pair":
+        effective_id = _effective_human_id(user)
+        if effective_id not in (room["pair_user_a_id"], room["pair_user_b_id"]):
+            raise _friend_error("pair_member_required", "该房间只允许双人好友及其 Agent 加入", 403)
+        other_id = room["pair_user_b_id"] if effective_id == room["pair_user_a_id"] else room["pair_user_a_id"]
+        if not _are_friends(conn, effective_id, other_id):
+            raise _friend_error("friend_required", "重新加入双人房前需要先恢复好友关系", 403)
+        return
+    if _is_room_governor(room, user["id"]):
+        return
+    namespace_owner_id = _room_namespace_owner_id(room)
+    if user["kind"] != "human":
+        raise _friend_error("friend_or_invite_required", "private 房间需要好友关系和已接受的邀请", 403)
+    if not _are_friends(conn, namespace_owner_id, user["id"]):
+        raise _friend_error("friend_or_invite_required", "你不是该 private 房间命名空间所有者的好友", 403)
+    if not _has_accepted_room_invite(conn, room["id"], user["id"]):
+        raise _friend_error("invite_required", "请先接受房主发出的房间邀请", 403)
+
+
+def _room_for_ref(conn, room_ref: str, user_id: int | None = None):
+    if room_ref.isdigit():
+        return _get_room_by_id(conn, int(room_ref))
+    if ":" in room_ref:
+        return _get_room_by_key(conn, room_ref)
+    return _get_room(conn, room_ref, user_id=user_id)
+
+
+@app.post("/api/friends/requests")
+def create_friend_request(body: FriendRequestCreate, user: HumanUser):
+    with get_db() as conn:
+        target = _get_user(conn, body.username)
+        if not target or target["kind"] != "human" or target["status"] != "active":
+            raise _friend_error("friend_target_not_found", "找不到可添加的人类用户", 404)
+        if target["id"] == user["id"]:
+            raise _friend_error("friend_self_forbidden", "不能添加自己为好友", 400)
+        row = _get_friendship(conn, user["id"], target["id"])
+        if row and row["status"] == "accepted":
+            raise _friend_error("already_friends", "你们已经是好友", 409)
+        if row and row["status"] == "pending":
+            return {"request": _friendship_dict(conn, row, user["id"]), "idempotent": True}
+        a, b = _friend_pair(user["id"], target["id"])
+        if row:
+            conn.execute(
+                """
+                UPDATE user_friendships
+                SET status = 'pending', requested_by = ?, responded_at = NULL, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (user["id"], row["id"]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO user_friendships
+                    (user_a_id, user_b_id, status, requested_by)
+                VALUES (?, ?, 'pending', ?)
+                """,
+                (a, b, user["id"]),
+            )
+        row = _get_friendship(conn, user["id"], target["id"])
+        result = _friendship_dict(conn, row, user["id"])
+    return {"request": result, "idempotent": False}
+
+
+@app.get("/api/friends")
+def list_friends(
+    user: CurrentUser,
+    status: Annotated[str, Query(pattern="^(accepted|incoming|outgoing|all)$")] = "accepted",
+):
+    viewer_id = _effective_human_id(user)
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM user_friendships
+            WHERE user_a_id = ? OR user_b_id = ?
+            ORDER BY updated_at DESC, id DESC
+            """,
+            (viewer_id, viewer_id),
+        ).fetchall()
+        result = []
+        for row in rows:
+            incoming = row["requested_by"] != viewer_id
+            if status == "accepted" and row["status"] != "accepted":
+                continue
+            if status == "incoming" and (row["status"] != "pending" or not incoming):
+                continue
+            if status == "outgoing" and (row["status"] != "pending" or incoming):
+                continue
+            result.append(_friendship_dict(conn, row, viewer_id))
+    return {"friends": result}
+
+
+def _load_friend_request(conn, request_id: int):
+    return conn.execute("SELECT * FROM user_friendships WHERE id = ?", (request_id,)).fetchone()
+
+
+@app.post("/api/friends/requests/{request_id}/accept")
+def accept_friend_request(request_id: int, user: HumanUser):
+    with get_db() as conn:
+        row = _load_friend_request(conn, request_id)
+        if not row or user["id"] not in (row["user_a_id"], row["user_b_id"]):
+            raise _friend_error("friend_request_not_found", "好友请求不存在", 404)
+        if row["status"] == "accepted":
+            pair_room, pair_created = _ensure_direct_pair_room(conn, row["user_a_id"], row["user_b_id"])
+            pair_payload = {**_room_dict(pair_room, user["id"]), "created": pair_created, "joined": True}
+            return {
+                "friendship": _friendship_dict(conn, row, user["id"]),
+                "pairRoom": pair_payload,
+                "idempotent": True,
+            }
+        if row["status"] != "pending" or row["requested_by"] == user["id"]:
+            raise _friend_error("friend_request_not_actionable", "该好友请求不能由当前用户接受", 409)
+        conn.execute(
+            "UPDATE user_friendships SET status = 'accepted', responded_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            (request_id,),
+        )
+        row = _load_friend_request(conn, request_id)
+        result = _friendship_dict(conn, row, user["id"])
+        pair_room, pair_created = _ensure_direct_pair_room(conn, row["user_a_id"], row["user_b_id"])
+        pair_payload = {**_room_dict(pair_room, user["id"]), "created": pair_created, "joined": True}
+    return {"friendship": result, "pairRoom": pair_payload, "idempotent": False}
+
+
+@app.post("/api/friends/requests/{request_id}/decline")
+def decline_friend_request(request_id: int, user: HumanUser):
+    with get_db() as conn:
+        row = _load_friend_request(conn, request_id)
+        if not row or user["id"] not in (row["user_a_id"], row["user_b_id"]):
+            raise _friend_error("friend_request_not_found", "好友请求不存在", 404)
+        if row["status"] != "pending":
+            return {"friendship": _friendship_dict(conn, row, user["id"]), "idempotent": True}
+        if row["requested_by"] == user["id"]:
+            raise _friend_error("friend_request_not_actionable", "发出方不能拒绝自己的好友请求", 409)
+        conn.execute(
+            "UPDATE user_friendships SET status = 'declined', responded_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            (request_id,),
+        )
+        row = _load_friend_request(conn, request_id)
+        result = _friendship_dict(conn, row, user["id"])
+    return {"friendship": result, "idempotent": False}
+
+
+@app.delete("/api/friends/requests/{request_id}")
+def cancel_friend_request(request_id: int, user: HumanUser):
+    with get_db() as conn:
+        row = _load_friend_request(conn, request_id)
+        if not row or row["requested_by"] != user["id"]:
+            raise _friend_error("friend_request_not_found", "可取消的好友请求不存在", 404)
+        if row["status"] == "pending":
+            conn.execute(
+                "UPDATE user_friendships SET status = 'revoked', responded_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+                (request_id,),
+            )
+            row = _load_friend_request(conn, request_id)
+    return {"friendship": _friendship_dict(conn, row, user["id"]), "idempotent": True}
+
+
+@app.delete("/api/friends/{username}")
+def remove_friend(username: str, user: HumanUser):
+    with get_db() as conn:
+        target = _get_user(conn, username)
+        if not target or target["kind"] != "human":
+            raise _friend_error("friend_not_found", "好友不存在", 404)
+        row = _get_friendship(conn, user["id"], target["id"])
+        if not row or row["status"] != "accepted":
+            return {"removed": True, "idempotent": True}
+        conn.execute(
+            "UPDATE user_friendships SET status = 'revoked', responded_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            (row["id"],),
+        )
+        conn.execute(
+            """
+            UPDATE room_invites SET status = 'revoked', updated_at = datetime('now')
+            WHERE status = 'pending'
+              AND ((inviter_user_id = ? AND invitee_user_id = ?)
+                   OR (inviter_user_id = ? AND invitee_user_id = ?))
+            """,
+            (user["id"], target["id"], target["id"], user["id"]),
+        )
+    return {"removed": True, "idempotent": False}
+
+
+def _require_invite_manager(conn, room_ref: str, user: dict):
+    room = _room_for_ref(conn, room_ref, user_id=user["id"])
+    if not room or _is_ended(room):
+        raise HTTPException(status_code=404, detail="房间不存在，请先创建或加入")
+    if user["kind"] != "human" or _room_namespace_owner_id(room) != user["id"]:
+        raise HTTPException(status_code=403, detail="只有 private 房间命名空间所有者可以发出邀请")
+    if room["visibility"] != "private":
+        raise HTTPException(status_code=400, detail="只有 private 房间支持好友邀请")
+    if _row_get(room, "room_type", "standard") == "direct_pair":
+        raise _friend_error("pair_room_only", "双人好友房不能邀请其他人", 403)
+    return room
+
+
+@app.get("/api/room-invites")
+def list_my_room_invites(user: HumanUser):
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT i.*, r.name AS room_name, r.namespace_owner_id,
+                   u.username AS inviter_name, no.username AS namespace_owner_name
+            FROM room_invites i
+            JOIN rooms r ON r.id = i.room_id
+            JOIN users u ON u.id = i.inviter_user_id
+            LEFT JOIN users no ON no.id = r.namespace_owner_id
+            WHERE i.invitee_user_id = ?
+            ORDER BY i.created_at DESC, i.id DESC
+            """,
+            (user["id"],),
+        ).fetchall()
+    return {
+        "invites": [
+            {
+                "id": row["id"],
+                "roomId": row["room_id"],
+                "roomName": row["room_name"],
+                "roomKey": f"{row['namespace_owner_name']}:{row['room_name']}",
+                "inviter": row["inviter_name"],
+                "namespaceOwner": row["namespace_owner_name"],
+                "status": row["status"],
+                "createdAt": row["created_at"],
+                "respondedAt": row["responded_at"],
+                "expiresAt": row["expires_at"],
+            }
+            for row in rows
+        ]
+    }
+
+
+def _invite_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "roomId": row["room_id"],
+        "invitee": row["invitee_name"],
+        "inviter": row["inviter_name"],
+        "status": row["status"],
+        "createdAt": row["created_at"],
+        "respondedAt": row["responded_at"],
+        "expiresAt": row["expires_at"],
+    }
+
+
+@app.get("/api/rooms/{room_ref}/invites")
+def list_room_invites(room_ref: str, user: HumanUser):
+    with get_db() as conn:
+        room = _require_invite_manager(conn, room_ref, user)
+        rows = conn.execute(
+            """
+            SELECT i.*, iu.username AS invitee_name, u.username AS inviter_name
+            FROM room_invites i
+            JOIN users iu ON iu.id = i.invitee_user_id
+            JOIN users u ON u.id = i.inviter_user_id
+            WHERE i.room_id = ? ORDER BY i.created_at DESC, i.id DESC
+            """,
+            (room["id"],),
+        ).fetchall()
+    return {"roomId": room["id"], "roomKey": _room_key(room), "invites": [_invite_dict(row) for row in rows]}
+
+
+@app.post("/api/rooms/{room_ref}/invites")
+def create_room_invite(room_ref: str, body: InviteCreate, user: HumanUser):
+    with get_db() as conn:
+        room = _require_invite_manager(conn, room_ref, user)
+        target = _get_user(conn, body.username)
+        if not target or target["kind"] != "human" or target["status"] != "active":
+            raise _friend_error("invite_target_not_found", "邀请目标不存在", 404)
+        if target["id"] == user["id"]:
+            raise _friend_error("invite_self_forbidden", "不能邀请自己", 400)
+        if not _are_friends(conn, user["id"], target["id"]):
+            raise _friend_error("friend_required", "只能邀请已接受的好友", 403)
+        existing = conn.execute(
+            "SELECT id, status FROM room_invites WHERE room_id = ? AND invitee_user_id = ? AND status = 'pending'",
+            (room["id"], target["id"]),
+        ).fetchone()
+        if existing:
+            row = conn.execute(
+                """
+                SELECT i.*, iu.username AS invitee_name, u.username AS inviter_name
+                FROM room_invites i JOIN users iu ON iu.id = i.invitee_user_id JOIN users u ON u.id = i.inviter_user_id
+                WHERE i.id = ?
+                """,
+                (existing["id"],),
+            ).fetchone()
+            return {"invite": _invite_dict(row), "idempotent": True}
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO room_invites (room_id, inviter_user_id, invitee_user_id, status)
+                VALUES (?, ?, ?, 'pending')
+                """,
+                (room["id"], user["id"], target["id"]),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise _friend_error("invite_pending", "该用户已有待处理邀请", 409) from exc
+        row = conn.execute(
+            """
+            SELECT i.*, iu.username AS invitee_name, u.username AS inviter_name
+            FROM room_invites i JOIN users iu ON iu.id = i.invitee_user_id JOIN users u ON u.id = i.inviter_user_id
+            WHERE i.id = ?
+            """,
+            (cur.lastrowid,),
+        ).fetchone()
+    return {"invite": _invite_dict(row), "idempotent": False}
+
+
+def _load_invite_for_user(conn, invite_id: int, user_id: int):
+    return conn.execute(
+        """
+        SELECT i.*, iu.username AS invitee_name, u.username AS inviter_name
+        FROM room_invites i JOIN users iu ON iu.id = i.invitee_user_id JOIN users u ON u.id = i.inviter_user_id
+        WHERE i.id = ? AND i.invitee_user_id = ?
+        """,
+        (invite_id, user_id),
+    ).fetchone()
+
+
+@app.post("/api/room-invites/{invite_id}/accept")
+def accept_room_invite(invite_id: int, user: HumanUser):
+    with get_db() as conn:
+        row = _load_invite_for_user(conn, invite_id, user["id"])
+        if not row:
+            raise _friend_error("invite_not_found", "房间邀请不存在", 404)
+        if row["status"] == "accepted":
+            return {"invite": _invite_dict(row), "idempotent": True}
+        if row["status"] != "pending":
+            raise _friend_error("invite_expired", "该房间邀请已失效", 403)
+        if not _are_friends(conn, user["id"], row["inviter_user_id"]):
+            conn.execute(
+                "UPDATE room_invites SET status = 'revoked', updated_at = datetime('now') WHERE id = ?",
+                (invite_id,),
+            )
+            raise _friend_error("friend_required", "好友关系已失效，不能接受邀请", 403)
+        conn.execute(
+            "UPDATE room_invites SET status = 'accepted', responded_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            (invite_id,),
+        )
+        row = _load_invite_for_user(conn, invite_id, user["id"])
+    return {"invite": _invite_dict(row), "idempotent": False}
+
+
+@app.post("/api/room-invites/{invite_id}/decline")
+def decline_room_invite(invite_id: int, user: HumanUser):
+    with get_db() as conn:
+        row = _load_invite_for_user(conn, invite_id, user["id"])
+        if not row:
+            raise _friend_error("invite_not_found", "房间邀请不存在", 404)
+        if row["status"] == "pending":
+            conn.execute(
+                "UPDATE room_invites SET status = 'declined', responded_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+                (invite_id,),
+            )
+            row = _load_invite_for_user(conn, invite_id, user["id"])
+    return {"invite": _invite_dict(row), "idempotent": True}
+
+
+@app.delete("/api/rooms/{room_ref}/invites/{invite_id}")
+def revoke_room_invite(room_ref: str, invite_id: int, user: HumanUser):
+    with get_db() as conn:
+        room = _require_invite_manager(conn, room_ref, user)
+        cur = conn.execute(
+            """
+            UPDATE room_invites SET status = 'revoked', updated_at = datetime('now')
+            WHERE id = ? AND room_id = ? AND status = 'pending'
+            """,
+            (invite_id, room["id"]),
+        )
+        if cur.rowcount == 0:
+            row = conn.execute("SELECT status FROM room_invites WHERE id = ? AND room_id = ?", (invite_id, room["id"])).fetchone()
+            if not row:
+                raise _friend_error("invite_not_found", "房间邀请不存在", 404)
+    return {"revoked": True, "idempotent": cur.rowcount == 0}
+
+
+@app.post("/api/rooms/{room_ref}/agents")
+def join_own_agent(room_ref: str, body: RoomAgentJoinRequest, user: HumanUser):
+    with get_db() as conn:
+        room = _room_for_ref(conn, room_ref, user_id=user["id"])
+        if not room or _is_ended(room):
+            raise HTTPException(status_code=404, detail="房间不存在，请先创建或加入")
+        _reject_if_banned(conn, room, user["id"])
+        if not _member(conn, room["id"], user["id"]):
+            raise HTTPException(status_code=403, detail="必须先加入房间，才能带入自己的 Agent")
+        agent = _get_user(conn, body.agentUsername)
+        if not agent or agent["kind"] != "agent" or agent["owner_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="只能带入自己名下的 Agent")
+        if agent["status"] != "active":
+            raise HTTPException(status_code=403, detail="该 Agent 已停用")
+        _reject_if_banned(conn, room, agent["id"])
+        existing = _member(conn, room["id"], agent["id"])
+        if existing:
+            return {"roomId": room["id"], "roomKey": _room_key(room), "username": agent["username"], "joined": True, "idempotent": True}
+        watermark = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS w FROM messages WHERE room_id = ?", (room["id"],)
+        ).fetchone()["w"]
+        conn.execute(
+            """
+            INSERT INTO room_members (room_id, user_id, last_seen_at, first_visible_msg_id, last_read_msg_id)
+            VALUES (?, ?, datetime('now'), ?, ?)
+            """,
+            (room["id"], agent["id"], watermark, watermark),
+        )
+    notify_room(room["id"])
+    return {"roomId": room["id"], "roomKey": _room_key(room), "username": agent["username"], "joined": True, "idempotent": False}
+
+
 # ---------- 房间 ----------
 
 @app.post("/api/rooms")
 def join_or_create_room(body: RoomRequest, user: CurrentUser):
     password = _blank_to_none(body.password)
     with get_db() as conn:
-        room = _get_room(conn, body.roomName)
+        if not body.roomId and not body.roomKey and not body.roomName:
+            raise HTTPException(status_code=400, detail="需要 roomId、roomKey 或 roomName")
+
+        # 显式 roomId/roomKey 总是精确寻址；显式声明 private 时，roomName
+        # 首先表示“我自己的命名空间”，不能因为别人的同名房间存在就误加入。
+        room = _resolve_room_reference(
+            conn,
+            room_id=body.roomId,
+            room_key=body.roomKey,
+            room_name=None
+            if (body.roomId or body.roomKey or body.visibility in {"private", "public"})
+            else body.roomName,
+            user_id=user["id"],
+        )
+        if (body.roomId is not None or body.roomKey) and room is None:
+            raise HTTPException(status_code=404, detail="房间引用不存在")
+        room_name = body.roomName or (room["name"] if room else None)
         created = False
+
+        # 仅 roomName 的旧请求：private 按当前调用者的命名空间创建/加入；
+        # 若同名 private 已存在于其他命名空间，不能误选。
+        if room is None and body.roomName:
+            active = _active_rooms_by_name(conn, body.roomName)
+            namespace_owner_id = user.get("owner_id") if user["kind"] == "agent" else user["id"]
+            if body.visibility == "private":
+                room = next(
+                    (
+                        candidate for candidate in active
+                        if candidate["visibility"] == "private"
+                        and candidate["namespace_owner_id"] == namespace_owner_id
+                    ),
+                    None,
+                )
+            elif body.visibility == "public":
+                public = [candidate for candidate in active if candidate["visibility"] == "public"]
+                room = public[0] if len(public) == 1 else None
+            elif len(active) == 1:
+                room = active[0]
+            elif len(active) > 1:
+                own = [
+                    candidate for candidate in active
+                    if candidate["visibility"] == "private"
+                    and candidate["namespace_owner_id"] == namespace_owner_id
+                ]
+                if len(own) == 1:
+                    room = own[0]
+                else:
+                    raise _room_reference_error()
+
         if room and _is_ended(room):
             raise HTTPException(status_code=410, detail="房间已结束")
         if room:
-            # 封禁检查在密码检查之前：被 ban 的用户不该看到「需要房间密码」
+            # 封禁检查在好友/密码检查之前：被 ban 的用户不应得到更具体的访问提示。
             _reject_if_banned(conn, room, user["id"])
+
         if not room:
+            if not room_name:
+                raise HTTPException(status_code=404, detail="房间不存在")
             visibility = body.visibility or "private"
+            namespace_owner_id = user.get("owner_id") if user["kind"] == "agent" else user["id"]
             room_agent_id = _resolve_room_agent(conn, user, body.roomAgent)
             template = None
             if body.template:
@@ -2264,12 +4143,16 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
             try:
                 conn.execute(
                     """
-                    INSERT INTO rooms (name, created_by, password_hash, visibility, rules, room_agent_id, template, map3d)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO rooms (
+                        name, created_by, namespace_owner_id, password_hash, visibility,
+                        rules, room_agent_id, template, map3d
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        body.roomName,
+                        room_name,
                         user["id"],
+                        namespace_owner_id,
                         auth.hash_password(password) if password else None,
                         visibility,
                         rules,
@@ -2279,11 +4162,17 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
                     ),
                 )
             except sqlite3.IntegrityError as exc:
-                raise HTTPException(status_code=409, detail="房间名已存在") from exc
-            room = _get_room(conn, body.roomName)
+                raise HTTPException(status_code=409, detail="该命名空间内的房间名已存在") from exc
+            room = _get_room(conn, room_name, user_id=user["id"])
             created = True
+
         member = _member(conn, room["id"], user["id"])
         if not member:
+            prior = _member_any(conn, room["id"], user["id"])
+            if prior and prior["membership_status"] == "removed":
+                raise _friend_error("member_removed", "你已被房主移出该房间", 403)
+            if room["visibility"] == "private":
+                _require_private_join_access(conn, room, user)
             # 可见性只决定房间是否出现在「公开」列表；加入密码仍然是独立的
             # 访问控制。公开且设了密码的房间，对尚未加入的用户同样必须验密。
             needs_password = (
@@ -2300,15 +4189,27 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
                 "SELECT COALESCE(MAX(id), 0) AS w FROM messages WHERE room_id = ?",
                 (room["id"],),
             ).fetchone()["w"]
-            conn.execute(
-                """
-                INSERT INTO room_members (
-                    room_id, user_id, last_seen_at, first_visible_msg_id, last_read_msg_id
+            if prior:
+                conn.execute(
+                    """
+                    UPDATE room_members
+                    SET membership_status = 'active', joined_at = datetime('now'),
+                        last_seen_at = datetime('now'), left_at = NULL, removed_at = NULL,
+                        removed_by = NULL, first_visible_msg_id = ?, last_read_msg_id = ?
+                    WHERE room_id = ? AND user_id = ?
+                    """,
+                    (watermark, watermark, room["id"], user["id"]),
                 )
-                VALUES (?, ?, datetime('now'), ?, ?)
-                """,
-                (room["id"], user["id"], watermark, watermark),
-            )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO room_members (
+                        room_id, user_id, last_seen_at, first_visible_msg_id, last_read_msg_id
+                    )
+                    VALUES (?, ?, datetime('now'), ?, ?)
+                    """,
+                    (room["id"], user["id"], watermark, watermark),
+                )
         else:
             _touch(conn, room["id"], user["id"])
         # 主动创建/加入 = 明确想看到这个房间，撤销之前的「从我的列表移除」（v2.24）
@@ -2318,9 +4219,9 @@ def join_or_create_room(body: RoomRequest, user: CurrentUser):
         )
         online = _online_users(conn, room)
         data = {**_room_dict(room, user["id"], online), "created": created, "joined": True}
+        data["roomMembers"] = _active_room_members(conn, room)
         _attach_template_fields(conn, room, data)
     return data
-
 
 @app.get("/api/rooms")
 def list_my_rooms(user: CurrentUser):
@@ -2387,8 +4288,9 @@ def room_detail(room_name: str, user: CurrentUser):
             "canEditFiles": bool(member["can_edit_files"]),
         }
         data["memberCount"] = conn.execute(
-            "SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?", (room["id"],)
+            "SELECT COUNT(*) AS c FROM room_members WHERE room_id = ? AND membership_status = 'active'", (room["id"],)
         ).fetchone()["c"]
+        data["roomMembers"] = _active_room_members(conn, room)
         data["groups"] = _group_dicts(conn, room, user["id"])
         data["files"] = _files_summary(conn, room, member, user["id"])
         _attach_template_fields(conn, room, data)
@@ -2413,20 +4315,42 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
     with get_db() as conn:
         room = _require_active_room(conn, room_name)
         _require_owner(room, user["id"])
+        if (
+            _row_get(room, "room_type", "standard") == "direct_pair"
+            and body.visibility == "public"
+        ):
+            raise _friend_error("pair_room_only", "双人好友房不能改为公开房间", 403)
         new_name = body.roomName.strip() if body.roomName else room["name"]
-        if new_name.lower() != room["name"].lower():
-            exists = conn.execute(
-                "SELECT 1 FROM rooms WHERE name = ? AND id != ? AND archived_at IS NULL",
-                (new_name, room["id"]),
-            ).fetchone()
-            if exists:
-                raise HTTPException(status_code=409, detail="房间名已存在")
         if body.password is None:
             password_hash = room["password_hash"]
         else:
             password = _blank_to_none(body.password)
             password_hash = auth.hash_password(password) if password else None
         visibility = body.visibility or room["visibility"]
+        if new_name.lower() != room["name"].lower() or visibility != room["visibility"]:
+            if visibility == "public":
+                conflict = conn.execute(
+                    """
+                    SELECT 1 FROM rooms
+                    WHERE name = ? COLLATE NOCASE AND id != ?
+                      AND visibility = 'public' AND archived_at IS NULL
+                    LIMIT 1
+                    """,
+                    (new_name, room["id"]),
+                ).fetchone()
+            else:
+                conflict = conn.execute(
+                    """
+                    SELECT 1 FROM rooms
+                    WHERE name = ? COLLATE NOCASE AND id != ?
+                      AND visibility = 'private'
+                      AND namespace_owner_id = ? AND archived_at IS NULL
+                    LIMIT 1
+                    """,
+                    (new_name, room["id"], _room_namespace_owner_id(room)),
+                ).fetchone()
+            if conflict:
+                raise HTTPException(status_code=409, detail="目标命名空间内的房间名已存在")
         muted = room["muted"] if body.muted is None else int(body.muted)
         files_locked = room["files_locked"] if body.filesLocked is None else int(body.filesLocked)
         rules = room["rules"] if body.rules is None else (_blank_to_none(body.rules) or "")
@@ -2459,7 +4383,7 @@ def update_room(room_name: str, body: RoomUpdate, user: CurrentUser):
                 (_scene_descriptor_json(body.scene) if body.scene else None, room["id"]),
             )
         _touch(conn, room["id"], user["id"])
-        room = _get_room(conn, new_name)
+        room = _get_room_by_id(conn, room["id"])
         online = _online_users(conn, room)
     if scene_provided:
         notify_room(room["id"])  # 唤醒长轮询，让房内其他人立刻看到场景变化
@@ -2521,7 +4445,7 @@ async def upload_room_scene(room_name: str, user: CurrentUser, file: UploadFile 
             (data, mime, now, json.dumps({"kind": "file"}, ensure_ascii=False), room["id"]),
         )
         room_id = room["id"]
-        room = _get_room(conn, room_name)
+        room = _get_room_by_id(conn, room_id)
         online = _online_users(conn, room)
     notify_room(room_id)
     return {**_room_dict(room, user["id"], online), "sceneFilename": safe_name}
@@ -2602,9 +4526,10 @@ def list_archives(user: CurrentUser):
     with get_db() as conn:
         rows = conn.execute(
             ROOM_LIST_SQL
-            + " WHERE r.archived_at IS NOT NULL AND (r.created_by = ? OR m.user_id IS NOT NULL OR u.owner_id = ?)"
+            + " WHERE r.archived_at IS NOT NULL AND (r.created_by = ? OR u.owner_id = ? OR EXISTS ("
+            + "SELECT 1 FROM room_members ma WHERE ma.room_id = r.id AND ma.user_id = ? AND ma.membership_status != 'removed'))"
             + " ORDER BY r.archived_at DESC",
-            (ONLINE_WINDOW, user["id"], user["id"], user["id"]),
+            (ONLINE_WINDOW, user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
     return {"rooms": [_room_list_dict(row, user["id"]) for row in rows]}
 
@@ -2616,7 +4541,7 @@ def archive_detail(room_id: int, user: CurrentUser):
         data = _room_dict(room, user["id"], [])
         data["readOnly"] = True
         data["memberCount"] = conn.execute(
-            "SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?", (room["id"],)
+            "SELECT COUNT(*) AS c FROM room_members WHERE room_id = ? AND membership_status = 'active'", (room["id"],)
         ).fetchone()["c"]
         if member:
             data["myPermissions"] = {
@@ -2684,9 +4609,12 @@ def download_archived_attachment(room_id: int, message_id: int, user: CurrentUse
 
 def _member_dict(row, online_cutoff: str = ONLINE_WINDOW) -> dict:
     return {
+        "userId": row["user_id"],
         "username": row["username"],
         "kind": row["kind"],
         "joinedAt": row["joined_at"],
+        "membershipStatus": _row_get(row, "membership_status", "active"),
+        "inRoom": bool(row["online"]),
         "canSpeak": bool(row["can_speak"]),
         "canUpload": bool(row["can_upload"]),
         "canViewHistory": bool(row["can_view_history"]),
@@ -2702,12 +4630,13 @@ def _member_dict(row, online_cutoff: str = ONLINE_WINDOW) -> dict:
 @app.get("/api/rooms/{room_name}/members")
 def list_members(room_name: str, user: CurrentUser):
     with get_db() as conn:
-        room = _require_active_room(conn, room_name)
-        _require_owner(room, user["id"])
+        room, _member = _require_membership(conn, room_name, user["id"])
         rows = conn.execute(
             """
             SELECT m.*, u.username, u.kind, u.avatar_updated_at AS avatarV,
-                   CASE WHEN m.last_seen_at > datetime('now', ?) THEN 1 ELSE 0 END AS online,
+                   CASE WHEN m.last_seen_at > datetime('now', ?)
+                        AND (b.id IS NULL OR (b.expires_at IS NOT NULL AND b.expires_at <= strftime('%Y-%m-%d %H:%M:%f', 'now')))
+                       THEN 1 ELSE 0 END AS online,
                    CASE WHEN b.id IS NOT NULL AND (b.expires_at IS NULL
                         OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
                        THEN 1 ELSE 0 END AS banned,
@@ -2715,7 +4644,7 @@ def list_members(room_name: str, user: CurrentUser):
             FROM room_members m
             JOIN users u ON u.id = m.user_id
             LEFT JOIN room_bans b ON b.room_id = m.room_id AND b.user_id = m.user_id
-            WHERE m.room_id = ?
+            WHERE m.room_id = ? AND m.membership_status = 'active'
             ORDER BY m.joined_at ASC
             """,
             (ONLINE_WINDOW, room["id"]),
@@ -2731,6 +4660,62 @@ def list_members(room_name: str, user: CurrentUser):
             )
             members.append(item)
     return {"roomName": room["name"], "members": members}
+
+
+@app.post("/api/rooms/{room_name}/leave")
+def leave_room(room_name: str, user: CurrentUser):
+    with get_db() as conn:
+        room, _member = _require_membership(conn, room_name, user["id"])
+        conn.execute(
+            """
+            UPDATE room_members
+            SET membership_status = 'left', left_at = datetime('now'), last_seen_at = datetime('now')
+            WHERE room_id = ? AND user_id = ? AND membership_status = 'active'
+            """,
+            (room["id"], user["id"]),
+        )
+        now = _db_now(conn)
+        conn.execute("DELETE FROM room_presence WHERE room_id = ? AND user_id = ?", (room["id"], user["id"]))
+        conn.execute(
+            "INSERT INTO room_presence_log (room_id, user_id, kind, created_at) VALUES (?, ?, 'leave', ?)",
+            (room["id"], user["id"], now),
+        )
+        room_id = room["id"]
+    notify_room(room_id)
+    return {"left": True, "roomId": room_id}
+
+
+@app.delete("/api/rooms/{room_name}/members/{username}")
+def remove_room_member(room_name: str, username: str, user: CurrentUser):
+    with get_db() as conn:
+        room = _require_active_room(conn, room_name, user_id=user["id"])
+        _require_owner(room, user["id"])
+        target = _get_user(conn, username)
+        if not target:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        member = _member(conn, room["id"], target["id"])
+        if not member:
+            raise HTTPException(status_code=404, detail="该用户不是活动房间成员")
+        if _is_room_governor(room, target["id"]):
+            raise HTTPException(status_code=403, detail="不能移除房间治理者")
+        conn.execute(
+            """
+            UPDATE room_members
+            SET membership_status = 'removed', removed_at = datetime('now'), removed_by = ?,
+                last_seen_at = datetime('now')
+            WHERE room_id = ? AND user_id = ?
+            """,
+            (user["id"], room["id"], target["id"]),
+        )
+        now = _db_now(conn)
+        conn.execute("DELETE FROM room_presence WHERE room_id = ? AND user_id = ?", (room["id"], target["id"]))
+        conn.execute(
+            "INSERT INTO room_presence_log (room_id, user_id, kind, created_at) VALUES (?, ?, 'leave', ?)",
+            (room["id"], target["id"], now),
+        )
+        room_id = room["id"]
+    notify_room(room_id)
+    return {"removed": True, "username": target["username"], "roomId": room_id}
 
 
 @app.put("/api/rooms/{room_name}/permissions/{username}")
@@ -3215,15 +5200,17 @@ MESSAGE_SELECT = """
             SELECT m.id, m.content, m.msg_type, m.attachment_name, m.created_at AS createdAt,
                    COALESCE(m.streaming, 0) AS streaming,
                    COALESCE(m.updated_at, m.created_at) AS updatedAt,
-                   m.user_id, m.whisper_to, m.whisper_to_ids, m.reply_to,
+                   m.user_id, m.whisper_to, m.whisper_to_ids, m.mention_to, m.reply_to,
                    COALESCE(m.recalled, 0) AS recalled, m.duration_ms,
                    u.username, u.avatar_updated_at AS avatarV,
+                   mu.username AS mentionUsername, mu.avatar_updated_at AS mentionAvatarV,
                    rp.user_id AS replyUserId, rp.content AS replyContent,
                    rp.msg_type AS replyType, rp.attachment_name AS replyAttachment,
                    COALESCE(rp.recalled, 0) AS replyRecalled,
                    rp.whisper_to AS replyWhisperTo, rp.whisper_to_ids AS replyWhisperIds,
                    ru.username AS replyUsername
             FROM messages m JOIN users u ON u.id = m.user_id
+            LEFT JOIN users mu ON mu.id = m.mention_to
             LEFT JOIN messages rp ON rp.id = m.reply_to
             LEFT JOIN users ru ON ru.id = rp.user_id
 """
@@ -3300,6 +5287,7 @@ def _visible_rows(rows, room, user_id: int) -> list[dict]:
             item["attachment_path"] = None
             item["whisper_to"] = None
             item["whisper_to_ids"] = None
+            item["mention_to"] = None
             item["reply_to"] = None
         result.append(item)
     return result
@@ -3464,6 +5452,7 @@ def send_message(room_name: str, body: MessageCreate, user: CurrentUser):
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
         targets = _whisper_targets(conn, room, body.content, user["id"])
+        mention = _mention_target(conn, room, body.content)
         _check_whisper_targets(conn, room["id"], user["username"], targets)
         _check_action_allowed(room, member, user["id"], "speak", whisper=bool(targets))
         whisper_to, whisper_to_ids = _whisper_columns(targets)
@@ -3471,10 +5460,11 @@ def send_message(room_name: str, body: MessageCreate, user: CurrentUser):
         now = _db_now(conn)
         conn.execute(
             """
-            INSERT INTO messages (room_id, user_id, content, whisper_to, whisper_to_ids, reply_to, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (room_id, user_id, content, whisper_to, whisper_to_ids, mention_to, reply_to, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (room["id"], user["id"], body.content, whisper_to, whisper_to_ids, reply_to, now),
+            (room["id"], user["id"], body.content, whisper_to, whisper_to_ids,
+             mention["id"] if mention else None, reply_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
         _bump_my_update(conn, room, user["id"], _newest_visible_at(room, user["id"], [row]))
@@ -3491,6 +5481,7 @@ def start_stream(room_name: str, user: CurrentUser, body: StreamStart = StreamSt
     with get_db() as conn:
         room, member = _require_membership(conn, room_name, user["id"])
         targets = _whisper_targets(conn, room, payload.content or "", user["id"])
+        mention = _mention_target(conn, room, payload.content or "")
         _check_whisper_targets(conn, room["id"], user["username"], targets)
         _check_action_allowed(room, member, user["id"], "speak", whisper=bool(targets))
         whisper_to, whisper_to_ids = _whisper_columns(targets)
@@ -3498,10 +5489,11 @@ def start_stream(room_name: str, user: CurrentUser, body: StreamStart = StreamSt
         now = _db_now(conn)
         conn.execute(
             """
-            INSERT INTO messages (room_id, user_id, content, whisper_to, whisper_to_ids, reply_to, streaming, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            INSERT INTO messages (room_id, user_id, content, whisper_to, whisper_to_ids, mention_to, reply_to, streaming, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
-            (room["id"], user["id"], payload.content or "", whisper_to, whisper_to_ids, reply_to, now),
+            (room["id"], user["id"], payload.content or "", whisper_to, whisper_to_ids,
+             mention["id"] if mention else None, reply_to, now),
         )
         row = _load_message(conn, conn.execute("SELECT last_insert_rowid() AS mid").fetchone()["mid"])
         _bump_my_update(conn, room, user["id"], _newest_visible_at(room, user["id"], [row]))
@@ -3545,6 +5537,7 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
         # 内容变化时重解析 @@ 前缀：新增前缀要重新过私聊规则并改写接收者；
         # 去掉前缀时保留原私聊属性（可见性只紧不松），防止私聊内容被公开广播
         targets = _whisper_targets(conn, room, content, user["id"])
+        mention = _mention_target(conn, room, content)
         if targets:
             _check_whisper_targets(conn, room["id"], user["username"], targets)
             whisper_to, whisper_to_ids = _whisper_columns(targets)
@@ -3554,11 +5547,11 @@ def patch_stream(room_name: str, message_id: int, body: StreamPatch, user: Curre
         conn.execute(
             """
             UPDATE messages
-            SET content = ?, whisper_to = ?, whisper_to_ids = ?, streaming = ?,
+            SET content = ?, whisper_to = ?, whisper_to_ids = ?, mention_to = ?, streaming = ?,
                 updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
             WHERE id = ?
             """,
-            (content, whisper_to, whisper_to_ids, streaming, message_id),
+            (content, whisper_to, whisper_to_ids, mention["id"] if mention else None, streaming, message_id),
         )
         row = _load_message(conn, message_id)
         item = _message_dicts(conn, [row], room["name"], room=room, user_id=user["id"])[0]
@@ -3605,7 +5598,7 @@ def recall_message(room_name: str, message_id: int, user: CurrentUser):
                 """
                 UPDATE messages
                 SET content = '', msg_type = 'text', attachment_name = NULL, attachment_path = NULL,
-                    whisper_to = NULL, whisper_to_ids = NULL, reply_to = NULL, duration_ms = NULL,
+                    whisper_to = NULL, whisper_to_ids = NULL, mention_to = NULL, reply_to = NULL, duration_ms = NULL,
                     streaming = 0, recalled = 1,
                     updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
                 WHERE id = ?
@@ -4052,6 +6045,17 @@ def _file_dict(row, room_name: str, archive_id: int | None = None) -> dict:
         "updatedAt": row["updated_at"],
         "contentUrl": content_url,
         "world": world,
+        "source": (
+            {
+                "resourceId": _row_get(row, "source_resource_id"),
+                "resourceVersionId": _row_get(row, "source_resource_version_id"),
+                "licenseId": _row_get(row, "source_license_id"),
+                "purchasedBy": _row_get(row, "source_purchased_by"),
+                "detached": bool(_row_get(row, "source_detached", 0)),
+            }
+            if _row_get(row, "source_resource_id") is not None
+            else None
+        ),
     }
 
 
@@ -4259,7 +6263,8 @@ async def replace_room_file(room_name: str, file_id: int, request: Request, user
         conn.execute(
             """
             UPDATE room_files
-            SET kind = ?, mime = ?, size = ?, content_path = ?, updated_by = ?, updated_at = ?
+            SET kind = ?, mime = ?, size = ?, content_path = ?, updated_by = ?, updated_at = ?,
+                source_detached = CASE WHEN source_resource_id IS NULL THEN source_detached ELSE 1 END
             WHERE id = ?
             """,
             (kind, mime, len(data), rel_path, user["id"], now, file_id),
@@ -4989,7 +6994,8 @@ def presence_snapshot(room_name: str, user: CurrentUser):
             FROM room_presence p
             JOIN users u ON u.id = p.user_id
             JOIN room_members m ON m.room_id = p.room_id AND m.user_id = p.user_id
-            WHERE p.room_id = ? AND m.last_seen_at > datetime('now', ?)
+            WHERE p.room_id = ? AND m.membership_status = 'active'
+              AND m.last_seen_at > datetime('now', ?)
               -- 被封禁者立即从 3D 在场快照消失（与在线列表同一过滤）
               AND NOT EXISTS (
                   SELECT 1 FROM room_bans b
@@ -5065,10 +7071,17 @@ async def presence_delta(
                     FROM room_presence_log l
                     JOIN users u ON u.id = l.user_id
                     WHERE l.room_id = ? AND l.id > ? AND l.user_id != ?
-                      AND NOT EXISTS (
-                          SELECT 1 FROM room_bans b
-                          WHERE b.room_id = l.room_id AND b.user_id = l.user_id
-                            AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                      AND (
+                          l.kind = 'leave'
+                          OR (EXISTS (
+                              SELECT 1 FROM room_members m
+                              WHERE m.room_id = l.room_id AND m.user_id = l.user_id
+                                AND m.membership_status = 'active'
+                          ) AND NOT EXISTS (
+                              SELECT 1 FROM room_bans b
+                              WHERE b.room_id = l.room_id AND b.user_id = l.user_id
+                                AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                          ))
                       )
                     ORDER BY l.id ASC
                     LIMIT ?
@@ -5082,11 +7095,17 @@ async def presence_delta(
                     FROM room_presence_log l
                     JOIN users u ON u.id = l.user_id
                     WHERE l.room_id = ? AND l.created_at > ? AND l.user_id != ?
-                      -- 被封禁者的增量事件也不下发（否则 XR 端会凭事件重建其化身）
-                      AND NOT EXISTS (
-                          SELECT 1 FROM room_bans b
-                          WHERE b.room_id = l.room_id AND b.user_id = l.user_id
-                            AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                      AND (
+                          l.kind = 'leave'
+                          OR (EXISTS (
+                              SELECT 1 FROM room_members m
+                              WHERE m.room_id = l.room_id AND m.user_id = l.user_id
+                                AND m.membership_status = 'active'
+                          ) AND NOT EXISTS (
+                              SELECT 1 FROM room_bans b
+                              WHERE b.room_id = l.room_id AND b.user_id = l.user_id
+                                AND (b.expires_at IS NULL OR b.expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                          ))
                       )
                     ORDER BY l.id ASC
                     LIMIT ?
@@ -5248,5 +7267,11 @@ def script_inbox():
 def script_watch():
     return PlainTextResponse((ROOT_DIR / "scripts" / "watch.py").read_text(encoding="utf-8"), media_type="text/x-python")
 
+
+install_message_events(
+    app, get_db=get_db, require_user=require_user,
+    require_membership=_require_membership, fetch_messages=_fetch_messages,
+    room_event=_room_event, user_by_id=_user_by_id,
+)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

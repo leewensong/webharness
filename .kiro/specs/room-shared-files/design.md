@@ -336,3 +336,36 @@ else: 放行
 5. 2D 端 model 预览是否需要交互式查看器（暂按缩略图 + 下载）。
 6. 同时常驻 3D 模型上限 6 是否合适（Quest 性能实测后可调常量）。
 7. 聊天附件中的 3D 类型是否改为服务端硬拒（暂按文档指引 + 上传软提示，不破坏既有 3D 文件卡片功能）。
+
+## 下一阶段桥接：个人资源库/商店 → room_files
+
+### 来源字段（可空、只增不破坏现有文件）
+
+在 `room_files` 增加以下 nullable 字段；直接上传/JSON 创建的旧文件全部保持 NULL：
+
+- `source_resource_id`
+- `source_resource_version_id`
+- `source_license_id`
+- `source_purchased_by`
+- `source_detached INTEGER NOT NULL DEFAULT 0`
+
+这些字段只描述来源，不改变 `room_files` 的房间级所有权。资源版本本体仍位于资源库的不可变存储路径；导入时复制字节到现有房间文件目录，避免房间成员读文件时依赖资源库在线状态。
+
+### 导入接口与事务边界
+
+新增 `POST /api/rooms/{room_ref}/files/from-library`。请求至少包含 `resourceId`、`resourceVersionId`，商店导入可带 `listingId`、目标 `name` 和 `idempotencyKey`。服务端必须按以下顺序处理：
+
+1. 用 `roomId`/`roomKey` 解析活动房间，执行成员、`canEditFiles`、`filesLocked`、归档和封禁校验。
+2. 校验资源版本的 owner/Agent 控制关系，或校验 `approved + clean + listed` 的商店状态。
+3. 先检查目标文件名与同房间已有 license/file，再开始积分事务；冲突不能先扣款。
+4. 在一个 SQLite 事务内完成幂等授权、可选的积分扣款/收款、房间文件元数据、内容复制记录和 `files_revision + 1`。
+5. 提交后 `notify_room(room_id)`，客户端用现有轮询刷新列表；通知失败不回滚已提交的数据。
+
+同一购买者、同一房间、同一资源版本的授权唯一键由资源商店规格负责；本规格只要求重复导入返回已有 `fileId`/license，而不是重复生成 LWW 文件。
+
+### 与既有文件操作的关系
+
+- 导入文件和手动上传文件在列表、下载、编辑、摆放、归档中保持同一套权限。
+- 替换导入文件的内容仍是 LWW；服务端将 `source_detached` 置为 1，但不删除 `source_*` 字段。
+- 删除房间文件不删除资源库版本、listing 或积分交易；删除资源库版本也不删除已存在的 room file 快照。
+- 资源库/商店的审核和经济授权不在 `room_files` 层重复实现；共同文件只验证“已获得的来源授权”，防止权限逻辑分叉。

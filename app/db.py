@@ -9,6 +9,8 @@ DB_PATH = _OLD_DB if _OLD_DB.exists() and not _NEW_DB.exists() else _NEW_DB
 UPLOADS_DIR = DATA_DIR / "uploads"
 # 房间共同文件的内容落盘目录（元数据在 room_files 表；与 uploads/ 同模式）
 FILES_DIR = DATA_DIR / "files"
+# 个人资源库的不可变版本文件：元数据在 library_* 表，路径按账号/资源/版本分层。
+LIBRARY_DIR = DATA_DIR / "library"
 
 
 def _connect() -> sqlite3.Connection:
@@ -78,6 +80,7 @@ def _rebuild_rooms_if_name_globally_unique(conn: sqlite3.Connection) -> None:
 def init_db() -> None:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     FILES_DIR.mkdir(parents=True, exist_ok=True)
+    LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
         conn.executescript(
             """
@@ -136,6 +139,11 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL COLLATE NOCASE,
                 created_by INTEGER NOT NULL,
+                namespace_owner_id INTEGER REFERENCES users(id),
+                room_type TEXT NOT NULL DEFAULT 'standard'
+                    CHECK (room_type IN ('standard', 'direct_pair')),
+                pair_user_a_id INTEGER REFERENCES users(id),
+                pair_user_b_id INTEGER REFERENCES users(id),
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 password_hash TEXT,
                 visibility TEXT NOT NULL DEFAULT 'private',
@@ -150,8 +158,13 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS room_members (
                 room_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
+                membership_status TEXT NOT NULL DEFAULT 'active'
+                    CHECK (membership_status IN ('active', 'left', 'removed')),
                 joined_at TEXT NOT NULL DEFAULT (datetime('now')),
                 last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+                left_at TEXT,
+                removed_at TEXT,
+                removed_by INTEGER REFERENCES users(id),
                 can_speak INTEGER NOT NULL DEFAULT 1,
                 can_upload INTEGER NOT NULL DEFAULT 1,
                 can_view_history INTEGER NOT NULL DEFAULT 1,
@@ -175,6 +188,7 @@ def init_db() -> None:
                 attachment_path TEXT,
                 whisper_to INTEGER REFERENCES users(id),
                 whisper_to_ids TEXT,
+                mention_to INTEGER REFERENCES users(id),
                 reply_to INTEGER REFERENCES messages(id),
                 recalled INTEGER NOT NULL DEFAULT 0,
                 duration_ms INTEGER,
@@ -261,7 +275,130 @@ def init_db() -> None:
                 world_visible INTEGER NOT NULL DEFAULT 0,
                 world_pose TEXT,
                 world_updated_by INTEGER REFERENCES users(id),
-                world_updated_at TEXT
+                world_updated_at TEXT,
+                source_resource_id INTEGER,
+                source_resource_version_id INTEGER,
+                source_license_id INTEGER,
+                source_purchased_by INTEGER REFERENCES users(id),
+                source_detached INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS user_friendships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_a_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_b_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'declined', 'revoked')),
+                requested_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                responded_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                CHECK (user_a_id < user_b_id),
+                UNIQUE (user_a_id, user_b_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS room_invites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                inviter_user_id INTEGER NOT NULL REFERENCES users(id),
+                invitee_user_id INTEGER NOT NULL REFERENCES users(id),
+                status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'declined', 'revoked', 'expired')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                responded_at TEXT,
+                expires_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS library_resources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_account_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                economic_owner_id INTEGER NOT NULL REFERENCES users(id),
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'archived', 'deleted')),
+                current_version_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                deleted_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS library_resource_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                resource_id INTEGER NOT NULL REFERENCES library_resources(id) ON DELETE CASCADE,
+                version_no INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'other',
+                mime TEXT NOT NULL DEFAULT 'application/octet-stream',
+                size INTEGER NOT NULL DEFAULT 0,
+                sha256 TEXT NOT NULL,
+                content_path TEXT NOT NULL,
+                scan_status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (scan_status IN ('pending', 'clean', 'rejected', 'error')),
+                review_status TEXT NOT NULL DEFAULT 'draft'
+                    CHECK (review_status IN ('draft', 'pending_review', 'approved', 'rejected', 'withdrawn')),
+                created_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(resource_id, version_no),
+                UNIQUE(resource_id, sha256)
+            );
+
+            CREATE TABLE IF NOT EXISTS resource_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                resource_version_id INTEGER NOT NULL REFERENCES library_resource_versions(id) ON DELETE CASCADE,
+                reviewer_user_id INTEGER REFERENCES users(id),
+                decision TEXT NOT NULL CHECK (decision IN ('submitted', 'approved', 'rejected', 'withdrawn')),
+                note TEXT NOT NULL DEFAULT '',
+                scan_status TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS resource_listings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                resource_version_id INTEGER NOT NULL UNIQUE REFERENCES library_resource_versions(id) ON DELETE CASCADE,
+                seller_user_id INTEGER NOT NULL REFERENCES users(id),
+                price_points INTEGER NOT NULL CHECK (price_points >= 0),
+                status TEXT NOT NULL DEFAULT 'unlisted'
+                    CHECK (status IN ('unlisted', 'listed', 'withdrawn', 'blocked')),
+                listed_at TEXT,
+                unlisted_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS point_accounts (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                balance INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS point_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                transaction_type TEXT NOT NULL DEFAULT 'purchase'
+                    CHECK (transaction_type IN ('signup_grant', 'campaign_grant', 'purchase')),
+                payer_user_id INTEGER NOT NULL REFERENCES users(id),
+                payee_user_id INTEGER NOT NULL REFERENCES users(id),
+                amount INTEGER NOT NULL CHECK (amount >= 0),
+                resource_id INTEGER REFERENCES library_resources(id),
+                resource_version_id INTEGER REFERENCES library_resource_versions(id),
+                room_id INTEGER REFERENCES rooms(id),
+                license_id INTEGER,
+                status TEXT NOT NULL CHECK (status IN ('committed', 'voided')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE TABLE IF NOT EXISTS room_resource_licenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                purchaser_user_id INTEGER NOT NULL REFERENCES users(id),
+                resource_id INTEGER NOT NULL REFERENCES library_resources(id),
+                resource_version_id INTEGER NOT NULL REFERENCES library_resource_versions(id),
+                listing_id INTEGER REFERENCES resource_listings(id),
+                price_points INTEGER NOT NULL CHECK (price_points >= 0),
+                transaction_id INTEGER REFERENCES point_transactions(id),
+                room_file_id INTEGER REFERENCES room_files(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(room_id, purchaser_user_id, resource_version_id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_room_id
@@ -270,6 +407,24 @@ def init_db() -> None:
                 ON room_files(room_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_room_files_world
                 ON room_files(room_id) WHERE world_visible = 1;
+            CREATE INDEX IF NOT EXISTS idx_library_resources_owner
+                ON library_resources(owner_account_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_library_resources_economic_owner
+                ON library_resources(economic_owner_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_library_versions_resource
+                ON library_resource_versions(resource_id, version_no DESC);
+            CREATE INDEX IF NOT EXISTS idx_library_versions_review
+                ON library_resource_versions(review_status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_resource_reviews_pending
+                ON resource_reviews(decision, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_resource_listings_store
+                ON resource_listings(status, listed_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_point_transactions_payer
+                ON point_transactions(payer_user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_point_transactions_payee
+                ON point_transactions(payee_user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_room_resource_licenses_room
+                ON room_resource_licenses(room_id, created_at DESC);
 
             -- 房间内用户的 3D 位姿：latest 表每人一份最新（全量快照），log 表按时间追加
             -- 变更（增量）。pose/state 均为 JSON 文本；log 按 10 分钟滚动清理。
@@ -387,6 +542,10 @@ def init_db() -> None:
         # 重建 rooms 表只搬运显式列出的字段，新增列必须放在重建之后。
         _add_column_if_missing(conn, "rooms", "rules", "TEXT")
         _add_column_if_missing(conn, "rooms", "room_agent_id", "INTEGER REFERENCES users(id)")
+        _add_column_if_missing(conn, "rooms", "namespace_owner_id", "INTEGER REFERENCES users(id)")
+        _add_column_if_missing(conn, "rooms", "room_type", "TEXT NOT NULL DEFAULT 'standard'")
+        _add_column_if_missing(conn, "rooms", "pair_user_a_id", "INTEGER REFERENCES users(id)")
+        _add_column_if_missing(conn, "rooms", "pair_user_b_id", "INTEGER REFERENCES users(id)")
         _add_column_if_missing(conn, "rooms", "template", "TEXT")
         # 房间 3D 场景：map3d 是场景描述符 JSON（kind=builtin/file/url），用户上传的
         # GLB 本体存 scene_data（同 users.model3d 的做法）。xr_state 是需求 9 的预留
@@ -399,10 +558,120 @@ def init_db() -> None:
         # 共同文件：房间级锁定开关 + 列表版本号（计数器，删除类变更无法用时间戳推导）
         _add_column_if_missing(conn, "rooms", "files_locked", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "rooms", "files_revision", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(
+            conn,
+            "room_members",
+            "membership_status",
+            "TEXT NOT NULL DEFAULT 'active'",
+        )
+        _add_column_if_missing(conn, "room_members", "left_at", "TEXT")
+        _add_column_if_missing(conn, "room_members", "removed_at", "TEXT")
+        _add_column_if_missing(conn, "room_members", "removed_by", "INTEGER REFERENCES users(id)")
+        _add_column_if_missing(conn, "room_files", "source_resource_id", "INTEGER")
+        _add_column_if_missing(conn, "room_files", "source_resource_version_id", "INTEGER")
+        _add_column_if_missing(conn, "room_files", "source_license_id", "INTEGER")
+        _add_column_if_missing(conn, "room_files", "source_purchased_by", "INTEGER REFERENCES users(id)")
+        _add_column_if_missing(conn, "room_files", "source_detached", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "messages", "mention_to", "INTEGER REFERENCES users(id)")
+        _add_column_if_missing(conn, "point_transactions", "transaction_type", "TEXT NOT NULL DEFAULT 'purchase'")
+        # Agent 与主人共用一个资源库。存量 Agent 资源的元数据归属迁移到主人，
+        # content_path 保持原样，因此不移动任何已有文件字节。
         conn.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_live_name
+            UPDATE library_resources
+            SET owner_account_id = (
+                    SELECT owner_id FROM users WHERE id = library_resources.owner_account_id
+                ),
+                economic_owner_id = (
+                    SELECT owner_id FROM users WHERE id = library_resources.owner_account_id
+                )
+            WHERE EXISTS (
+                SELECT 1 FROM users
+                WHERE users.id = library_resources.owner_account_id
+                  AND users.kind = 'agent' AND users.owner_id IS NOT NULL
+            )
+            """
+        )
+        # v2.31：public 房间仍按全局名称唯一；private 房间改为按命名空间所有者+名称唯一。
+        # 先删除旧版全局索引，否则同名 private 房间永远无法创建。
+        conn.execute("DROP INDEX IF EXISTS idx_rooms_live_name")
+        conn.execute(
+            """
+            UPDATE rooms
+            SET namespace_owner_id = CASE
+                WHEN namespace_owner_id IS NOT NULL THEN namespace_owner_id
+                WHEN EXISTS (
+                    SELECT 1 FROM users creator
+                    WHERE creator.id = rooms.created_by AND creator.kind = 'agent'
+                ) THEN COALESCE((SELECT owner_id FROM users WHERE id = rooms.created_by), created_by)
+                ELSE created_by
+            END
+            WHERE namespace_owner_id IS NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_live_public_name
+            ON rooms(name COLLATE NOCASE)
+            WHERE visibility = 'public' AND archived_at IS NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_live_private_namespace_name
+            ON rooms(namespace_owner_id, name COLLATE NOCASE)
+            WHERE visibility = 'private' AND archived_at IS NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rooms_live_name_lookup
             ON rooms(name COLLATE NOCASE) WHERE archived_at IS NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_direct_pair_live
+            ON rooms(pair_user_a_id, pair_user_b_id)
+            WHERE room_type = 'direct_pair' AND archived_at IS NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rooms_pair_lookup
+            ON rooms(pair_user_a_id, pair_user_b_id)
+            WHERE room_type = 'direct_pair' AND archived_at IS NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_friendships_user_a_status
+            ON user_friendships(user_a_id, status)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_friendships_user_b_status
+            ON user_friendships(user_b_id, status)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_room_invites_inbox
+            ON room_invites(invitee_user_id, status, created_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_room_invites_room
+            ON room_invites(room_id, status, created_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_room_invites_one_pending
+            ON room_invites(room_id, invitee_user_id)
+            WHERE status = 'pending'
             """
         )
         _add_column_if_missing(conn, "room_members", "last_seen_at", "TEXT")

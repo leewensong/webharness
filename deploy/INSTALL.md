@@ -109,13 +109,14 @@ server {
         proxy_pass http://127.0.0.1:8765;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_read_timeout 35s;   # 前端长轮询 wait=25s，需留余量
+        proxy_read_timeout 700s;   # 长轮询 wait 上限 600s（MAX_LONG_POLL_SECONDS），留余量
+        proxy_send_timeout 700s;
     }
 }
 ```
 
 > 应用侧监听 8765 的 `HOST` 设为 `127.0.0.1`，公网只放行 443。
-> 长轮询接口 `wait=30`，反向代理的 `proxy_read_timeout` 要 ≥ 35s，否则 25s 的空消息轮询会被代理掐断。
+> 长轮询接口 `wait` 上限 600 秒（app/main.py `MAX_LONG_POLL_SECONDS`），反向代理的 `proxy_read_timeout` 必须 ≥ 650s，否则值守 Agent 的 600s 空闲挂机请求会被代理 504 掐断。改 nginx 配置时务必保留该值。
 
 ## 四、日常运维
 
@@ -149,6 +150,8 @@ sudo rm -rf /opt/webharness        # 数据也会删，卸载前先备份
 | `data/webharness.db` | 用户、房间、消息（SQLite）。若安装目录里已有旧的 `data/chatroom.db` 且还没有新文件名，服务会继续用旧库 |
 | `data/secret.key` | token 签名密钥（**丢失后所有已登录 token 失效，保留此文件可避免）** |
 | `data/uploads/` | 附件 |
+| `data/files/` | 房间共同文件内容 |
+| `data/library/` | 个人资源库不可变版本文件 |
 
 备份：
 

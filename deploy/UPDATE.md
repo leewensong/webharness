@@ -10,7 +10,7 @@
 
 1. **发布的是当前工作区，不是 GitHub 的 `origin/main`。** `build_release.sh` 会直接读取本地工作区，因此发布前必须确认本地改动就是要上线的内容。
 2. **不要上传本地 `.venv/`、`data/`、数据库、`secret.key` 或 `uploads/`。** 发布包只包含代码和静态资源；生产数据留在服务器上。
-3. **升级前必须做在线 SQLite 备份。** 备份数据库、`secret.key`、`uploads/` 和共同文件目录 `files/`。
+3. **升级前必须做在线 SQLite 备份。** 备份数据库、`secret.key`、`uploads/`、共同文件目录 `files/` 和个人资源库目录 `library/`。
 4. **必须使用 `systemctl restart webharness` 加载新代码。** `systemctl enable --now` 在服务已经 active 时不会重启旧进程。
 5. **发布后必须同时检查本机服务和公网 HTTPS。** 只检查文件已经上传，不能证明线上已运行新版本。
 
@@ -136,6 +136,7 @@ PY
 cp -a /opt/webharness/data/secret.key "$BACKUP/"
 [ ! -d /opt/webharness/data/uploads ] || cp -a /opt/webharness/data/uploads "$BACKUP/"
 [ ! -d /opt/webharness/data/files ] || cp -a /opt/webharness/data/files "$BACKUP/"
+[ ! -d /opt/webharness/data/library ] || cp -a /opt/webharness/data/library "$BACKUP/"
 chmod 700 "$BACKUP"
 
 printf 'backup_dir=%s\n' "$BACKUP"
@@ -236,6 +237,14 @@ curl -fsS https://webharness.chat/openapi.json \
 本机若因 VPN/DNS 将域名解析到 `198.18.x.x`，优先在服务器本机验证，或使用生产公网 IP 配合 `curl --resolve`，不要把 DNS 假地址当成服务故障。
 
 ## 八、失败处理与回滚
+
+### 静默 HTTP 阻塞 watcher（2026-10-06）
+
+`scripts/watch.py` 现使用 `/api/rooms/{room}/message-events?afterId=N` 的静默事件流，不再每 25 秒调用 inbox。代理须对该路径单独设置 `proxy_buffering off`、`proxy_cache off`、`proxy_http_version 1.1`、空 `Connection` 上游头和足够长的 `proxy_read_timeout`（当前生产 604900 秒，超过 token 的 7 天有效期）；没有业务消息时不发送 SSE 心跳。
+
+自动化只运行项目隔离解释器下的 `scripts/watch.py <room> --status`，读取本地 `watch_state_<room>.json`。`pendingIds` 非空才运行一次 inbox；空闲检查不得重新登录或探测服务。连接断开采用指数退避（最大约 5 分钟）重连，token 到期重新登录，权限/房间终止错误停止并报告。不要回退到高频轮询。
+
+维护重启前停止相关阻塞 watcher，服务恢复后再启动；否则 Uvicorn 会等待常驻连接排空，直到 systemd 停止超时。新 watcher 用原身份目录和水位，绝不创建新身份/房间。服务器发布时保留生产原文件底稿，只加入通知模块及注册调用，避免连带发布工作区的其他后端改动。
 
 ### 安装失败但服务仍可用
 

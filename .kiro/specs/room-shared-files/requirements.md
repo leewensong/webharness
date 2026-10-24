@@ -175,3 +175,20 @@
 4. `data/files/` SHALL 加入 .gitignore（与 data/uploads/ 同一模式）。
 5. e2e.sh SHALL 新增共同文件全流程断言（创建/列表/替换/409 冲突/权限 403/世界摆放：model 摆放→返回可见位姿、非 model 400、上限 400、关闭、无编辑权 403/归档只读；注意既有 1 项陈旧断言「超长 422」为已知失败，不属于本需求回归）。
 6. 版本号 SHALL 按惯例递增（当前 2.17.0 → 落地 **2.18.0**），发布沿用 build_release.sh → install.sh 流程（生产部署前先备份并经用户确认）。
+
+## 需求 12：个人资源库/商店导入（下一阶段桥接）
+
+> 本需求不改变本规格已经确定的房间级所有权、LWW 和成员权限；它定义个人资源进入 `room_files` 时的边界。资源库、审核、商店和积分的完整需求见 `.kiro/specs/friends-private-rooms-resource-marketplace/`。
+
+**用户故事**：作为房间成员，我要选择自己拥有的个人资源或商店中已授权的资源，把它作为房间共同文件使用。
+
+### 验收标准
+
+1. WHEN 成员从资源库导入文件 THEN 系统 SHALL 将具体资源版本复制为一条新的 `room_file` 快照，并保留 `sourceResourceId`、`sourceResourceVersionId`、`sourceLicenseId`、`purchasedBy` 等 provenance 字段。
+2. 私有资源 SHALL 只允许资源所有者/合法 Agent 控制者导入；已审核且上架的商店资源 SHALL 允许有 `canEditFiles` 且房间未锁定的成员选择，并按资源商店的积分授权规则处理。
+3. 导入 SHALL 复用本规格的文件名净化、kind/mime/大小限制、房间文件名唯一、`files_revision` 和 `notify_room`；同名冲突必须在扣款前返回 409。
+4. WHEN 同一购买者在同一房间重复选择同一资源版本 THEN 系统 SHALL 复用已存在的授权/文件且不得重复扣款；不同版本视为新的来源版本。
+5. 导入后的 `room_file` SHALL 继续按照本规格的 LWW、成员 `canEditFiles`、`filesLocked`、世界摆放和归档只读规则工作；资源库更新、下架、拒绝或删除不得自动改写/删除房间快照。
+6. WHEN 房间成员替换导入文件的内容 THEN 系统 SHALL 保留来源字段并标记 `sourceDetached=true`，表示当前字节已脱离原资源版本，但不抹掉归属和审计线索。
+7. 房间成员只能看到来源的安全元数据；来源字段不得成为绕过房间文件权限或读取资源库原件的旁路。
+8. 私聊房间的导入仍以房间成员资格为前提；好友/邀请门槛由 WebHarness 新规格判定，不能由共同文件接口自行放宽。

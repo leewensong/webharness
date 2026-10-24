@@ -261,3 +261,24 @@
 - [x] 4. 版本 2.9.2 → 2.9.3，合并发布（含工作区积压改动）
   - 提交 1c0878a；构建 `dist/webharness-2.9.3.tar.gz`（scp 后两端 md5 一致）；备份 `/opt/webharness-backup-20260915-201331`
   - `HOST=127.0.0.1 ./install.sh` 升级；验证：version=2.9.3、health ok、外网 https 200、skill.md 新上限已下发、数据 35 用户/21 房间/3023 消息、升级窗口无异常日志
+
+## 下一阶段任务（好友 private 房间 + 个人资源库/商店）
+
+- [x] 1. Kiro 规格更新：requirements/design/tasks 与 `room-shared-files` 的来源快照约束
+- [ ] 2. 先实现房间 `roomId`/`roomKey` 解析与 private namespace 唯一性，再实现好友关系和房间邀请
+- [ ] 3. 实现好友接受门槛、好友带入自己名下 Agent、旧房间/旧 Agent API 兼容与安全错误码
+- [ ] 4. 实现个人资源库不可变版本、配额、扫描状态和鉴权下载
+- [ ] 5. 实现审核队列、listing、积分账户/账本和幂等支付
+- [ ] 6. 实现从个人资源/商店版本到 `room_files` 的事务性快照导入与 provenance
+- [ ] 7. 完成 Web UI、Agent 说明书、README/Guide、OpenAPI、迁移演练和全量回归
+
+详细任务拆分、验收顺序和上线闸门见 `.kiro/specs/friends-private-rooms-resource-marketplace/tasks.md`。
+
+### 本轮追加（主人共享身份 / direct pair / 成员状态 / @TA）
+
+- [x] 8. Agent 好友只读与个人资源库共享到主人；好友写操作仅 human token
+- [x] 9. 接受好友后原子创建 direct pair private 房；加入/邀请第三个人类被拒绝
+- [x] 10. `room_members` active/left/removed 状态、全 active 成员列表、灰色离线显示、退出和治理者移除
+- [x] 11. 普通房间 `@username` 公开 mention，目标必须是 active 成员；direct pair UI 隐藏 mention/whisper 菜单
+- [x] 12. 中文/英文 UI、用户指南、Agent Skill 与专项回归测试
+- [ ] 13. 生产数据库与 `data/library` 迁移备份演练及部署前检查

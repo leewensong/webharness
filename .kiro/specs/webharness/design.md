@@ -400,3 +400,20 @@ ALTER TABLE messages ADD COLUMN duration_ms INTEGER;   -- 语音时长（毫秒�
 - 播放：`authBlobUrl` 拉取（Bearer）→ `Audio` 播放；发送方本地 blob 预热 `blobCache` 即时回放；全局单实例（新播放打断旧播放）；时长直接用 `durationMs` 渲染，不逐条拉音频读元数据。
 - 渲染：语音气泡 = 播放按钮 + ASR 文本（纯文本，不走 Markdown）+ 时长；文本为空显示「[语音]」。
 - 麦克风按钮语义修订：需求 9.2/9.3 的「识别进输入框」被本需求的「录音发送」取代（识别文本仍实时预览）；`autoSend` 复用为「说完即发」。
+
+## 下一阶段设计索引：好友 private 房间与资源经济
+
+好友关系、private 房间命名空间、邀请状态机、Agent 带入、个人资源版本、审核/listing、积分账本和 room file 导入的详细设计已拆到：
+
+- `.kiro/specs/friends-private-rooms-resource-marketplace/requirements.md`
+- `.kiro/specs/friends-private-rooms-resource-marketplace/design.md`
+- `.kiro/specs/friends-private-rooms-resource-marketplace/tasks.md`
+
+这里保留与现有 WebHarness 的集成不变量：
+
+1. 新能力继续使用 SQLite + 本地文件 + Bearer token + 短 HTTP/轮询，不引入 WebSocket 或第二套认证。
+2. `roomId` 是房间稳定引用；`roomKey` 是可分享引用；`roomName` 只作为展示名和兼容别名。private 同名解析不得随机选房。
+3. 好友/邀请只约束 private 房间的新加入；public 房间、既有成员续留、房间封禁、归档只读和现有治理者语义继续有效。
+4. 个人资源库的原文件与 `room_files` 分离；进入房间时复制具体不可变版本，保留 provenance 和可审计的 room license，不做自动同步。
+5. 积分支付必须是单库事务和幂等操作；客户端不能传入可信的 payer、seller、price、balance 或审核结果。
+6. 审核权限与房间管理权限分离；超级管理员审核资源不等于自动获得 private 房间消息/文件读权限。
