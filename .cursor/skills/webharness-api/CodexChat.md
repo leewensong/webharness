@@ -1,40 +1,13 @@
-# CodexChat.md — Mac ChatGPT/Codex Agent 监听唤醒建议
+# CodexChat.md — 桌面 Agent 事件驱动值班
 
-本文件供 Mac 版 ChatGPT/Codex Agent 会话使用。聊天室网页消息不会自动进入当前对话；应使用本机长轮询 watcher，在有新的人类消息时再唤醒 Agent。
+协议、参数与完整步骤以同目录 `SKILL.md` 的「值班：事件驱动监听与按需唤醒」为准。服务器提供的 `watch.py` 默认用 SSE；不要把同名旧长轮询脚本或旧版 Skill 当成当前实现。
 
-协议与接口以同目录 `SKILL.md` / `http://127.0.0.1:8765/skill.md` 为准；回复内容格式（Markdown 表格 / ` ```mermaid ` / ` ```chart `）见 SKILL.md「富文本消息」。
+1. **先验证宿主能力**：后台输出能唤醒指定会话，用持续 watcher；只有任务完成通知，用 `--once`；有授权的消息注入接口可做桥接。没有入口就报告不能自动唤醒。`notify_on_output` 不是 Codex/Cursor/ChatGPT 的通用参数；打印哨兵不证明接入成功。
+2. **身份和水位隔离**：设置 `WEBHARNESS_URL` 与 `WEBHARNESS_AGENT_HOME`；只加入用户指定的已有房间，不擅自创建或换房。首次只测新消息可运行 `--init-cursor`（跳过当前历史，不覆盖已有水位）。要处理历史则先收件。
+3. **显式使用隔离解释器**：例如 `.venv/bin/python <脚本目录>/watch.py <房间>`；一次性模式加 `--once`。`inbox.py` 和 `watch.py` 应配套更新。
+4. **接住消息和故障**：输出通知匹配 `^(AGENT_LOOP_TICK_(webharness|chatroom)|WATCHER_ERROR)\b`，也检查异常退出。`--once` 有消息退出 0、故障退出 1、中断退出 130；空闲超时/断线由程序内部处理，不靠定时模型回合续挂。
+5. **被唤醒之后**：合并 tick，运行一次 inbox（不带 `--peek`），把本批正文保存到身份目录的待处理记录。一次性模式在收件后立即续挂，再思考/回复；持续模式不重开。ID 去重，不回复自己，不未经授权向其他宿主会话代发。
+6. **不能保证“零成本”或固定延迟**：后台重连不应叫醒模型，但仍消耗连接资源；宿主调度与模型启动另外计时。`--status` 只读本地，不证明连接/宿主唤醒健康。
+7. **停止**：只终止当前身份/房间的 watcher，确认退出，忽略积压 tick，不再续挂。不要默认创建每 30 分钟叫醒模型的兜底任务。
 
-## 推荐链路
-
-人类网页消息 → 服务端 `GET /api/rooms/{room}/messages?afterId=...&wait=25` 返回 → `watch.py` 输出 `AGENT_LOOP_TICK_chatroom` → 宿主通过终端输出匹配或后台任务完成通知唤醒当前 Agent → Agent 运行 `inbox.py` 并回复。
-
-无消息时，HTTP 请求挂起等待，不产生周期性哨兵，也不空转消耗会话资源。
-
-## 启动 watcher
-
-只启动一个 watcher：
-
-```bash
-python3 ~/.cursor/skills/webharness-api/scripts/watch.py <房间名>
-```
-
-支持终端输出匹配的宿主使用：
-
-```text
-pattern: ^AGENT_LOOP_TICK_(webharness|chatroom)
-```
-
-不支持输出匹配的宿主，使用等价的“后台任务退出/完成后唤醒”机制；不要改成每 5 或 15 秒 `echo` 哨兵。
-
-## 被唤醒后的处理
-
-1. 只运行一次 `inbox.py <房间名>`，不要使用 `--peek`，让当前 Agent 的 `state/last_id_<房间>` 水位推进。
-2. 只处理其他用户的新消息，不回复自己的消息。
-3. 能流式时使用同一条消息的 `start → delta → done`；首块尽快发送。回复内容用 Markdown 表格 / ` ```mermaid ` / ` ```chart ` 呈现结构化数据（见 SKILL.md「富文本消息」）。
-4. 回复完成后不要重新启动第二个 watcher，原 watcher 会继续等待。
-
-## 延迟与边界
-
-长轮询返回和 HTTP 流式首包通常是毫秒到秒级；Mac ChatGPT/Codex 的宿主唤醒和新回合启动通常还需十几秒。这一段由宿主调度和上下文启动成本决定，SSE/WebSocket 或更短轮询无法消除。流式只改善 Agent 已被唤醒后的网页首字体验。
-
-用户要求停止值班时，终止 `watch.py`，确认父子进程均已退出，并忽略停止前已排队的旧 tick；不要再次 arm。
+验收至少覆盖：静默无额外模型回合、自动回复、连续消息、断线/错误可见、停止后无回复。
