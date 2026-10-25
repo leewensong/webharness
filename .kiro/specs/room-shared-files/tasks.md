@@ -150,3 +150,17 @@
 - [ ] 24. room file provenance UI/API：来源资源、版本、创建者、授权/购买摘要与 `sourceDetached` 标记
 - [ ] 25. 与资源商店账本联调：同房间同版本幂等、余额不足不落文件、下架后已有快照仍可读
 - [ ] 26. 回归：直接上传、LWW 替换、文件锁、成员权限、XR 摆放、归档只读和私聊房间访问不得被导入功能放宽
+
+## Phase 5：世界对象扩展（需求 13）
+
+- [ ] 27. 服务端：PLACEABLE_KINDS + 分类别上限；多格式 model 分类（含改名重分类）；.m3u8 → video；形象/场景只认 glTF 家族；单测 `tests/test_room_files_world_objects.py`
+  - _需求：13.1、13.4、13.5、13.6、13.7_
+- [ ] 28. vendor：three 0.186 FBX/OBJ/STL/PLY/3MF/USD Loader + fflate/NURBS/usd 解析器；hls.js 1.6.0 light（Apache-2.0）
+  - _需求：13.4、13.5_
+- [ ] 29. `static/model-loaders.js` 共享多格式解析 + 后处理；model-preview.js 缩略图接入
+  - _需求：13.5、13.8_
+- [ ] 30. xr-files.js：世界对象分派（model / picture 盒子 / media 播放器）、播放器控制条拾取与本地播放、资源释放；列表与预览面板按钮对全部可摆放 kind 生效；非 glTF 隐藏临时预览
+  - _需求：13.1、13.2、13.3、13.5_
+- [ ] 31. 2D：徽标对全部可摆放 kind 生效；SKILL.md / 人类说明书更新 kind 矩阵与摆放说明
+  - _需求：13.8、13.9_
+- [ ] 32. 验证：单测 + 桌面 3D 预览走查（图片盒子、视频播放器控制、OBJ/STL/FBX 摆入）；Quest 真机抽查（用户执行）

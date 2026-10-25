@@ -6,9 +6,15 @@
    架构不变量：权限只读 2D 合成结果（ctx.canEdit），不建第二套判断；3D 故障不影响 2D。 */
 
 import * as THREE from "three";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { modelFormatOf, parseModel } from "../model-loaders.js";
+import { buildPicture, createMediaPlayer } from "./xr-world-objects.js";
 
 const EDITABLE_KINDS = new Set(["markdown", "text", "svg"]);
+/* 可摆入房间的 kind（需求 13，与服务端 PLACEABLE_KIND_GROUP 一致） */
+const PLACEABLE_KINDS = new Set(["model", "image", "svg", "video", "audio"]);
+const isPlaceable = (f) => !!f && PLACEABLE_KINDS.has(f.kind);
+/* 临时预览走聊天 3D 附件管线，只接 glTF 家族 */
+const canTempPreview = (f) => !!f && f.kind === "model" && modelFormatOf(f.name, f.mime) === "gltf";
 const POLL_MS = 2500;
 const SAVE_THROTTLE_MS = 500;
 const MAX_WORLD_SCALE = 20;
@@ -280,7 +286,7 @@ export function createXRFiles(opts) {
       g2.fillStyle = "#eef3f9";
       g2.font = "14px system-ui, sans-serif";
       let name = f.name || "";
-      const isModel = f.kind === "model";
+      const isModel = isPlaceable(f);
       while (g2.measureText(name).width > wCss - (isModel ? 160 : 130) && name.length > 2) name = name.slice(0, -2);
       g2.fillText(name, 46, y + 18);
       g2.fillStyle = "#7c90aa";
@@ -332,9 +338,9 @@ export function createXRFiles(opts) {
   function previewButtons() {
     const btns = [];
     const editable = curFile && EDITABLE_KINDS.has(curFile.kind) && canEdit();
-    if (curFile && curFile.kind === "model") {
+    if (isPlaceable(curFile)) {
       if (canEdit()) btns.push({ act: "togglePlace", label: placementPending(curFile.id) ? t("xrFileLoading") : curFile.world && curFile.world.visible ? t("xrFileUnplace") : t("xrFilePlace"), dim: placementPending(curFile.id) });
-      if (!curFile.world || !curFile.world.visible) btns.push({ act: "temp", label: t(tempFileId === curFile.id ? "xrFileHideModel" : "xrFileTemp") });
+      if (canTempPreview(curFile) && (!curFile.world || !curFile.world.visible)) btns.push({ act: "temp", label: t(tempFileId === curFile.id ? "xrFileHideModel" : "xrFileTemp") });
       btns.push({ act: "menu", label: "⋯ " + t("xrFileActions") }); /* 再显示/收起/撤销的集中入口 */
     }
     if (editable) btns.push({ act: "edit", label: t("xrFileEdit") });
@@ -438,10 +444,10 @@ export function createXRFiles(opts) {
 
   function menuItems() {
     const items = [];
-    if (curFile && curFile.kind === "model") {
+    if (isPlaceable(curFile)) {
       const placed = !!(curFile.world && curFile.world.visible);
       if (canEdit()) items.push({ act: "menuReshow", label: placed ? t("xrFileUnplace") : t("xrFileReshow"), dim: placementPending(curFile.id) });
-      if (!placed && placeChatModel) items.push({ act: "menuTemp", label: t(tempFileId === curFile.id ? "xrFileHideModel" : "xrFileTemp") });
+      if (!placed && placeChatModel && canTempPreview(curFile)) items.push({ act: "menuTemp", label: t(tempFileId === curFile.id ? "xrFileHideModel" : "xrFileTemp") });
       /* GLB 内置动画控制：仅已摆入且带动画；无动画不发条目（纯本地操作，无需 canEdit） */
       const rec = worldRecs.get(curFile.id);
       if (rec && rec.state === "ready" && rec.clips && rec.clips.length) {
@@ -790,7 +796,6 @@ export function createXRFiles(opts) {
 
   /* ---------- 世界摆放（任务 16） ---------- */
 
-  const gltfLoader = new GLTFLoader();
   const worldRecs = new Map(); // fileId → { holder, file, state, box, pendingPlace }
   const placementBusy = new Set();
 
@@ -829,6 +834,7 @@ export function createXRFiles(opts) {
       rec.mixer.uncacheRoot(rec.mixer.getRoot());
       rec.mixer = null;
     }
+    if (rec.media) { try { rec.media.dispose(); } catch (e) {} rec.media = null; }
     if (saveTimers.has(id)) { clearTimeout(saveTimers.get(id)); saveTimers.delete(id); }
     worldGroup.remove(rec.holder);
     disposeObjectTree(rec.holder);
@@ -852,10 +858,10 @@ export function createXRFiles(opts) {
   }
 
   function syncWorld() {
-    const want = filesCache.filter((f) => f.kind === "model" && f.world && f.world.visible);
+    const want = filesCache.filter((f) => isPlaceable(f) && f.world && f.world.visible);
     const wantIds = new Set(want.map((f) => f.id));
     for (const [id, rec] of worldRecs) {
-      const latest = filesCache.find((f) => f.id === id && f.kind === "model");
+      const latest = filesCache.find((f) => f.id === id && isPlaceable(f));
       /* 首次摆放先加载、再写 visible=true；不能让别的文件的轮询更新取消它。 */
       if (!latest || (!wantIds.has(id) && !rec.pendingPlace && !rec.placing)) removeWorld(id);
       else rec.file = latest;
@@ -887,18 +893,32 @@ export function createXRFiles(opts) {
     (async () => {
       try {
         rec.loadedAt = rec.file.updatedAt; /* 内容替换后 syncWorld 据此重建模型 */
-        const blob = await fetchBlob(rec.file.contentUrl);
-        if (!currentWorldRec(rec)) return;
-        const buf = await blob.arrayBuffer();
-        const gltf = await new Promise((resolve, reject) => {
-          try { gltfLoader.parse(buf, "", resolve, reject); }
-          catch (e) { reject(e); }
-        });
-        const model = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+        const kind = rec.file.kind;
+        let model, animations = [], box = null;
+        if (kind === "video" || kind === "audio") {
+          const media = await createMediaPlayer({ file: rec.file, fetchBlob, fetchText, token });
+          if (!currentWorldRec(rec)) { media.dispose(); return; }
+          rec.media = media;
+          model = media.object;
+          box = media.box.clone();
+        } else {
+          const blob = await fetchBlob(rec.file.contentUrl);
+          if (!currentWorldRec(rec)) return;
+          if (kind === "image" || kind === "svg") {
+            const pic = await buildPicture(blob);
+            model = pic.object;
+            box = pic.box.clone();
+          } else {
+            const format = modelFormatOf(rec.file.name, rec.file.mime) || "gltf";
+            const parsed = await parseModel(format, await blob.arrayBuffer());
+            model = parsed.object;
+            animations = parsed.animations;
+          }
+        }
         /* 同 id 收起后再显示会建立新 rec；旧回调不能复活旧物体或泄漏资源。 */
         if (!currentWorldRec(rec)) { if (model) disposeObjectTree(model); return; }
         if (!model) throw new Error("empty model");
-        const box = new THREE.Box3().setFromObject(model);
+        if (!box) box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         model.position.copy(center).negate();
         const placeholder = rec.holder.children[0];
@@ -909,7 +929,7 @@ export function createXRFiles(opts) {
         rec.state = "ready";
         /* GLB/GLTF 内置动画（建议 #4）：只播第一段，避免互相覆盖的 clips 同时启动；
            mixer 作用在 model 内部节点上，与 holder 的摆放位姿分层不冲突。 */
-        const clips = Array.isArray(gltf.animations) ? gltf.animations : [];
+        const clips = Array.isArray(animations) ? animations : [];
         rec.clips = clips;
         rec.mixer = null;
         if (clips.length) {
@@ -1356,7 +1376,10 @@ export function createXRFiles(opts) {
     for (const h of hits) {
       let o = h.object;
       while (o && o.parent !== worldGroup) o = o.parent;
-      if (o && o.userData.fileId != null) return { fileId: o.userData.fileId };
+      if (o && o.userData.fileId != null) {
+        const part = h.object.userData.mediaPart || null;
+        return { fileId: o.userData.fileId, part, uv: h.uv };
+      }
     }
     return null;
   }
@@ -1410,6 +1433,12 @@ export function createXRFiles(opts) {
       }
       return true;
     }
+    /* 播放器控制条：直接播放控制，不进入摆放调整（调整中也可用） */
+    const mp = worldPick(ray);
+    if (mp && mp.part === "controls") {
+      const rec = worldRecs.get(mp.fileId);
+      if (rec && rec.media && mp.uv) { rec.media.pickControls(mp.uv); return true; }
+    }
     if (adjBarMesh.visible) return false; /* 调整中：点模型外的空白仍留给消息墙，但不再选新模型 */
     const w = worldPick(ray);
     if (w) {
@@ -1425,7 +1454,7 @@ export function createXRFiles(opts) {
     if (disposed) return null;
     if (adjust) {
       const w = worldPick(ray);
-      if (w && w.fileId === adjust.fileId) {
+      if (w && w.fileId === adjust.fileId && w.part !== "controls") {
         const rec = worldRecs.get(adjust.fileId);
         const drag = {
           kind: "xrfile-model", fileId: adjust.fileId, submode: adjust.submode,
@@ -1651,7 +1680,7 @@ export function createXRFiles(opts) {
       if (changed) {
         syncWorld();
         if (view === "preview" && curFile && !filesCache.some((f) => f.id === curFile.id)) backToList();
-        else if (view === "preview" && curFile && curFile.kind === "model") {
+        else if (view === "preview" && isPlaceable(curFile)) {
           curFile = filesCache.find((f) => f.id === curFile.id); /* 下一次开关必须读最新 visible */
         }
       }
@@ -1669,6 +1698,7 @@ export function createXRFiles(opts) {
         rec.holder.rotation.y += (rec.spinY * Math.PI) / 180 * dt;
       }
       if (rec.mixer && rec.state === "ready" && !rec.animPaused) rec.mixer.update(dt);
+      if (rec.media && rec.state === "ready") rec.media.tick(dt);
     }
   }
 

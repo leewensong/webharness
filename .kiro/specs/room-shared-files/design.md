@@ -369,3 +369,35 @@ else: 放行
 - 替换导入文件的内容仍是 LWW；服务端将 `source_detached` 置为 1，但不删除 `source_*` 字段。
 - 删除房间文件不删除资源库版本、listing 或积分交易；删除资源库版本也不删除已存在的 room file 快照。
 - 资源库/商店的审核和经济授权不在 `room_files` 层重复实现；共同文件只验证“已获得的来源授权”，防止权限逻辑分叉。
+
+## 世界对象扩展（需求 13）
+
+### 服务端
+
+- `PLACEABLE_KINDS = {model, image, svg, video, audio}`；`set_file_placement` 由 `kind != "model"` 改为 `kind not in PLACEABLE_KINDS`；`_file_dict` 的 `world` 块对全部可摆放 kind 生效。
+- 上限按类别：`WORLD_LIMITS = {"model": 6, "picture": 12, "media": 3}`，类别映射 `model→model`、`image/svg→picture`、`video/audio→media`；计数 SQL 按 `kind IN (...)` 过滤。
+- 分类：`MODEL_FILE_EXTS` 扩为 glTF 家族 + `EXTRA_MODEL_MIME_BY_EXT`（`.fbx→model/x-fbx`、`.obj→model/obj`、`.stl→model/stl`、`.ply→model/x-ply`、`.3mf→model/3mf`、`.usdz→model/vnd.usdz+zip`、`.usd/.usda/.usdc→model/vnd.usd`）；`_classify_file` / `_reclassify_file` 均在 glTF 分支之后、图片魔数之前命中（.obj/.ply/.usda 是文本也必须先归 model，不能落入 text 白名单）。`.m3u8→video, application/vnd.apple.mpegurl`。
+- 用途隔离：`GLTF_MODEL_MIMES = {model/gltf-binary, model/gltf+json, model/vrm}`；`_require_approved_library_model` 额外要求 `version.mime in GLTF_MODEL_MIMES`。
+- 内容端点给可摆放媒体走 Starlette `FileResponse`（原生支持 Range，视频 seek 可用；客户端仍走 blob 方案，Range 主要服务 2D `<video>`）。
+
+### 客户端：共享加载模块 `static/model-loaders.js`
+
+- `modelFormatOf(name, mime)` → `gltf|fbx|obj|stl|ply|3mf|usd|null`；`parseModel(format, arrayBuffer)` → `{ object, animations }`，按格式动态 import 对应 Loader（vendored three 0.186：FBX/OBJ/STL/PLY/3MF/USD + fflate/NURBS/usd 解析器）。
+- 统一后处理（参考 webxr-3d-viewer `normalizeModel`）：几何结果包成 `Mesh(MeshStandardMaterial)`、PLY 无 index 且无面 → `Points`、缺法线 `computeVertexNormals`、内置灯光隐藏、缺材质补中性材质；3MF 为 Z-up，外包一层 `rotation.x = -π/2`。
+- xr-files.js `loadWorldModel` 与 model-preview.js 缩略图都走 `parseModel`，位姿约定（holder 居中 + 显式 scale + 底边落地）不变。
+
+### 客户端：图片盒子
+
+- `BoxGeometry(w, h, 0.03)`（最长边 1）；材质数组 `[边, 边, 边, 边, 图(正), 图(反, 水平翻转)]`；贴图来自 `createImageBitmap(blob)` → `CanvasTexture`（最长边 ≤2048，降采样防显存爆）。`rec.box` 用盒子尺寸，`doInitialPlace` 走同一 ~1m 归一化。
+
+### 客户端：媒体播放器（参考 FPP）
+
+- 结构（本地单位，最长边 1）：外框 `Box(1.0, 0.70, 0.04)`；屏幕 `Plane(0.94, 0.53)` 贴 `VideoTexture`（音频：CanvasTexture 封面卡）；控制条 `Plane(0.94, 0.12)` 贴 CanvasTexture（按钮 ⏪10 ▶/⏸ 10⏩ 🔇 🔁 + 进度条 + 时间）。
+- 拾取：`worldPick` 返回 `{fileId, part}`；`part === "controls"` 时按 uv 命中按钮/进度条直接执行播放控制并消费点击，不进入调整；其余部位走原调整流程。
+- 控制条每 250ms 重绘（仅播放中且该播放器存在时），`tick()` 里节流。
+- 媒体元素：`<video playsinline muted>`（音频同样用 `<video>`，统一 API），blob objectURL；`.m3u8`：`video.canPlayType("application/vnd.apple.mpegurl")` 优先原生，否则动态 import `/static/vendor/hls/hls.light.min.js`（UMD，挂 `window.Hls`），`xhrSetup` 给同源 `/api/` 请求补 Bearer。
+- `removeWorld` 扩展：暂停媒体、`removeAttribute("src")`+`load()`、`hls.destroy()`、revoke objectURL、dispose 纹理。
+
+### 暂缓
+
+- 播放状态跨端同步（「一起看」）、空间音频（PositionalAudio）、Gaussian splat（.splat/.ksplat/.spz，参考 viewer 依赖 CDN 的 GaussianSplats3D，单独立项）、OBJ+MTL/GLTF+bin 多文件打包上传。

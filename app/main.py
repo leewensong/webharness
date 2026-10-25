@@ -72,6 +72,9 @@ MAX_LIBRARY_TOTAL_BYTES = 500 * 1024 * 1024
 WELCOME_POINTS = 1000
 # 同时常驻展示（world_visible=1）的 3D 模型上限，超限开启返回 400
 MAX_WORLD_MODELS = 6
+# 可摆入 3D 房间的 kind（需求 13）：模型 / 图片盒子 / 媒体播放器，按类别分开计上限
+PLACEABLE_KIND_GROUP = {"model": "model", "image": "picture", "svg": "picture", "video": "media", "audio": "media"}
+WORLD_LIMITS = {"model": MAX_WORLD_MODELS, "picture": 12, "media": 3}
 # 文本类文件扩展名白名单：命中才归 kind=text（未命中的未知扩展名即使恰为 UTF-8 也归 other，
 # 防止把 .docx 等二进制当文本渲染出乱码）。.md/.markdown 单列 markdown，不在此列
 TEXT_FILE_EXTS = {
@@ -83,8 +86,18 @@ TEXT_FILE_EXTS = {
 # 声明 mime 可信的文本类白名单（其余声明只在扩展名命中时采信）
 TEXT_FILE_MIMES = {"application/json", "application/xml", "application/yaml", "application/javascript"}
 MODEL_FILE_EXTS = {".glb", ".gltf", ".vrm"}
-VIDEO_FILE_EXTS = {".mp4", ".webm", ".mov", ".m4v"}
-VIDEO_MIME_BY_EXT = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".m4v": "video/x-m4v"}
+# glTF 家族之外的 3D 格式（只用于共同文件的摆放/预览；形象与房间场景仍只认 glTF 家族）
+EXTRA_MODEL_MIME_BY_EXT = {
+    ".fbx": "model/x-fbx", ".obj": "model/obj", ".stl": "model/stl", ".ply": "model/x-ply",
+    ".3mf": "model/3mf", ".usdz": "model/vnd.usdz+zip",
+    ".usd": "model/vnd.usd", ".usda": "model/vnd.usd", ".usdc": "model/vnd.usd",
+}
+GLTF_MODEL_MIMES = {"model/gltf-binary", "model/gltf+json", "model/vrm"}
+VIDEO_FILE_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".m3u8"}
+VIDEO_MIME_BY_EXT = {
+    ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".m4v": "video/x-m4v",
+    ".m3u8": "application/vnd.apple.mpegurl",
+}
 IMAGE_MIME_BY_EXT = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
     ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
@@ -3181,7 +3194,7 @@ def _require_approved_library_model(conn, resource_id: int, user: dict, *, purpo
     version = conn.execute(
         "SELECT * FROM library_resource_versions WHERE id = ?", (resource["current_version_id"],)
     ).fetchone()
-    if not version or version["kind"] != "model":
+    if not version or version["kind"] != "model" or version["mime"] not in GLTF_MODEL_MIMES:
         label = "3D 形象" if purpose == "avatar" else "房间场景"
         raise _friend_error("resource_kind_mismatch", f"{label}只能引用模型类资源", 409)
     if version["review_status"] != "approved" or version["scan_status"] != "clean":
@@ -6467,6 +6480,9 @@ def _classify_file(name: str, declared_mime: str | None, data: bytes) -> tuple[s
         return "model", "model/gltf-binary"
     if ext == ".gltf":
         return "model", "model/gltf+json"
+    # .obj/.ply/.usda 是文本，必须先于 text 白名单归 model
+    if ext in EXTRA_MODEL_MIME_BY_EXT:
+        return "model", EXTRA_MODEL_MIME_BY_EXT[ext]
     magic_mime = _image_mime_from_data(data)
     if magic_mime:
         return "image", magic_mime
@@ -6501,6 +6517,8 @@ def _reclassify_file(kind: str, mime: str, name: str) -> tuple[str, str]:
         return "model", "model/gltf-binary"
     if ext == ".gltf":
         return "model", "model/gltf+json"
+    if ext in EXTRA_MODEL_MIME_BY_EXT:
+        return "model", EXTRA_MODEL_MIME_BY_EXT[ext]
     if ext == ".svg":
         return "svg", "image/svg+xml"
     if ext in VIDEO_FILE_EXTS:
@@ -6543,7 +6561,7 @@ def _file_dict(row, room_name: str, archive_id: int | None = None) -> dict:
     else:
         content_url = f"/api/rooms/{room_name}/files/{row['id']}/content?v={version}"
     world = None
-    if row["kind"] == "model" and _row_get(row, "world_updated_at"):
+    if row["kind"] in PLACEABLE_KIND_GROUP and _row_get(row, "world_updated_at"):
         pose = None
         raw_pose = _row_get(row, "world_pose")
         if raw_pose:
@@ -6889,8 +6907,9 @@ def set_file_placement(room_name: str, file_id: int, body: PlacementUpdate, user
         row = _get_file(conn, room["id"], file_id)
         if not row:
             raise HTTPException(status_code=404, detail="文件不存在")
-        if row["kind"] != "model":
-            raise HTTPException(status_code=400, detail="只有 3D 模型文件可摆入房间")
+        group = PLACEABLE_KIND_GROUP.get(row["kind"])
+        if not group:
+            raise HTTPException(status_code=400, detail="只有 3D 模型、图片、视频与音频文件可摆入房间")
         now = _db_now(conn)
         if body.visible:
             old_spin = 0.0
@@ -6901,14 +6920,18 @@ def set_file_placement(room_name: str, file_id: int, body: PlacementUpdate, user
                     old_spin = 0.0
             spin = max(-360.0, min(360.0, float(body.spin))) if body.spin is not None else old_spin
             pose_json = json.dumps({"position": position, "rotation": rotation, "scale": scale, "spin": spin})
+            group_kinds = [k for k, g in PLACEABLE_KIND_GROUP.items() if g == group]
             others = conn.execute(
-                "SELECT COUNT(*) AS c FROM room_files WHERE room_id = ? AND world_visible = 1 AND id != ?",
-                (room["id"], file_id),
+                f"SELECT COUNT(*) AS c FROM room_files WHERE room_id = ? AND world_visible = 1 AND id != ? "
+                f"AND kind IN ({','.join('?' * len(group_kinds))})",
+                (room["id"], file_id, *group_kinds),
             ).fetchone()["c"]
-            if others >= MAX_WORLD_MODELS:
+            limit = WORLD_LIMITS[group]
+            if others >= limit:
+                label = {"model": "3D 模型", "picture": "图片", "media": "媒体播放器"}[group]
                 raise HTTPException(
                     status_code=400,
-                    detail=f"同时常驻展示的 3D 模型已达上限（{MAX_WORLD_MODELS}），请先关闭其他模型",
+                    detail=f"同时常驻展示的{label}已达上限（{limit}），请先收起其他{label}",
                 )
             conn.execute(
                 """

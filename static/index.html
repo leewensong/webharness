@@ -5446,7 +5446,7 @@
       const canEdit = filesCanEdit();
       box.innerHTML = filesCache.map((f) => {
         const editable = EDITABLE_FILE_KINDS.has(f.kind);
-        const placed = f.kind === "model" && f.world && f.world.visible
+        const placed = f.world && f.world.visible
           ? ` <span class="badge">${t("filePlaced")}</span>` : "";
         return `
           <div class="file-row" data-id="${f.id}">
@@ -5736,6 +5736,7 @@
           try {
             const mod = await import("/static/model-preview.js");
             const dataUrl = await mod.renderModelPreview(f.contentUrl, {
+              name: f.name, mime: f.mime,
               getBlob: (u) => fetch(u, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} })
                 .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); }),
             });

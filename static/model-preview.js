@@ -1,4 +1,4 @@
-/* 3D 模型附件预览（glb/gltf/vrm）：按模型外框包围盒自动取景，渲染一张预览缩略图。
+/* 3D 模型预览（聊天附件 glb/gltf/vrm；共同文件另含 fbx/obj/stl/ply/3mf/usd，经 opts.name/mime 指定格式）：按模型外框包围盒自动取景，渲染一张预览缩略图。
    2D 侧独立小模块——只在消息里真的出现 3D 附件时才被动态 import（2D 首屏零 3D 依赖）。
    失败/超时一律返回 null，由调用方降级为静态图标；任何异常不得影响消息渲染。 */
 
@@ -20,8 +20,8 @@ const SIZE = 256;
 
 async function loadDeps() {
   const THREE = await import("three");
-  const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
-  return { THREE, GLTFLoader };
+  const { parseModel } = await import("./model-loaders.js");
+  return { THREE, parseModel };
 }
 
 function getRenderer(THREE) {
@@ -48,14 +48,11 @@ function disposeObject(THREE, obj) {
   });
 }
 
-/* objUrl: blob: URL（调用方已处理好鉴权/跨域取回）→ 预览 dataURL 或 null。
-   超时放弃后调用方不等待本 Promise，模型资源在 finally 中释放。 */
-async function renderFromObjectUrl(objUrl) {
-  const { THREE, GLTFLoader } = await loadDeps();
-  const loader = new GLTFLoader();
-  const gltf = await loader.loadAsync(objUrl);
-  const model = gltf.scene || (gltf.scenes && gltf.scenes[0]);
-  if (!model) throw new Error("empty model");
+/* buffer: 模型字节（调用方已处理好鉴权/跨域取回），format 见 model-loaders.js →
+   预览 dataURL 或 null。超时放弃后调用方不等待本 Promise，模型资源在 finally 中释放。 */
+async function renderFromBuffer(buffer, format) {
+  const { THREE, parseModel } = await loadDeps();
+  const { object: model } = await parseModel(format, buffer);
 
   const box = new THREE.Box3().setFromObject(model);
   if (box.isEmpty()) throw new Error("empty bounds");
@@ -93,11 +90,11 @@ export function renderModelPreview(url, opts) {
 
   const getBlob = (opts && opts.getBlob) || ((u) => fetch(u).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); }));
   const job = queue.then(async () => {
-    let blobUrl = null;
     try {
       const blob = await getBlob(url);
-      blobUrl = URL.createObjectURL(blob);
-      const work = renderFromObjectUrl(blobUrl).catch(() => null);
+      const { modelFormatOf } = await import("./model-loaders.js");
+      const format = modelFormatOf((opts && opts.name) || url, opts && opts.mime) || "gltf";
+      const work = blob.arrayBuffer().then((buf) => renderFromBuffer(buf, format)).catch(() => null);
       const dataUrl = await Promise.race([
         work,
         new Promise((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS)),
@@ -107,7 +104,6 @@ export function renderModelPreview(url, opts) {
     } catch (err) {
       return null;
     } finally {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
       inflight.delete(url);
     }
   });

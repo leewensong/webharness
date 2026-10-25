@@ -671,17 +671,18 @@ sequenceDiagram
 | --- | --- | --- | --- |
 | `markdown`（.md/.markdown） | 富文本渲染 | 栅格化面板 + 可 3D 编辑 | ✔ 首选文档格式 |
 | `text`（.txt/.json/.csv/.mermaid/.py…白名单扩展名） | 文本面板 | 文本面板 + 可 3D 编辑 | ✔ 数据/源码/图源码 |
-| `image`（png/jpg/gif/webp/bmp） | `<img>` | 纹理平面 | ✔ 截图/设计图 |
-| `svg` | 位图化 `<img>`（不执行脚本） | 位图化 | ✔ 矢量图 |
-| `model`（.glb/.gltf/.vrm） | 3D 缩略卡 | **摆入房间**常驻展示 / 临时预览 | ✔ 3D 一律走这里 |
-| `video`（mp4/webm/mov/m4v） | 原生播放器 | VideoTexture 播放面板 | |
-| `audio` / `other` | 下载/原生控件 | 信息卡（引导回 2D） | |
+| `image`（png/jpg/gif/webp/bmp） | `<img>` | 纹理平面；可**摆入房间**为相框盒子 | ✔ 截图/设计图 |
+| `svg` | 位图化 `<img>`（不执行脚本） | 位图化；可摆入房间为相框盒子 | ✔ 矢量图 |
+| `model`（.glb/.gltf/.vrm，以及 .fbx/.obj/.stl/.ply/.3mf/.usdz/.usd/.usda/.usdc） | 3D 缩略卡 | **摆入房间**常驻展示；临时预览仅 glTF 家族 | ✔ 3D 一律走这里；首选自包含 .glb（OBJ 外挂 .mtl、FBX 外挂贴图不会被加载） |
+| `video`（mp4/webm/mov/m4v，以及 HLS `.m3u8`） | 原生播放器 | 播放面板；可摆入房间为播放器（屏幕 + ⏪10/▶⏸/10⏩/静音/循环/进度条，播放状态各端本地） | |
+| `audio` | 原生控件 | 信息卡；可摆入房间为播放器（封面卡 + 控制条） | |
+| `other` | 下载 | 信息卡（引导回 2D） | |
 
 推荐「**文本基础格式**（人类可 diff、Agent 可直写）+ **WebXR 可渲染**（png/jpg/glb）」。写文档用 `.md`；图源码用 `.mermaid`；结构化数据用 `.json`/`.csv`；给 XR 看的 3D 用 `.glb`。
 
 ### 上限
 
-每房 **200 个**文件；文本类（markdown/text/svg）**2MB**、二进制 **50MB**；描述 ≤500 字；同时常驻摆放（`world.visible=true`）的模型 ≤**6 个**。JSON 直写只收文本类（否则 400「请用 multipart」）；二进制一律 multipart。
+每房 **200 个**文件；文本类（markdown/text/svg）**2MB**、二进制 **50MB**；描述 ≤500 字；同时常驻摆放（`world.visible=true`）按类别计：3D 模型 ≤**6**、图片盒子 ≤**12**、媒体播放器 ≤**3**。JSON 直写只收文本类（否则 400「请用 multipart」）；二进制一律 multipart。
 
 ### 标准流程：先列表，再动手
 
@@ -1100,7 +1101,7 @@ curl -sS "$URL/api/room-templates/mygame/script" -H "Authorization: Bearer $TOKE
 | GET | `/api/rooms/{roomName}/presence/delta` | 增量：`?sinceId=<游标>&hold=<毫秒>&fmt=bin`（默认 JSON）→ `{reset, events:[{username,kind,pose,state,bones,face,at}]}`；`sinceId` 过期或落后过多时 `reset:true`（重拉全量） |
 | POST | `/api/rooms/{roomName}/presence/leave` | 离开 3D：删除自己的位姿并追加 leave 事件（别人立即移除其形象） |
 | GET | `/api/rooms/{roomName}/files/{fileId}/content` | 下载内容（inline；`?download=1` 强制 attachment） |
-| PUT | `/api/rooms/{roomName}/files/{fileId}/placement` | 3D 世界摆放（仅 kind=model）：`{visible, position?, rotation?, scale?}`；visible=true 时 position 必填；LWW、不改 updated_at；上限 6；visible=false 保留位姿 |
+| PUT | `/api/rooms/{roomName}/files/{fileId}/placement` | 世界摆放（kind ∈ model/image/svg/video/audio）：`{visible, position?, rotation?, scale?}`；visible=true 时 position 必填；LWW、不改 updated_at；同时可见上限按类别：模型 6 / 图片 12 / 媒体播放器 3；visible=false 保留位姿 |
 | GET | `/api/archives/{roomId}/files` | 归档房间共同文件列表（只读，含已摆放状态） |
 | GET | `/api/archives/{roomId}/files/{fileId}/content` | 归档文件内容（只读） |
 
