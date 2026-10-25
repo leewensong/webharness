@@ -1212,6 +1212,31 @@ export function createXRFiles(opts) {
 
   let adjust = null; // { fileId, submode }
 
+  /* 升降：Shift+拖 / 滚轮 / 右摇杆上下。底边不低于地面，中心不高于 5m */
+  let shiftDown = false;
+  const onShiftKey = (e) => { shiftDown = !!e.shiftKey; };
+  const onShiftBlur = () => { shiftDown = false; };
+  window.addEventListener("keydown", onShiftKey);
+  window.addEventListener("keyup", onShiftKey);
+  window.addEventListener("blur", onShiftBlur);
+  const LIFT_MAX_Y = 5;
+  function clampLiftY(rec, y) {
+    const halfH = rec.box ? (rec.box.getSize(new THREE.Vector3()).y * rec.holder.scale.y) / 2 : 0;
+    return THREE.MathUtils.clamp(y, halfH, Math.max(halfH, LIFT_MAX_Y));
+  }
+  /* 滚轮升降：仅移动模式且指着正在调整的模型；返回 true = 已消费 */
+  function liftByWheel(ray, deltaY) {
+    if (disposed || !adjust || adjust.submode !== "move") return false;
+    const w = worldPick(ray);
+    if (!w || w.fileId !== adjust.fileId) return false;
+    const rec = worldRecs.get(adjust.fileId);
+    if (!rec) return false;
+    const step = -Math.sign(deltaY) * 0.05; /* 每格 5cm，滚轮向上 = 升高 */
+    rec.holder.position.y = clampLiftY(rec, rec.holder.position.y + step);
+    scheduleSave(adjust.fileId);
+    return true;
+  }
+
   const adjBarMesh = (() => {
     const c = document.createElement("canvas");
     c.width = 1000; c.height = ADJ_BAR_H;
@@ -1406,10 +1431,20 @@ export function createXRFiles(opts) {
           kind: "xrfile-model", fileId: adjust.fileId, submode: adjust.submode,
           pos0: rec.holder.position.clone(), rot0: rec.holder.rotation.y,
         };
-        if (drag.submode === "move") {
+        if (drag.submode === "move" && shiftDown) {
+          /* Shift+拖 = 升降：过模型、面向相机的竖直平面，只取 y 变化 */
+          const c = rec.holder.position;
+          const n = new THREE.Vector3().subVectors(camera.getWorldPosition(new THREE.Vector3()), c).setY(0);
+          if (n.lengthSq() < 1e-6) n.set(0, 0, 1); else n.normalize();
+          drag.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, c.clone());
+          const p = new THREE.Vector3();
+          if (ray.ray.intersectPlane(drag.plane, p)) drag.ly0 = p.y;
+          drag.lift = true;
+        } else if (drag.submode === "move") {
+          /* 水平面过模型当前高度（不是 y=0）：抬高后抓点仍贴着指针 */
           const gp = new THREE.Vector3();
-          const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-          if (ray.ray.intersectPlane(plane, gp)) { drag.gx0 = gp.x; drag.gz0 = gp.z; }
+          drag.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -rec.holder.position.y);
+          if (ray.ray.intersectPlane(drag.plane, gp)) { drag.gx0 = gp.x; drag.gz0 = gp.z; }
         } else if (drag.submode === "rotate") {
           const c = rec.holder.position;
           drag.a0 = Math.atan2((ray.ray.origin.x - c.x), (ray.ray.origin.z - c.z));
@@ -1478,9 +1513,15 @@ export function createXRFiles(opts) {
     if (drag.kind !== "xrfile-model") return;
     const rec = worldRecs.get(drag.fileId);
     if (!rec) return;
-    if (drag.submode === "move") {
+    if (drag.submode === "move" && drag.lift) {
       const p = new THREE.Vector3();
-      if (ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), p)) {
+      if (drag.ly0 != null && drag.plane && ray.ray.intersectPlane(drag.plane, p)) {
+        rec.holder.position.y = clampLiftY(rec, drag.pos0.y + (p.y - drag.ly0));
+        scheduleSave(drag.fileId);
+      }
+    } else if (drag.submode === "move") {
+      const p = new THREE.Vector3();
+      if (drag.plane && ray.ray.intersectPlane(drag.plane, p)) {
         if (drag.gx0 != null) {
           rec.holder.position.x = drag.pos0.x + (p.x - drag.gx0);
           rec.holder.position.z = drag.pos0.z + (p.z - drag.gz0);
@@ -1531,6 +1572,14 @@ export function createXRFiles(opts) {
       return true;
     }
     const rax = dead(ax), rayY = dead(ay);
+    if (adjust.submode === "move") {
+      /* 移动模式下右摇杆上下 = 升降（推上 = 升高）；左右留给 45° 转身 */
+      if (rayY) {
+        rec.holder.position.y = clampLiftY(rec, rec.holder.position.y - rayY * dt * 0.6);
+        scheduleSave(adjust.fileId);
+      }
+      return !!rayY;
+    }
     if (adjust.submode === "rotate" && rax) {
       rec.holder.rotation.y -= rax * dt * 0.9;
       scheduleSave(adjust.fileId);
@@ -1627,6 +1676,9 @@ export function createXRFiles(opts) {
     if (disposed) return;
     disposed = true;
     if (pollTimer) clearInterval(pollTimer);
+    window.removeEventListener("keydown", onShiftKey);
+    window.removeEventListener("keyup", onShiftKey);
+    window.removeEventListener("blur", onShiftBlur);
     for (const tm of Array.from(saveTimers.values())) clearTimeout(tm);
     saveTimers.clear();
     for (const id of Array.from(worldRecs.keys())) removeWorld(id);
@@ -1651,7 +1703,7 @@ export function createXRFiles(opts) {
   return {
     group, openPanel, closePanel, isOpen,
     handlePick, beginDrag, dragMove, dragEnd, xrJoystick,
-    scrollPanelContentBy, hoverPanel, adjusting, exitAdjust, escStack,
+    scrollPanelContentBy, hoverPanel, adjusting, exitAdjust, escStack, liftByWheel,
     tick, dispose,
     /* __xrDebug 验证面：构造射线 / 读内部状态（不进正式交互路径） */
     _dbg: {

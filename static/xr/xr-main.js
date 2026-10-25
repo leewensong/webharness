@@ -732,7 +732,7 @@ export async function createXR(ctx) {
       group: new THREE.Group(), openPanel: noop, closePanel: noop, isOpen: () => false,
       handlePick: () => false, beginDrag: () => null, dragMove: noop, dragEnd: noop,
       xrJoystick: () => false, scrollPanelContentBy: () => false, hoverPanel: () => false,
-      adjusting: () => false, exitAdjust: noop, escStack: () => false, tick: noop, dispose: noop,
+      adjusting: () => false, exitAdjust: noop, escStack: () => false, liftByWheel: () => false, tick: noop, dispose: noop,
     };
   }
   const filesBtn = hud.querySelector('[data-act="files"]');
@@ -1302,7 +1302,9 @@ export async function createXR(ctx) {
   renderer.domElement.addEventListener("wheel", (e) => {
     e.preventDefault();
     try {
-      if (files.hoverPanel(pointerRay(e))) { files.scrollPanelContentBy(e.deltaY * 0.6); return; }
+      const wr = pointerRay(e);
+      if (files.liftByWheel(wr, e.deltaY)) return; /* 调整模型（移动模式）时指着它滚轮 = 升降 */
+      if (files.hoverPanel(wr)) { files.scrollPanelContentBy(e.deltaY * 0.6); return; }
     } catch (err) {}
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     camera.position.addScaledVector(dir, -e.deltaY * 0.0022);

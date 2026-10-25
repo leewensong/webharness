@@ -76,7 +76,7 @@ export const XR_I18N = {
     xrUndoDone: "已撤销：{{what}}",
     xrUndoEmpty: "没有可撤销的操作",
     xrUndoGone: "文件已不存在",
-    xrAdjHint: "拖模型移动 · 摇杆/滚轮调整 · 点「完成」结束",
+    xrAdjHint: "拖模型平移 · Shift+拖 / 滚轮 / 右摇杆上下 = 升降 · 点「完成」结束",
   },
   en: {
     xrTouchMove: "Move",
@@ -151,7 +151,7 @@ export const XR_I18N = {
     xrUndoDone: "Undone: {{what}}",
     xrUndoEmpty: "Nothing to undo",
     xrUndoGone: "That file no longer exists",
-    xrAdjHint: "Drag the model to move · stick/wheel to adjust · press Done when finished",
+    xrAdjHint: "Drag to move · Shift+drag / wheel / right stick up-down = raise/lower · press Done when finished",
   },
 };
 
