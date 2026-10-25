@@ -228,13 +228,20 @@ check "主人替名下 Agent 传头像 200" "$(curl -sS -o /dev/null -w '%{http_
 check "外人替该 Agent 传头像 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/avatar?as=$AGENT" -H "Authorization: Bearer $OTOK" -F "file=@$TMP/a.jpg")" "403"
 check "as= 指向人类账号 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/avatar?as=$OTHER" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/a.jpg")" "403"
 
-echo "== 3D 形象 =="
+echo "== 3D 形象（v2.32：直传已下线，自定义模型走资源库审核）=="
 printf 'nope' > "$TMP/bad.glb"
 python3 -c "open('$TMP/m.glb','wb').write(b'glTF\x02\x00\x00\x00' + b'\x00'*64)"
-check "非 GLB 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/bad.glb")" "400"
-check "上传 GLB 200" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/m.glb")" "200"
-check "GLB 下载类型正确" "$(curl -sS -o /dev/null -w '%{content_type}' "$URL/api/users/$HUMAN/model3d" -H "Authorization: Bearer $HTOK")" "model/gltf-binary"
-check "/api/me 读回 model3dUrl" "$(curl -sS "$URL/api/me" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;print(json.load(sys.stdin)['model3dUrl'] or '')")" "/model3d?v="
+check "直传接口已下线 405" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/m.glb")" "405"
+# 资源库上传 + 提交审核（当前秒过）→ 选用为形象
+LIBRES=$(curl -sS -X POST "$URL/api/library/resources" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/m.glb")
+LIBRID=$(printf '%s' "$LIBRES" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+LIBVID=$(printf '%s' "$LIBRES" | python3 -c "import sys,json;print(json.load(sys.stdin)['currentVersion']['id'])")
+check "draft 形象引用 409" "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"url":sys.argv[1]}))' "library:$LIBRID")")" "409"
+curl -sS -X POST "$URL/api/library/resources/$LIBRID/versions/$LIBVID/submit" -H "Authorization: Bearer $HTOK" >/dev/null
+check "提交审核后秒过 approved" "$(curl -sS "$URL/api/library/resources/$LIBRID" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;print(json.load(sys.stdin)['currentVersion']['reviewStatus'])")" "approved"
+check "选用资源库形象 200" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys;print(json.dumps({"url":sys.argv[1],"humanoid":True}))' "library:$LIBRID")" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dHumanoid'])")" "True"
+check "/api/me 读回代理 model3dUrl" "$(curl -sS "$URL/api/me" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;print(json.load(sys.stdin)['model3dUrl'] or '')")" "/model3d?v="
+check "资源库形象代理下载" "$(curl -sS -o /dev/null -w '%{content_type}' "$URL/api/users/$HUMAN/model3d" -H "Authorization: Bearer $HTOK")" "model/gltf-binary"
 check "PUT 外链并标记 ARKit+Humanoid" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"url":"https://cdn.example.com/m.glb","arkit":true,"humanoid":true}' | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dUrl'],d['model3dArkit'],d['model3dHumanoid'])")" "https://cdn.example.com/m.glb True True"
 check "改 Humanoid 标记不动外链" "$(curl -sS -X PUT "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"humanoid":false}' | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dHumanoid'],d['model3dUrl'])")" "False https://cdn.example.com/m.glb"
 check "DELETE 清空 3D" "$(curl -sS -X DELETE "$URL/api/me/model3d" -H "Authorization: Bearer $HTOK" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['model3dUrl'],d['model3dArkit'],d['model3dHumanoid'])")" "None False False"
@@ -475,17 +482,15 @@ check "非 http 外链 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH 
 check "非房主 PATCH 场景 403" "$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d '{"scene":{"kind":"none"}}')" "403"
 check "PATCH 清空场景" "$(curl -sS -X PATCH "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' -d '{"scene":{"kind":"none"}}')" '"scene":null'
+# v2.32：场景直传接口已下线，自定义场景走资源库（复用形象段已传好的资源）
 mk_glb "$TMP/room.glb" 0
-check "上传场景 GLB" "$(curl -sS -X POST "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/room.glb")" '"scene":{"kind":"file"'
+check "场景直传接口已下线 405" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/room.glb")" "405"
+check "PATCH 选资源库场景" "$(curl -sS -X PATCH "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK" -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"scene":{"kind":"library","id":sys.argv[1]}}))' "$LIBRID")")" "\"scene\":{\"kind\":\"library\",\"id\":\"$LIBRID\""
 curl -sS "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" -o "$TMP/room_dl.glb"
-check "下载场景字节一致" "$(base64 < "$TMP/room_dl.glb")" "$(base64 < "$TMP/room.glb")"
-check "场景 file URL 带版本号" "$(curl -sS "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK")" 'scene?v='
+check "下载资源库场景字节一致" "$(base64 < "$TMP/room_dl.glb")" "$(base64 < "$TMP/m.glb")"
+check "资源库场景 URL 带版本号" "$(curl -sS "$URL/api/rooms/$SCROOM" -H "Authorization: Bearer $HTOK")" 'scene?v='
 check "非成员读场景 403" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $ATOK")" "403"
-printf '{"asset":{"version":"2.0"}}' > "$TMP/room.gltf"
-check ".gltf（JSON）上传 400" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" \
-  -F "file=@$TMP/room.gltf")" "400"
-mk_glb "$TMP/big.glb" 52430000
-check "超 50MB 场景 413" "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK" -F "file=@$TMP/big.glb")" "413"
 check "DELETE 清场景" "$(curl -sS -X DELETE "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK")" '"scene":null'
 check "清空后下载 404" "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/rooms/$SCROOM/scene" -H "Authorization: Bearer $HTOK")" "404"
 

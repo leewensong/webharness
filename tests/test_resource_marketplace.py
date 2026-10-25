@@ -67,16 +67,11 @@ class ResourceMarketplaceTests(unittest.TestCase):
             headers=self.alice,
         )
         self.assertEqual(submitted.status_code, 200, submitted.text)
+        # v2.32 过渡：提交即自动通过，待审队列应为空，版本已是 approved
         queue = self.client.get("/api/admin/resource-reviews", headers=self.admin)
         self.assertEqual(queue.status_code, 200, queue.text)
-        self.assertEqual(queue.json()["reviews"][0]["id"], version_id)
-
-        approved = self.client.post(
-            f"/api/admin/resource-reviews/{version_id}",
-            headers=self.admin,
-            json={"decision": "approved", "note": "ok"},
-        )
-        self.assertEqual(approved.status_code, 200, approved.text)
+        self.assertEqual(queue.json()["reviews"], [])
+        self.assertEqual(submitted.json()["version"]["reviewStatus"], "approved")
 
         listing = self.client.post(
             f"/api/library/resources/{resource_id}/versions/{version_id}/listing",
