@@ -1230,7 +1230,12 @@ export function createXRFiles(opts) {
 
   /* ---------- 调整模式（移动 / 旋转 / 缩放 / 收起 / 撤销 / 完成） ---------- */
 
-  let adjust = null; // { fileId, submode }
+  let adjust = null; // { fileId, submode, rotRaw }
+
+  /* 旋转步进：拖动与摇杆都吸附到 5° 的倍数（rotRaw 保存摇杆的连续累计值，
+     否则每帧对已吸附值取整会吃掉增量、永远转不动） */
+  const ROT_STEP = THREE.MathUtils.degToRad(5);
+  function snapRot(a) { return Math.round(a / ROT_STEP) * ROT_STEP; }
 
   /* 升降：Shift+拖 / 滚轮 / 右摇杆上下。底边不低于地面，中心不高于 5m */
   let shiftDown = false;
@@ -1320,7 +1325,7 @@ export function createXRFiles(opts) {
     /* 记下会话开始时的位姿：退出时若确有变化，就作为一条可撤销操作入栈 */
     const file = filesCache.find((f) => f.id === fileId);
     adjBasis = file ? { fileId, before: snapshotOf(file) } : null;
-    adjust = { fileId, submode: "move" };
+    adjust = { fileId, submode: "move", rotRaw: null };
     drawAdjustBar();
     adjBarMesh.visible = true;
     const wp = rec.holder.getWorldPosition(new THREE.Vector3());
@@ -1390,7 +1395,12 @@ export function createXRFiles(opts) {
     if (adjBarMesh.visible) {
       const act = adjBarPick(ray);
       if (act) {
-        if (act === "move" || act === "rotate" || act === "scale") { adjust.submode = act; drawAdjustBar(); }
+        if (act === "move" || act === "rotate" || act === "scale") {
+          adjust.submode = act;
+          const rec0 = worldRecs.get(adjust.fileId);
+          adjust.rotRaw = act === "rotate" && rec0 ? rec0.holder.rotation.y : null;
+          drawAdjustBar();
+        }
         else if (act === "done") exitAdjust();
         else if (act === "undo") undoLast();
         else if (act === "unplace" && adjust) { const f = filesCache.find((x) => x.id === adjust.fileId); if (f) unplaceFile(f); }
@@ -1475,11 +1485,15 @@ export function createXRFiles(opts) {
           drag.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -rec.holder.position.y);
           if (ray.ray.intersectPlane(drag.plane, gp)) { drag.gx0 = gp.x; drag.gz0 = gp.z; }
         } else if (drag.submode === "rotate") {
+          /* 绕物体中心的方位角：用「过物体高度的水平面」求交。此前用过面向相机的
+             竖直平面——交点被锁在该平面内的一条直线上，角度只能停在 0/±90°，
+             手感就是「只能 90° 一跳」。 */
           const c = rec.holder.position;
-          drag.a0 = Math.atan2((ray.ray.origin.x - c.x), (ray.ray.origin.z - c.z));
-          const n = new THREE.Vector3().subVectors(camera.getWorldPosition(new THREE.Vector3()), c).setY(0);
-          if (n.lengthSq() < 1e-6) n.set(0, 0, 1); else n.normalize();
-          drag.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, c.clone());
+          drag.planeH = new THREE.Plane(new THREE.Vector3(0, 1, 0), -c.y);
+          const p = new THREE.Vector3();
+          if (ray.ray.intersectPlane(drag.planeH, p)) {
+            drag.a0 = Math.atan2(p.x - c.x, p.z - c.z);
+          }
         } else if (drag.submode === "scale") {
           const c = rec.holder.position;
           const n = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
@@ -1559,11 +1573,16 @@ export function createXRFiles(opts) {
       }
     } else if (drag.submode === "rotate") {
       const p = new THREE.Vector3();
-      if (drag.plane && ray.ray.intersectPlane(drag.plane, p)) {
+      if (drag.planeH && drag.a0 != null && ray.ray.intersectPlane(drag.planeH, p)) {
         const c = rec.holder.position;
-        if (Math.hypot(p.x - c.x, p.z - c.z) > 0.15) {
-          const a = Math.atan2(p.x - c.x, p.z - c.z);
-          rec.holder.rotation.y = drag.rot0 + (a - drag.a0);
+        const dx = p.x - c.x, dz = p.z - c.z;
+        const r = Math.hypot(dx, dz);
+        /* 交点太近（角度不稳）或太远（射线近乎平行于水平面）时跳过该帧 */
+        if (r > 0.1 && r < 40) {
+          let da = Math.atan2(dx, dz) - drag.a0;
+          while (da > Math.PI) da -= Math.PI * 2;
+          while (da < -Math.PI) da += Math.PI * 2;
+          rec.holder.rotation.y = snapRot(drag.rot0 + da); /* 5° 步进 */
           scheduleSave(drag.fileId);
         }
       }
@@ -1610,7 +1629,9 @@ export function createXRFiles(opts) {
       return !!rayY;
     }
     if (adjust.submode === "rotate" && rax) {
-      rec.holder.rotation.y -= rax * dt * 0.9;
+      if (adjust.rotRaw == null) adjust.rotRaw = rec.holder.rotation.y;
+      adjust.rotRaw -= rax * dt * 0.9;
+      rec.holder.rotation.y = snapRot(adjust.rotRaw); /* 5° 步进（连续累计值再吸附） */
       scheduleSave(adjust.fileId);
     } else if (adjust.submode === "scale" && rayY) {
       const s = THREE.MathUtils.clamp(rec.holder.scale.x * (1 - rayY * dt * 0.7), 0.05, MAX_WORLD_SCALE);
@@ -1809,6 +1830,18 @@ export function createXRFiles(opts) {
       worldPos: (id) => {
         const r = worldRecs.get(Number(id) || id);
         return r ? r.holder.getWorldPosition(new THREE.Vector3()).toArray().map((v) => +v.toFixed(3)) : null;
+      },
+      rotOf: (id) => {
+        const r = worldRecs.get(Number(id) || id);
+        return r ? { rad: +r.holder.rotation.y.toFixed(4), deg: +(r.holder.rotation.y * 180 / Math.PI).toFixed(2) } : null;
+      },
+      setSubmode: (m) => {
+        if (!adjust) return null;
+        adjust.submode = m;
+        const r = worldRecs.get(adjust.fileId);
+        adjust.rotRaw = m === "rotate" && r ? r.holder.rotation.y : null;
+        drawAdjustBar();
+        return adjust.submode;
       },
       canvasInfo: () => ({ w: canvas.width, h: canvas.height, head: canvas.toDataURL("image/png").slice(0, 64) }),
       forceDraw: () => drawPanel(),
