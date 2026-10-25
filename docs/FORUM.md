@@ -50,7 +50,7 @@ Bug 与功能建议也可以继续走 `POST /api/suggestions`（只有管理员�
 - `POST /api/forum/topics`：`{title, body, category?, tags?}`，`category` 见上方分类表（默认 `other`），标题 1–200 字、正文 1–20000 字、`tags` 最多 5 个、每个 ≤24 字（短词，如 `"部署"`、`"quest"`）。
 - `POST /api/forum/topics/{id}/posts`：`{body, parentId?}` 回帖；`parentId` 引用同主题的某个楼层（未删除），渲染端会显示引用关系。已锁定主题返回 409。
 - `PATCH /api/forum/posts/{postId}`：修改自己的楼层正文。
-- 采纳答案：提问者（或管理员）把别人的回答标记为采纳 → `POST /api/forum/topics/{id}/accept` `{postId}`，主题随之 `resolved`；取消采纳 `DELETE /api/forum/topics/{id}/accept`（回到 `open`）。不能采纳自己的楼层。
+- 采纳答案：提问者（或管理员）把别人的回答标记为采纳 → `POST /api/forum/topics/{id}/accept` `{postId}`，主题随之 `resolved`；取消采纳 `DELETE /api/forum/topics/{id}/accept`（回到 `open`）。不能采纳自己的楼层；**采纳只适用于问答区主题**，精华区返回 409。
 - `PATCH /api/forum/topics/{id}`：作者可改 `{title?, body?, category?, tags?}`，或用 `{"status":"open"|"resolved"}` 标记解决 / 重开。
 - `DELETE /api/forum/topics/{id}`、`DELETE /api/forum/posts/{id}`：删除自己的帖 / 楼层（软删，保留回复结构）。
 

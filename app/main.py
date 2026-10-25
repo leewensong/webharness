@@ -281,7 +281,8 @@ async def _static_no_cache(request: Request, call_next):
     缓存、发版后继续用旧 JS（如 3D 模块 import 无版本参数）。文件都小，代价可忽略。"""
     resp = await call_next(request)
     p = request.url.path
-    if p == "/" or p.startswith("/static") or p.startswith("/guide"):
+    if (p == "/" or p.startswith("/static") or p.startswith("/guide")
+            or p in ("/forum", "/forum.md", "/skill.md")):
         resp.headers["Cache-Control"] = "no-cache"
     return resp
 
@@ -590,7 +591,6 @@ ForumBoard = Literal["qna", "showcase"]
 # 主题状态：open 讨论中 / resolved 已解决（提问者或管理员可标）/ locked 锁定
 # （仅管理员可锁定/解锁，锁定后无人可回复）
 ForumTopicStatus = Literal["open", "resolved", "locked"]
-ForumBoardQuery = Literal["qna", "showcase"]
 # 主题分类（固定枚举，每帖恰好一个；与自由标签 tags 互补）。顺序即页面展示顺序。
 FORUM_CATEGORIES: dict[str, dict[str, str]] = {
     "bug": {"zh": "Bug 汇报", "en": "Bug report",
@@ -620,7 +620,7 @@ class ForumTopicCreate(BaseModel):
     title: str = Field(min_length=1, max_length=FORUM_MAX_TITLE)
     body: str = Field(min_length=1, max_length=FORUM_MAX_BODY)
     tags: list[str] = Field(default_factory=list, max_length=FORUM_MAX_TAGS)
-    # 管理员沉淀建议为精华帖时登记来源建议；非管理员传入会被忽略
+    # 管理员沉淀建议为精华帖时登记来源建议；非管理员传入返回 403
     suggestionId: int | None = Field(default=None, ge=1)
     curatorNote: str | None = Field(default=None, max_length=5000)
 
@@ -2358,10 +2358,9 @@ FORUM_TOPIC_SELECT = """
 """
 
 
-def _forum_get_topic(conn, topic_id: int, *, include_deleted: bool = False):
-    sql = FORUM_TOPIC_SELECT + " WHERE t.id = ?"
-    row = conn.execute(sql, (topic_id,)).fetchone()
-    if not row or (row["deleted_at"] and not include_deleted):
+def _forum_get_topic(conn, topic_id: int):
+    row = conn.execute(FORUM_TOPIC_SELECT + " WHERE t.id = ?", (topic_id,)).fetchone()
+    if not row or row["deleted_at"]:
         return None
     return row
 
@@ -2615,8 +2614,8 @@ def delete_forum_topic(topic_id: int, user: CurrentUser):
         if not row:
             raise HTTPException(status_code=404, detail="主题不存在")
         _forum_require_topic_manage(row, user)
-        if not user["isSuperadmin"] and row["board"] == "showcase":
-            raise HTTPException(status_code=403, detail="精华区主题仅超级管理员可删除")
+        if not user["isSuperadmin"] and (row["board"] == "showcase" or row["status"] == "locked"):
+            raise HTTPException(status_code=403, detail="精华区或已锁定的主题仅超级管理员可删除")
         conn.execute(
             "UPDATE forum_topics SET deleted_at = datetime('now'),"
             " updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
@@ -2730,6 +2729,8 @@ def accept_forum_post(topic_id: int, body: ForumAcceptBody, user: CurrentUser):
         if not topic:
             raise HTTPException(status_code=404, detail="主题不存在")
         _forum_require_topic_manage(topic, user)
+        if topic["board"] != "qna":
+            raise HTTPException(status_code=409, detail="精华区主题不支持采纳标记")
         if topic["status"] == "locked":
             raise HTTPException(status_code=409, detail="主题已锁定")
         post = conn.execute(
@@ -2754,6 +2755,8 @@ def unaccept_forum_post(topic_id: int, user: CurrentUser):
         if not topic:
             raise HTTPException(status_code=404, detail="主题不存在")
         _forum_require_topic_manage(topic, user)
+        if topic["board"] != "qna":
+            raise HTTPException(status_code=409, detail="精华区主题不支持采纳标记")
         if topic["status"] == "locked":
             raise HTTPException(status_code=409, detail="主题已锁定")
         conn.execute(

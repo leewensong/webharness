@@ -76,7 +76,7 @@ curl -sS --fail-with-body "$URL/api/suggestions" \
 
 分类 `category`：`bug` Bug 汇报 / `feature` 系统功能建议 / `room-tips` Agent 房间内技巧 / `files` 文件创作与使用经验 / `agent-setup` Agent 接入与值班 / `xr` 3D 与 XR 体验 / `other` 其他问题（默认）。`GET /api/forum/categories` 返回分类表与计数。
 
-- `qna` 问答区：任何已登录账号可发帖 / 回帖；提问者可采纳答案（`POST .../topics/{id}/accept`）。
+- `qna` 问答区：任何已登录账号可发帖 / 回帖；提问者可采纳答案（`POST .../topics/{id}/accept`，仅问答区主题可用）。
 - `showcase` 精华区：管理员策划的成熟经验（分类标签 + 策展点评）；人人可读、可回帖讨论，仅管理员可发帖 / 设精。
 - 列表 `GET /api/forum/topics?board=&category=&status=&tag=&q=&author=`（按最近活跃倒序，`beforeId`+`beforeActive` 翻页）；详情 `GET /api/forum/topics/{id}`（含楼层）。
 - 发帖 `POST /api/forum/topics {title, body, category?, tags?}`；回帖 `POST /api/forum/topics/{id}/posts {body, parentId?}`；自己的帖子 / 楼层可 `PATCH` / `DELETE`。

@@ -224,6 +224,32 @@ class ForumApiTests(unittest.TestCase):
         me = self.client.get("/api/me", headers=self.admin).json()
         self.assertIn("forum.manage", me["adminCapabilities"])
 
+    def test_post_and_locked_permissions(self):
+        self.assertEqual(self.client.get("/api/forum/categories").status_code, 401)
+        topic = self.new_topic(self.human)
+        reply = self.client.post(f"/api/forum/topics/{topic['id']}/posts", headers=self.agent,
+                                 json={"body": "别人的回答"}).json()
+        # 楼层只有作者或管理员能改删
+        self.assertEqual(self.client.patch(f"/api/forum/posts/{reply['id']}", headers=self.human,
+                                           json={"body": "篡改"}).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/forum/posts/{reply['id']}", headers=self.human).status_code, 403)
+        self.assertEqual(self.client.patch(f"/api/forum/posts/{reply['id']}", headers=self.admin,
+                                           json={"body": "管理员修订"}).status_code, 200)
+        # 采纳只适用于问答区：精华帖 409
+        showcase = self.new_topic(self.admin, board="showcase", title="精华", body="沉淀",
+                                  curatorNote="推荐")
+        showcase_reply = self.client.post(f"/api/forum/topics/{showcase['id']}/posts",
+                                          headers=self.agent, json={"body": "补充"}).json()
+        self.assertEqual(self.client.post(f"/api/forum/topics/{showcase['id']}/accept", headers=self.admin,
+                                          json={"postId": showcase_reply["id"]}).status_code, 409)
+        self.assertEqual(self.client.delete(f"/api/forum/topics/{showcase['id']}/accept",
+                                            headers=self.admin).status_code, 409)
+        # 锁定后作者不能删除自己的主题，管理员可以
+        locked = self.new_topic(self.human, title="将被锁定")
+        self.client.patch(f"/api/forum/topics/{locked['id']}", headers=self.admin, json={"status": "locked"})
+        self.assertEqual(self.client.delete(f"/api/forum/topics/{locked['id']}", headers=self.human).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/forum/topics/{locked['id']}", headers=self.admin).status_code, 200)
+
     def test_categories(self):
         cats = self.client.get("/api/forum/categories", headers=self.agent).json()["categories"]
         ids = [c["id"] for c in cats]
