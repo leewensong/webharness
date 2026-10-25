@@ -186,6 +186,24 @@
     .av-model-card.on { border-color: var(--accent, #6f8cff); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #6f8cff) 40%, transparent); }
     .av-model-card img { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; background: #0e1420; }
     .av-model-card span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lib-pv-wrap { display: flex; gap: 12px; align-items: center; margin: 4px 0 10px; }
+    .lib-pv { width: 112px; height: 112px; flex: none; border-radius: 14px; border: 1px dashed var(--line);
+      display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px;
+      text-align: center; overflow: hidden; background: #0e1420; }
+    .lib-pv img { width: 100%; height: 100%; object-fit: contain; }
+    .lib-pv-side { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; min-width: 0; }
+    .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; margin: 4px 0 8px; max-height: 220px; overflow-y: auto; }
+    .lib-card { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px; border-radius: 10px;
+      background: var(--panel, #1b2230); border: 1px solid var(--border, #2b3446); font-size: 11px; line-height: 1.2; cursor: pointer; color: inherit; }
+    .lib-card:hover { border-color: var(--accent, #6f8cff); }
+    .lib-card.on { border-color: var(--accent, #6f8cff); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #6f8cff) 40%, transparent); }
+    .lib-card .lib-thumb { width: 64px; height: 64px; border-radius: 8px; background: #0e1420; display: flex; align-items: center; justify-content: center; font-size: 22px; overflow: hidden; }
+    .lib-card .lib-thumb img { width: 100%; height: 100%; object-fit: contain; }
+    .lib-card .lib-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lib-card .badge { font-size: 10px; }
+    .lib-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 8px; }
+    .lib-adv { margin: 4px 0 8px; }
+    .lib-adv summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
     #who { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     #who:hover .who-name { color: var(--accent); }
     .agent-row .who-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -871,25 +889,26 @@
     <label data-i18n="model3dBuiltinLabel">选一个内置形象</label>
     <input id="avModelSearch" oninput="filterAvatarModels('avModelGrid')" data-i18n-placeholder="avatarSearchPlaceholder" placeholder="搜索形象…" />
     <div class="av-model-grid" id="avModelGrid"></div>
-    <p class="hint" style="white-space:normal;margin:0 0 6px" data-i18n="myModelOwnHint">也可以用自己的模型：先从「我的资源库」上传并过审，再在这里选用；或填外链地址。</p>
-    <label data-i18n="model3dLibraryLabel">从资源库选择（须已通过审核）</label>
-    <div class="agent-list" id="avLibraryList" style="max-height:160px;overflow:auto;margin:0 0 6px"></div>
-    <p class="hint" style="margin:0 0 6px"><a href="javascript:void(0)" onclick="closeAvatarPicker();openResources()" data-i18n="model3dLibraryUploadLink">去资源库上传新模型 →</a></p>
-    <div class="avatar-pick">
-      <div id="avModelPh" class="file-ph">未选择</div>
-      <div class="avatar-pick-actions">
+    <label data-i18n="model3dLibraryLabel">我的模型（来自资源库）</label>
+    <div class="lib-pv-wrap">
+      <div class="lib-pv" id="avPreview"></div>
+      <div class="lib-pv-side">
+        <div class="hint" id="avPreviewName" style="white-space:normal"></div>
         <button type="button" class="btn ghost small" id="avModelClear" onclick="avClearOwn()" data-i18n="avatarReset">清除</button>
-        <span class="hint" data-i18n="model3dFileHint">选用资源库模型或填外链；不选则不设 3D 形象</span>
       </div>
     </div>
-    <label for="avModelUrl" data-i18n="model3dUrlLabelShort">或外链地址</label>
-    <input id="avModelUrl" placeholder="https://…/avatar.vrm" />
-    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
-      <input type="checkbox" id="avArkit" style="width:auto;margin:0" onchange="avFlagChanged()" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
-      <input type="checkbox" id="avHumanoid" style="width:auto;margin:0" onchange="avFlagChanged()" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
-    </label>
+    <div id="avLibPicker"></div>
+    <details class="lib-adv">
+      <summary data-i18n="model3dAdvSummary">外链地址与能力标记</summary>
+      <label for="avModelUrl" data-i18n="model3dUrlLabelShort">或外链地址</label>
+      <input id="avModelUrl" placeholder="https://…/avatar.vrm" />
+      <label style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
+        <input type="checkbox" id="avArkit" style="width:auto;margin:0" onchange="avFlagChanged()" /> <span data-i18n="model3dArkitLabel">支持 Apple ARKit 52 表情</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin:0 0 6px">
+        <input type="checkbox" id="avHumanoid" style="width:auto;margin:0" onchange="avFlagChanged()" /> <span data-i18n="model3dHumanoidLabel">支持 Unity Humanoid 全身骨骼</span>
+      </label>
+    </details>
     <p class="msg-status" id="avStatus"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" onclick="closeAvatarPicker()" data-i18n="close">关闭</button>
@@ -931,10 +950,9 @@
     <select id="editScene" onchange="onEditSceneChange()">
       <option value="" data-i18n="sceneNone">不使用场景（展厅）</option>
     </select>
-    <label for="editSceneLibrary" data-i18n="sceneLibraryLabel">或从资源库选择（须已过审模型）</label>
-    <select id="editSceneLibrary">
-      <option value="" data-i18n="sceneLibraryNone">不使用资源库场景</option>
-    </select>
+    <label data-i18n="sceneLibraryLabel">我的模型（来自资源库）</label>
+    <p class="hint" id="editScenePickState" style="white-space:normal;margin:0 0 6px"></p>
+    <div id="editScenePicker"></div>
     <input id="editSceneUrl" data-i18n-placeholder="sceneUrlPlaceholder" placeholder="https://…/room.glb" />
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0 0">
       <button type="button" class="btn ghost small" onclick="clearSceneNow()" data-i18n="sceneClear">清除场景</button>
@@ -1175,10 +1193,9 @@
       <option value="" data-i18n="sceneNone">不使用场景（展厅）</option>
     </select>
     <div class="hint hidden" id="nrSceneHint" style="white-space:normal;margin:4px 0 0"></div>
-    <label for="nrSceneLibrary" data-i18n="sceneLibraryLabel">或从资源库选择（须已过审模型）</label>
-    <select id="nrSceneLibrary">
-      <option value="" data-i18n="sceneLibraryNone">不使用资源库场景</option>
-    </select>
+    <label data-i18n="sceneLibraryLabel">我的模型（来自资源库）</label>
+    <p class="hint" id="nrScenePickState" style="white-space:normal;margin:0 0 6px"></p>
+    <div id="nrScenePicker"></div>
     <label for="nrSceneUrl" data-i18n="sceneUrlLabel">或外链场景地址（可选）</label>
     <input id="nrSceneUrl" data-i18n-placeholder="sceneUrlPlaceholder" placeholder="https://…/room.glb" />
     <p class="hint" style="white-space:normal;margin:4px 0 0" data-i18n="sceneFileHint">场景三选一：资源库模型、外链、内置，按此顺序取最先填的一项。</p>
@@ -1452,6 +1469,15 @@
         avatarDlgTitle: "设置 3D 替身",
         avatarSetBtn: "设置",
         avatarPendingHint: "已选择，保存后生效",
+        model3dLibraryLabel: "我的模型（来自资源库）",
+        model3dAdvSummary: "外链地址与能力标记",
+        libPickUpload: "上传新模型",
+        libPickManage: "管理资源库",
+        libPickSubmit: "提交审核",
+        libPickUploaded: "已上传并提交审核",
+        libPickPreviewEmpty: "暂无预览",
+        libPickPreviewLoading: "生成预览中…",
+        libPickNotUsable: "审核通过后可选用",
         myProfileTitle: "个人设置",
         timeZoneTitle: "时间显示", tzBrowser: "跟随浏览器时区（缺省）", tzAsia: "固定北京时间", timeZoneHint: "消息时间随此选项显示；切换后需刷新页面生效",
         myModelLabel: "3D 形象",
@@ -1598,8 +1624,10 @@
         sceneHintFile: "「清除场景」立即生效；选内置 / 资源库 / 外链后点「保存」生效。",
         sceneOptionFmt: "{{name}}（{{n}} 座）",
         sceneCurrentFile: "已上传的场景文件",
-        sceneLibraryLabel: "或从资源库选择（须已过审模型）",
-        sceneLibraryNone: "不使用资源库场景",
+        sceneLibraryLabel: "我的模型（来自资源库）",
+        sceneLibraryNone: "未选择资源库模型",
+        scenePicked: "已选用资源库模型",
+        sceneClearPick: "取消选择",
         sceneStateLibrary: "当前：资源库模型 #{id}",
         libraryModelEmpty: "资源库里还没有模型；先去「我的资源库」上传并提交审核。",
         libraryUseAsAvatar: "选用",
@@ -1825,6 +1853,15 @@
         avatarDlgTitle: "Set 3D avatar",
         avatarSetBtn: "Set",
         avatarPendingHint: "Chosen — applies when you save",
+        model3dLibraryLabel: "My models (from library)",
+        model3dAdvSummary: "External URL & capability flags",
+        libPickUpload: "Upload model",
+        libPickManage: "Manage library",
+        libPickSubmit: "Submit for review",
+        libPickUploaded: "Uploaded and submitted for review",
+        libPickPreviewEmpty: "No preview",
+        libPickPreviewLoading: "Rendering preview…",
+        libPickNotUsable: "Usable once approved",
         myProfileTitle: "Personal settings",
         timeZoneTitle: "Time display", tzBrowser: "Follow browser timezone (default)", tzAsia: "Fixed Beijing time", timeZoneHint: "Message times follow this option; reload the page after switching",
         myModelLabel: "3D avatar",
@@ -1971,8 +2008,10 @@
         sceneHintFile: "\"Clear scene\" applies immediately; built-in / library / URL apply on Save.",
         sceneOptionFmt: "{{name}} ({{n}} seats)",
         sceneCurrentFile: "Uploaded scene file",
-        sceneLibraryLabel: "Or pick from my library (approved models)",
-        sceneLibraryNone: "No library scene",
+        sceneLibraryLabel: "My models (from library)",
+        sceneLibraryNone: "No library model selected",
+        scenePicked: "Library model selected",
+        sceneClearPick: "clear",
         sceneStateLibrary: "Current: library model #{id}",
         libraryModelEmpty: "No models in your library yet — upload one in My Library and submit it for review first.",
         libraryUseAsAvatar: "Use",
@@ -2892,9 +2931,19 @@
       el.title = text;
     }
 
+    const libPickers = {};
+    function setAvStatus(text, ok) {
+      const el = $("avStatus");
+      el.textContent = text || "";
+      el.classList.toggle("ok", !!ok);
+    }
+
     function avSyncState() {
       $("avModelState").textContent = avStateText(avDlg.currentUrl);
       markAvatarModelPicked("avModelGrid", avDlg.currentUrl);
+      const libId = libRefId(avDlg.currentUrl) ?? (/^\/api\//.test(avDlg.currentUrl || "") ? avDlg.libId : null);
+      document.querySelectorAll("#avLibPicker .lib-card").forEach((c) => c.classList.toggle("on", Number(c.dataset.id) === libId));
+      showModelPreview($("avPreview"), $("avPreviewName"), avDlg.currentUrl);
     }
 
     /* 暂存模式回到父弹窗时，那一行要显示的文字 */
@@ -2909,49 +2958,162 @@
       const o = opts || {};
       avDlg.mode = mode;
       avDlg.currentUrl = o.currentUrl || "";
-      $("avStatus").textContent = "";
-      $("avModelPh").textContent = o.fileName || t("avatarEmpty");
+      setAvStatus("");
       $("avModelUrl").value = /^https?:/i.test(avDlg.currentUrl) ? avDlg.currentUrl : "";
       $("avArkit").checked = !!o.arkit;
       $("avHumanoid").checked = !!o.humanoid;
       $("avModelSearch").value = "";
-      $("avModelClear").classList.toggle("hidden", mode !== "self");
+      $("avModelClear").classList.toggle("hidden", mode !== "self" && !avDlg.currentUrl);
       $("avatarDlg").showModal();
+      mountLibraryPicker("avLibPicker", {
+        selectedId: libRefId(avDlg.currentUrl),
+        onPick: (id, name) => avPickLibrary(id, name),
+        onStatus: (text) => { $("avStatus").textContent = text; },
+      });
       await renderAvatarModelPicker("avModelGrid", avDlg.currentUrl, avPick, "avModelSearch");
       avSyncState();
-      loadAvatarLibraryList();
     }
 
-    /* v2.32：形象只可来自内置 / 资源库已过审模型 / 外链。直接上传已下线。 */
-    async function loadAvatarLibraryList() {
-      const box = $("avLibraryList");
-      box.innerHTML = `<div class="hint">${escapeHtml(t("loading"))}</div>`;
+    /* ---------- 可复用：资源库模型选择器（缩略图网格 + 上传 + 提审 + 预览） ----------
+       mountLibraryPicker(boxId, {selectedId, onPick(id,name), onStatus(text)})。
+       只列 kind=model 的资源；已过审可点选，未过审显示「提交审核」。 */
+    const modelThumbCache = new Map();   // 缓存 key → dataURL 或 ""（失败）
+
+    function libRefId(url) {
+      const m = /^library:(\d+)$/.exec(url || "");
+      return m ? Number(m[1]) : null;
+    }
+
+    function authBlob(u) {
+      return fetch(u, { headers: store.token ? { Authorization: "Bearer " + store.token } : {} })
+        .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); });
+    }
+
+    async function modelThumb(url) {
+      if (modelThumbCache.has(url)) return modelThumbCache.get(url);
+      let data = "";
+      try {
+        const mod = await import("/static/model-preview.js");
+        data = (await mod.renderModelPreview(url, { getBlob: authBlob })) || "";
+      } catch { data = ""; }
+      modelThumbCache.set(url, data);
+      return data;
+    }
+
+    /* 预览区：builtin 用目录缩略图；资源库代理/外链用 three 离屏渲染 */
+    async function showModelPreview(box, nameEl, url) {
+      if (!box) return;
+      const token = (box.dataset.pvToken = String(Date.now() + Math.random()));
+      box.replaceChildren();
+      if (!url) {
+        box.textContent = t("libPickPreviewEmpty");
+        if (nameEl) nameEl.textContent = avStateText("");
+        return;
+      }
+      if (nameEl) nameEl.textContent = describeModel3d(url);
+      const builtin = builtinAvatarIdOf(url);
+      let src = "";
+      if (builtin) {
+        const a = avatarModelCache.find((x) => x.id === builtin);
+        src = a ? a.thumbnail : "";
+      } else {
+        box.textContent = t("libPickPreviewLoading");
+        const target = libRefId(url) ? `/api/library/resources/${libRefId(url)}/versions/current/content` : url;
+        let fetchUrl = target;
+        if (libRefId(url)) {
+          try {
+            const r = await api(`/api/library/resources/${libRefId(url)}`);
+            const cv = r.currentVersion;
+            fetchUrl = cv ? `/api/library/resources/${r.id}/versions/${cv.id}/content` : "";
+          } catch { fetchUrl = ""; }
+        }
+        src = fetchUrl ? await modelThumb(fetchUrl) : "";
+      }
+      if (box.dataset.pvToken !== token) return;
+      box.replaceChildren();
+      if (src) { const img = document.createElement("img"); img.src = src; box.appendChild(img); }
+      else box.textContent = builtin ? "🧊" : t("libPickPreviewEmpty");
+    }
+
+    async function mountLibraryPicker(boxId, opts) {
+      const box = $(boxId);
+      if (!box) return;
+      libPickers[boxId] = opts;
+      box.innerHTML = `<div class="lib-bar">
+          <button type="button" class="btn ghost small" data-lp="upload">${escapeHtml(t("libPickUpload"))}</button>
+          <button type="button" class="btn ghost small" data-lp="manage">${escapeHtml(t("libPickManage"))}</button>
+          <input type="file" class="hidden" accept=".glb,.gltf,.vrm" data-lp="file" />
+        </div><div class="lib-grid" data-lp="grid"><div class="hint">${escapeHtml(t("loading"))}</div></div>`;
+      const file = box.querySelector('[data-lp="file"]');
+      box.querySelector('[data-lp="upload"]').addEventListener("click", () => file.click());
+      box.querySelector('[data-lp="manage"]').addEventListener("click", () => {
+        if (opts.onManage) { opts.onManage(); return; }
+        closeAvatarPicker();
+        openResources();
+      });
+      file.addEventListener("change", () => libPickerUpload(boxId, file));
+      await refreshLibraryPicker(boxId);
+    }
+
+    async function refreshLibraryPicker(boxId) {
+      const box = $(boxId);
+      const opts = libPickers[boxId] || {};
+      const grid = box && box.querySelector('[data-lp="grid"]');
+      if (!grid) return;
       try {
         const data = await api("/api/library/resources");
         const models = (data.resources || []).filter((r) => r.status === "active" && r.currentVersion && r.currentVersion.kind === "model");
-        if (!models.length) {
-          box.innerHTML = `<div class="hint">${escapeHtml(t("libraryModelEmpty"))}</div>`;
-          return;
-        }
-        box.innerHTML = models.map((r) => {
-          const cur = r.currentVersion;
-          const usable = cur.reviewStatus === "approved" && cur.scanStatus === "clean";
-          const status = resourceReviewLabel(cur.reviewStatus);
-          return `<div class="agent-row">
-            <span><strong>${escapeHtml(r.name)}</strong>
-              <span class="badge ${usable ? "" : "off"}">${escapeHtml(t(status))}</span>
-              <small class="hint">${fmtSize(cur.size)}</small></span>
-            ${usable
-              ? `<button class="btn ghost small" data-av-library="${r.id}" data-av-library-name="${escapeHtml(r.name)}">${escapeHtml(t("libraryUseAsAvatar"))}</button>`
-              : `<span class="hint">${escapeHtml(t("libraryAwaitingReview"))}</span>`}
-          </div>`;
+        if (!models.length) { grid.innerHTML = `<div class="hint">${escapeHtml(t("libraryModelEmpty"))}</div>`; return; }
+        grid.innerHTML = models.map((r) => {
+          const cv = r.currentVersion;
+          const usable = cv.reviewStatus === "approved" && cv.scanStatus === "clean";
+          const badge = usable ? "" : `<span class="badge off">${escapeHtml(resourceReviewLabel(cv.reviewStatus))}</span>`;
+          const action = !usable && (cv.reviewStatus === "draft" || cv.reviewStatus === "rejected")
+            ? `<button type="button" class="btn ghost small" data-lp-submit="${r.id}" data-lp-ver="${cv.id}">${escapeHtml(t("libPickSubmit"))}</button>` : "";
+          return `<div class="lib-card ${r.id === opts.selectedId ? "on" : ""}" data-id="${r.id}" data-name="${escapeHtml(r.name)}" data-usable="${usable ? 1 : 0}" title="${escapeHtml(usable ? r.name : t("libPickNotUsable"))}">
+            <div class="lib-thumb">🧊</div><span class="lib-name">${escapeHtml(r.name)}</span>${badge}${action}</div>`;
         }).join("");
-        box.querySelectorAll("[data-av-library]").forEach((btn) => btn.addEventListener("click", () => avPickLibrary(Number(btn.dataset.avLibrary), btn.dataset.avLibraryName)));
-      } catch (err) { box.textContent = err.message || String(err); }
+        grid.querySelectorAll(".lib-card").forEach((card) => {
+          const url = `/api/library/resources/${card.dataset.id}/versions/${models.find((m) => m.id === Number(card.dataset.id)).currentVersion.id}/content`;
+          modelThumb(url).then((src) => {
+            if (!src) return;
+            const img = document.createElement("img"); img.src = src;
+            card.querySelector(".lib-thumb").replaceChildren(img);
+          });
+          card.addEventListener("click", (ev) => {
+            if (ev.target.closest("[data-lp-submit]") || card.dataset.usable !== "1") return;
+            if (opts.onPick) opts.onPick(Number(card.dataset.id), card.dataset.name);
+          });
+        });
+        grid.querySelectorAll("[data-lp-submit]").forEach((btn) => btn.addEventListener("click", async (ev) => {
+          ev.stopPropagation();
+          try {
+            await api(`/api/library/resources/${btn.dataset.lpSubmit}/versions/${btn.dataset.lpVer}/submit`, { method: "POST" });
+            await refreshLibraryPicker(boxId);
+          } catch (err) { if (opts.onStatus) opts.onStatus(err.message || String(err)); }
+        }));
+      } catch (err) { grid.textContent = err.message || String(err); }
+    }
+
+    async function libPickerUpload(boxId, input) {
+      const opts = libPickers[boxId] || {};
+      const f = input.files && input.files[0];
+      input.value = "";
+      if (!f) return;
+      try {
+        const form = new FormData();
+        form.append("file", f);
+        form.append("name", f.name);
+        const res = await api("/api/library/resources", { method: "POST", body: form });
+        await api(`/api/library/resources/${res.id}/versions/${res.currentVersion.id}/submit`, { method: "POST" });
+        if (opts.onStatus) opts.onStatus(t("libPickUploaded"));
+        await refreshLibraryPicker(boxId);
+      } catch (err) { if (opts.onStatus) opts.onStatus(err.message || String(err)); }
     }
 
     async function avPickLibrary(resourceId, name) {
       const ref = `library:${resourceId}`;
+      avDlg.libId = resourceId;
       if (avDlg.mode === "self") {
         try {
           await api("/api/me/model3d", {
@@ -2961,7 +3123,7 @@
           await refreshMyProfile();
           avDlg.currentUrl = store.model3dUrl || "";
           avSyncState();
-          $("avStatus").textContent = tf("avatarModelPicked", { name });
+          setAvStatus(tf("avatarModelPicked", { name }), true);
         } catch (err) { $("avStatus").textContent = err.message; }
         return;
       }
@@ -2990,7 +3152,7 @@
       avPending.clear = false;
       avDlg.currentUrl = ref;
       avSyncState();
-      $("avStatus").textContent = t("avatarPendingHint");
+      setAvStatus(t("avatarPendingHint"), true);
     }
 
     function closeAvatarPicker() {
@@ -3069,7 +3231,7 @@
       avPending.clear = false;
       avDlg.currentUrl = url;
       avSyncState();
-      $("avStatus").textContent = t("avatarPendingHint");
+      setAvStatus(t("avatarPendingHint"), true);
     }
 
     async function avSaveOwn() {
@@ -3083,7 +3245,7 @@
           await refreshMyProfile();
           avDlg.currentUrl = store.model3dUrl || "";
           avSyncState();
-          $("avStatus").textContent = t("model3dUploaded");
+          setAvStatus(t("model3dUploaded"), true);
         } catch (err) { $("avStatus").textContent = err.message; }
         return;
       }
@@ -3095,7 +3257,7 @@
       avPending.humanoid = $("avHumanoid").checked;
       avDlg.currentUrl = url;
       avSyncState();
-      $("avStatus").textContent = t("avatarPendingHint");
+      setAvStatus(t("avatarPendingHint"), true);
     }
 
     async function avClearOwn() {
@@ -3103,11 +3265,10 @@
         try {
           await api("/api/me/model3d", { method: "DELETE" });
           $("avModelUrl").value = "";
-          $("avModelPh").textContent = t("avatarEmpty");
           avDlg.currentUrl = "";
           await refreshMyProfile();
           avSyncState();
-          $("avStatus").textContent = t("model3dStateNone");
+          setAvStatus(t("model3dStateNone"), true);
         } catch (err) { $("avStatus").textContent = err.message; }
         return;
       }
@@ -3117,7 +3278,7 @@
       avPending.url = "";
       avDlg.currentUrl = "";
       avSyncState();
-      $("avStatus").textContent = t("avatarPendingHint");
+      setAvStatus(t("avatarPendingHint"), true);
     }
 
     async function onProfileAvatarPick(event) {
@@ -3826,14 +3987,13 @@
       $("nrPassword").value = "";
       $("nrRules").value = "";
       $("nrSceneUrl").value = "";
-      $("nrSceneLibrary").value = "";
       $("newRoomStatus").textContent = "";
       $("newRoom").showModal();
       setTimeout(() => $("nrName").focus(), 0);
       await fillRoomAgentSelect("nrAgent", "");
       loadTemplateOptions();
       loadSceneOptions("nrScene", null);
-      loadSceneLibraryOptions("nrSceneLibrary", null);
+      mountScenePicker("nr", null);
     }
 
     let templateCache = [];
@@ -3931,34 +4091,49 @@
       return sc ? sceneLabel(sc) : scene.id;
     }
 
-    /* v2.32：场景可来自资源库已过审模型。两个对话框各有一个独立 select
-       （nrSceneLibrary / editSceneLibrary），这里整表重建。 */
-    async function loadSceneLibraryOptions(selectId, current) {
-      const sel = $(selectId);
-      if (!sel) return;
-      sel.innerHTML = "";
-      const placeholder = document.createElement("option");
-      placeholder.value = "";
-      placeholder.textContent = t("sceneLibraryNone");
-      sel.appendChild(placeholder);
-      try {
-        const data = await api("/api/library/resources");
-        const models = (data.resources || []).filter((r) =>
-          r.status === "active" && r.currentVersion && r.currentVersion.kind === "model"
-          && r.currentVersion.reviewStatus === "approved" && r.currentVersion.scanStatus === "clean");
-        for (const r of models) {
-          const opt = document.createElement("option");
-          opt.value = String(r.id);
-          opt.textContent = `${r.name}（v${r.currentVersion.versionNo}，${fmtSize(r.currentVersion.size)}）`;
-          sel.appendChild(opt);
-        }
-        if (current && current.kind === "library") sel.value = String(current.id);
-      } catch { sel.value = ""; }
+    /* v2.32：场景与形象共用同一个资源库选择器。场景对话框里点选只改本地
+       选择（保存时一起提交），不像形象那样即时生效。 */
+    const scenePick = { nr: null, edit: null };
+
+    function renderScenePickState(key) {
+      const el = $(key === "nr" ? "nrScenePickState" : "editScenePickState");
+      if (!el) return;
+      el.replaceChildren();
+      if (scenePick[key]) {
+        el.append(document.createTextNode(t("scenePicked")));
+        const link = document.createElement("a");
+        link.href = "javascript:void(0)";
+        link.textContent = " " + t("sceneClearPick");
+        link.addEventListener("click", () => {
+          scenePick[key] = null;
+          mountScenePicker(key);
+        });
+        el.append(link);
+      } else {
+        el.textContent = t("sceneLibraryNone");
+      }
+    }
+
+    async function mountScenePicker(key, current) {
+      const boxId = key === "nr" ? "nrScenePicker" : "editScenePicker";
+      if (current !== undefined) scenePick[key] = current && current.kind === "library" ? Number(current.id) : null;
+      renderScenePickState(key);
+      await mountLibraryPicker(boxId, {
+        selectedId: scenePick[key],
+        onPick: (id) => {
+          scenePick[key] = id;
+          libPickers[boxId].selectedId = id;
+          document.querySelectorAll(`#${boxId} .lib-card`).forEach((c) => c.classList.toggle("on", Number(c.dataset.id) === id));
+          renderScenePickState(key);
+        },
+        onStatus: (text) => { $("settingsStatus").textContent = text; },
+        onManage: () => openResources(),
+      });
     }
 
     async function refreshSceneControls() {
       await loadSceneOptions("editScene", store.scene);
-      await loadSceneLibraryOptions("editSceneLibrary", store.scene);
+      await mountScenePicker("edit", store.scene);
       $("editSceneState").textContent = sceneStatusText(store.scene);
     }
 
@@ -3985,10 +4160,10 @@
       const agent = $("nrAgent").value;
       if (agent) body.roomAgent = agent;
       /* 场景三者互斥择一：资源库 > 外链 > 内置 */
-      const sceneLibraryId = $("nrSceneLibrary").value;
+      const sceneLibraryId = scenePick.nr;
       const sceneUrl = $("nrSceneUrl").value.trim();
       const sceneId = $("nrScene").value;
-      if (sceneLibraryId) body.scene = { kind: "library", id: sceneLibraryId };
+      if (sceneLibraryId) body.scene = { kind: "library", id: String(sceneLibraryId) };
       else if (sceneUrl) body.scene = { kind: "url", url: sceneUrl };
       else if (sceneId) body.scene = { kind: "builtin", id: sceneId };
       try {
@@ -5088,7 +5263,7 @@
       await fillRoomAgentSelect("editRoomAgent", store.roomAgent);
       $("editSceneUrl").value = "";
       await loadSceneOptions("editScene", store.scene);
-      await loadSceneLibraryOptions("editSceneLibrary", store.scene);
+      await mountScenePicker("edit", store.scene);
       $("editSceneState").textContent = sceneStatusText(store.scene);
       if (store.canInviteFriends) await refreshRoomInvites();
     }
@@ -5306,10 +5481,10 @@
         const password = $("editPassword").value;
         if (password) body.password = password;
         /* 场景：资源库 > 外链 > 内置；下拉框停在「已上传的场景文件」时不传 scene（保持不动） */
-        const sceneLibraryId = $("editSceneLibrary").value;
+        const sceneLibraryId = scenePick.edit;
         const sceneUrl = $("editSceneUrl").value.trim();
         const sceneSel = $("editScene").value;
-        if (sceneLibraryId) body.scene = { kind: "library", id: sceneLibraryId };
+        if (sceneLibraryId) body.scene = { kind: "library", id: String(sceneLibraryId) };
         else if (sceneUrl) body.scene = { kind: "url", url: sceneUrl };
         else if (sceneSel === SCENE_FILE_OPT) { /* 保持已上传的场景文件 */ }
         else if (sceneSel) body.scene = { kind: "builtin", id: sceneSel };
