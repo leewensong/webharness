@@ -145,7 +145,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200)
         me = self.client.get("/api/me", headers={"Authorization": "Bearer " + login.json()["token"]}).json()
         self.assertTrue(me["isSuperadmin"])
-        self.assertEqual(me["adminCapabilities"], ["suggestions.read", "suggestions.manage"])
+        self.assertEqual(me["adminCapabilities"], ["suggestions.read", "suggestions.manage", "forum.manage"])
         for headers in (self.human, self.agent):
             me = self.client.get("/api/me", headers=headers).json()
             self.assertFalse(me["isSuperadmin"])

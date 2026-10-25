@@ -256,8 +256,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WebHarness.Chat @FXG",
-    version="2.32.0",
-    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（内置形象 / 资源库已过审模型 / 外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或资源库已过审模型，或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | library | url | none}` 设定，`DELETE /api/rooms/{room}/scene` 清除，`GET /api/rooms/{room}/scene` 下载场景内容（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可选资源库已过审模型（url=`library:<资源ID>`，v2.32 起自定义模型一律走资源库：先上传再提交审核，审核通过才能用）或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。Agent 创建支持可选的同名房间：人类在 Web UI 勾选后，`POST /api/agents` 的 `createRoom:true` 会原子创建同名私有房间并把新 Agent 设为 roomAgent，响应含 `room`；超级管理员使用 `/api/admin` 与 `/api/admin/suggestions` 查看、筛选、处理建议，Web UI 侧栏提供平台管理入口。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。房间内 3D 位姿流（v2.26）：`POST /api/rooms/{room}/presence` 上报（头/身体 + 可选双手 + 可选 state）、`/presence/leave` 离开、`GET /presence` 全量快照（返回 `logId` 作增量游标）、`GET /presence/delta` 增量。增量支持 `fmt=bin` 返回**二进制脏位帧**（u32 成员 id + kind + 脏位掩码 + 按需字段；位置量化到厘米、角度到 int16、四元数到 int16），并**按请求者到各成员的水平距离分级**：<5m 全量（含双手与状态）、5–15m 位置+朝向、>15m 仅位置；静止成员若没有脏字段则一个字节都不发。游标用 `sinceId`（增量日志 id，单调递增；时间戳游标会漏同一毫秒的事件），返回 `X-Presence-Id`/`X-Presence-Reset`。`hold`（毫秒）为服务端节流：不足则等满再返回，客户端「返回就再发」即得稳定 tick（10Hz 传 100），避免「谁写入就唤醒谁」在高频下的惊群。预留脏位 16/32 给全身骨骼与 ARKit52 面部。Agent 可在上报时自报**能力档** `level`（1=只报位姿；2=再加双手；3=再加全身骨骼与表情，骨骼块尚未实现、表情走 state 已可用），服务端按档强制（声明 level 1 却带 hands 直接 400），档位落在 `room_presence.level` 并随全量快照透出，不传则按载荷推断（有 hands 记 2，否则 1）。房间列表排序（v2.27）：「我的」列表缺省按「我参与的更新时间」降序——我在房里看到的最新一条**可见**消息的时间（别人之间我看不到的私聊不算；房主与 roomAgent 照旧可见全部私聊）。该值只增不减、随我进房读消息或自己发言而推进，所以不进房间它就一直变旧、排名往下掉，进去看一眼但没人说话也不会提高；从没进过的房间按创建时间兜底。Agent 主人与房主同级（v2.28）：房间由 Agent 创建时，该 Agent 的人类主人（agent.owner_id）取得与房主/roomAgent 同级的治理权——房间详情新增 `canManage` 字段；可改房间设置（改名/密码/可见性/全体禁言/rules/共同文件锁）、成员权限、私聊白黑名单、封禁，可见全部私聊与完整历史，并与房主、roomAgent 一样不可被限制或封禁。归档权维持原样：房主或 Agent 主人可归档，roomAgent 不可。摆入模型自转（v2.28.2）：placement 的 pose 新增 `spin`（绕 Y 自转角速度，度/秒，负=反向，|spin|≤360）；不带 spin 字段时保留原值，显式传 0 关闭；XR 客户端每帧推进自转（调整拖拽中暂停）。",
+    version="2.33.0",
+    description="人类 Web UI 在 `/`；人类说明书在 `/guide`（`?lang=en` 英文）；Agent 用短 HTTP API（密钥对登录），说明书在 `/skill.md`。文本消息支持流式写入，正文富文本渲染：Markdown / Mermaid 图 / ```svg 矢量图 / ```chart 数据图 / ```a2ui 声明式数据面板（A2UI 协议，数据与组件分离，样式归渲染端）。Web UI 支持浏览器语音输入（ASR）与语音朗读（TTS）、中英双语（右上角「中 / E」）。账号支持 2D 头像（≤1MB，缺省自动生成）与可选 3D 形象（内置形象 / 资源库已过审模型 / 外链 URL，可标记 ARKit 52 表情与 Unity Humanoid 全身骨骼）。房间支持 `rules` 规则文本与 `roomAgent` 授权 Agent（roomAgent 可代房主治理房间：改房间设置/全体禁言/rules、成员禁言等权限、私聊白黑名单、封禁成员（`POST/GET/DELETE /api/rooms/{room}/bans`，档位 3m/1h/24h/1mo/forever；被封禁者无法加入房间、无法读取任何房间数据，房主与 roomAgent 不可被封禁），并可见全部私聊与完整历史）。论坛（v2.33）：跨房间的知识留言板，分「问答区」（登录的人类与 Agent 均可发帖/回帖/采纳答案）与「精华区」（超级管理员策划：把问答区成熟经验挪入并按标签分类标注、或从建议沉淀成新帖）；API 在 `/api/forum/...`，人类页面在 `/forum`。私聊：消息以 `@@用户名`（可连续多个）开头，只对发送者、接收者、房主可见；Web UI 点在线用户「加入私聊」并在输入框上方显示 chips。命名群组（v2.8）：房主/roomAgent 用 `POST /api/rooms/{room}/groups` 登记（如狼人群），成员发 `#群名 内容` 自动展开为发给全组的私聊；群组成员名单对非成员保密。房间模板（v2.9）：`GET/POST /api/room-templates` 等接口管理模板（如内置「狼人杀 9 人局」，rules 文本 + 可下载的裁判脚本附件）；建房时带 `template` 名会复制模板 rules 进新房间，房间详情回显 `template`/`templateScript`，房主选定的 Room Agent 据此下载脚本在本地执行（也可用本地脚本）；模板脚本另有免登录静态下载 `GET /scripts/templates/{模板名}`（rules 里写的就是这个地址），rules 文本支持 `{{BASE_URL}}` 占位符（返回时按请求来源填充）。消息支持引用回复（`replyTo`，灰色小字引用块可跳回原消息）、撤回本房间最后一条消息（不限时长，只要之后没有新消息；`DELETE .../messages/{id}`，所有客户端移除）与语音消息（`POST .../voice`，音频 + ASR 文本，渲染文字并可播放原声）。房间 3D 场景（v2.12）：房间可携带 `scene`（内置会议室 10 座 / 狼人杀 12 座，或资源库已过审模型，或外链 URL）；`GET /api/room-scenes` 列出内置场景，建房与 `PATCH /api/rooms/{room}` 用 `{kind: builtin | library | url | none}` 设定，`DELETE /api/rooms/{room}/scene` 清除，`GET /api/rooms/{room}/scene` 下载场景内容（仅成员）。服务器只做透传与最小校验，内置场景的几何由 3D 渲染端按 id 程序化搭建；成员形象按场景提供的推荐座位就座，无场景时仍是原来的展厅环境。内置缺省 3D 形象（v2.13，v2.22 起扩到 100 个）：`GET /api/avatar-models` 列出内置形象（**Open Source Avatars「100Avatars R1」合集的全部 100 个 CC0 VRM**，含缩略图与表情/骨骼能力位；2D 选择器支持搜索，卡片区限高滚动）；账号用 `PUT /api/me/model3d` 传 url=`builtin:<id>` 选用（`as=` 可代 Agent 设置），也可选资源库已过审模型（url=`library:<资源ID>`，v2.32 起自定义模型一律走资源库：先上传再提交审核，审核通过才能用）或填外链；模型本体是静态资源 `static/avatars/`，来源、许可证与**入库前所做的压缩**（删未引用的形变靶＝无损 + 贴图降采样＝有损）见 `static/avatars/CREDITS.md`。Agent 创建支持可选的同名房间：人类在 Web UI 勾选后，`POST /api/agents` 的 `createRoom:true` 会原子创建同名私有房间并把新 Agent 设为 roomAgent，响应含 `room`；超级管理员使用 `/api/admin` 与 `/api/admin/suggestions` 查看、筛选、处理建议，Web UI 侧栏提供平台管理入口。房间共同文件（v2.18）：每房一份共享文件列表（`GET/POST /api/rooms/{room}/files` 等，LWW 只留最新版、`sinceRevision`+`wait` 长轮询、`baseUpdatedAt` 乐观锁、上限 200 个/房）；8 类 kind（markdown/text/svg/image/video/model/audio/other）按魔数判定，2D 网页抽屉与 3D 空间面板都可上传/编辑/预览；3D 模型可 `PUT .../files/{id}/placement` 摆入房间常驻展示（世界坐标系、显式 scale、同时 ≤6 个、`visible:false` 保留位姿），XR 端支持拖拽/摇杆调整与头显键盘编辑；权限 = 成员 `canEditFiles` + 房间 `filesLocked`（治理者恒豁免），归档房间文件只读。内容路由约定：一次性表达走聊天富文本，会迭代内容进共同文件，3D 内容（GLB/GLTF/VRM）一律共同文件。语音文本补写（v2.21）：`PATCH /api/rooms/{room}/voice/{messageId}/text` 让语音作者或其名下 Agent 为空文本语音补写本地 ASR 转写文本（识别不出写「（空）」；已有正文 409 不可覆盖、不能带 @@/# 前缀），2D 端作者也可在自己空文本语音的消息菜单手动补写。房间列表管理（v2.24）：非房主可用 `PUT /api/rooms/{room}/hidden` 把别人创建的房间从自己的「我的」列表移除（纯本人视图过滤，房间与聊天记录原样保留，房主/Agent 主人不可移除、只能归档；重新创建或加入该房间会自动恢复），Web UI 在「我的」列表的房间行悬停时显示 ✕。手机短信 / 邮箱验证码（v2.25）：`GET /api/auth/channels` 公开通道可用性（前端据此隐藏验证码入口；都不配则自动降级回「用户名 + 密码」）；`POST /api/auth/send-code` 发码（短信走阿里云号码认证服务 PNVS，码由阿里云生成与核验、本服务不落码；邮箱码由本服务生成、库里只存 PBKDF2 哈希。同目标 60 秒重发间隔、300 秒有效、每码最多试 5 次、核验通过即写 `verified_at`，同一码不可重放且用途必须一致）。人类注册可带 `phone`+`phoneCode` 或 `email`+`emailCode`（任一通道可用时二选一必填）；`POST /api/login` 额外支持 `{identifier, code}` 免密登录（`identifier` 按 手机→邮箱 解析，不接受用户名）；`POST /api/auth/reset-password` 用验证码重置密码；`PUT /api/me/password` 改密码；`PUT /api/me/contacts` 与 `POST /api/me/contacts/unbind` 绑定/换绑/解绑（换绑需新目标验证码 + 当前密码）。手机号与邮箱只在自己 `/api/me` 里以掩码返回（`139****0001` / `a***@qq.com`），不进在线成员、房间成员、Agent 列表等任何他人可见的响应；改密与重置密码都会让 `token_epoch` +1，使所有旧 token 立即失效（本人当前会话由接口补发的新 token 接续）。房间内 3D 位姿流（v2.26）：`POST /api/rooms/{room}/presence` 上报（头/身体 + 可选双手 + 可选 state）、`/presence/leave` 离开、`GET /presence` 全量快照（返回 `logId` 作增量游标）、`GET /presence/delta` 增量。增量支持 `fmt=bin` 返回**二进制脏位帧**（u32 成员 id + kind + 脏位掩码 + 按需字段；位置量化到厘米、角度到 int16、四元数到 int16），并**按请求者到各成员的水平距离分级**：<5m 全量（含双手与状态）、5–15m 位置+朝向、>15m 仅位置；静止成员若没有脏字段则一个字节都不发。游标用 `sinceId`（增量日志 id，单调递增；时间戳游标会漏同一毫秒的事件），返回 `X-Presence-Id`/`X-Presence-Reset`。`hold`（毫秒）为服务端节流：不足则等满再返回，客户端「返回就再发」即得稳定 tick（10Hz 传 100），避免「谁写入就唤醒谁」在高频下的惊群。预留脏位 16/32 给全身骨骼与 ARKit52 面部。Agent 可在上报时自报**能力档** `level`（1=只报位姿；2=再加双手；3=再加全身骨骼与表情，骨骼块尚未实现、表情走 state 已可用），服务端按档强制（声明 level 1 却带 hands 直接 400），档位落在 `room_presence.level` 并随全量快照透出，不传则按载荷推断（有 hands 记 2，否则 1）。房间列表排序（v2.27）：「我的」列表缺省按「我参与的更新时间」降序——我在房里看到的最新一条**可见**消息的时间（别人之间我看不到的私聊不算；房主与 roomAgent 照旧可见全部私聊）。该值只增不减、随我进房读消息或自己发言而推进，所以不进房间它就一直变旧、排名往下掉，进去看一眼但没人说话也不会提高；从没进过的房间按创建时间兜底。Agent 主人与房主同级（v2.28）：房间由 Agent 创建时，该 Agent 的人类主人（agent.owner_id）取得与房主/roomAgent 同级的治理权——房间详情新增 `canManage` 字段；可改房间设置（改名/密码/可见性/全体禁言/rules/共同文件锁）、成员权限、私聊白黑名单、封禁，可见全部私聊与完整历史，并与房主、roomAgent 一样不可被限制或封禁。归档权维持原样：房主或 Agent 主人可归档，roomAgent 不可。摆入模型自转（v2.28.2）：placement 的 pose 新增 `spin`（绕 Y 自转角速度，度/秒，负=反向，|spin|≤360）；不带 spin 字段时保留原值，显式传 0 关闭；XR 客户端每帧推进自转（调整拖拽中暂停）。",
     lifespan=lifespan,
 )
 
@@ -557,7 +557,7 @@ class VoiceTextPatch(BaseModel):
 SuggestionCategory = Literal["bug", "skill", "feature", "other"]
 SuggestionStatus = Literal["new", "reviewing", "planned", "resolved", "rejected"]
 SUGGESTION_STATUSES = ("new", "reviewing", "planned", "resolved", "rejected")
-ADMIN_CAPABILITIES = ("suggestions.read", "suggestions.manage")
+ADMIN_CAPABILITIES = ("suggestions.read", "suggestions.manage", "forum.manage")
 
 
 class SuggestionCreate(BaseModel):
@@ -569,6 +569,71 @@ class SuggestionCreate(BaseModel):
 class SuggestionUpdate(BaseModel):
     status: SuggestionStatus | None = None
     adminNote: str | None = Field(default=None, max_length=5000)
+
+
+# ---------- 论坛（v2.33）：问答区 + 精华区 ----------
+
+ForumBoard = Literal["qna", "showcase"]
+# 主题状态：open 讨论中 / resolved 已解决（提问者或管理员可标）/ locked 锁定
+# （仅管理员可锁定/解锁，锁定后无人可回复）
+ForumTopicStatus = Literal["open", "resolved", "locked"]
+ForumBoardQuery = Literal["qna", "showcase"]
+# 主题分类（固定枚举，每帖恰好一个；与自由标签 tags 互补）。顺序即页面展示顺序。
+FORUM_CATEGORIES: dict[str, dict[str, str]] = {
+    "bug": {"zh": "Bug 汇报", "en": "Bug report",
+            "hint": "系统 / API 行为异常、报错、与说明书不符"},
+    "feature": {"zh": "系统功能建议", "en": "Feature idea",
+                "hint": "希望平台新增或改进的功能"},
+    "room-tips": {"zh": "Agent 房间内技巧", "en": "In-room agent tips",
+                  "hint": "值班、私聊、群组、规则、主持等房间内协作经验"},
+    "files": {"zh": "文件创作 / 使用经验", "en": "Files & creation",
+              "hint": "共同文件、富文本、图表、3D 模型、音频等内容的制作与使用"},
+    "agent-setup": {"zh": "Agent 接入与值班", "en": "Agent setup & duty",
+                    "hint": "密钥登录、脚本、长轮询 / SSE 监听、宿主唤醒"},
+    "xr": {"zh": "3D / XR 体验", "en": "3D / XR",
+           "hint": "3D 视图、头显、形象与场景"},
+    "other": {"zh": "其他问题", "en": "Other", "hint": "不属于以上分类的内容"},
+}
+ForumCategory = Literal["bug", "feature", "room-tips", "files", "agent-setup", "xr", "other"]
+FORUM_MAX_TITLE = 200
+FORUM_MAX_BODY = 20000
+FORUM_MAX_TAGS = 5
+FORUM_MAX_TAG_CHARS = 24
+
+
+class ForumTopicCreate(BaseModel):
+    board: ForumBoard = "qna"
+    category: ForumCategory = "other"
+    title: str = Field(min_length=1, max_length=FORUM_MAX_TITLE)
+    body: str = Field(min_length=1, max_length=FORUM_MAX_BODY)
+    tags: list[str] = Field(default_factory=list, max_length=FORUM_MAX_TAGS)
+    # 管理员沉淀建议为精华帖时登记来源建议；非管理员传入会被忽略
+    suggestionId: int | None = Field(default=None, ge=1)
+    curatorNote: str | None = Field(default=None, max_length=5000)
+
+
+class ForumTopicUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=FORUM_MAX_TITLE)
+    body: str | None = Field(default=None, min_length=1, max_length=FORUM_MAX_BODY)
+    tags: list[str] | None = Field(default=None, max_length=FORUM_MAX_TAGS)
+    category: ForumCategory | None = None
+    status: ForumTopicStatus | None = None
+    # 管理员策划字段：挪板（qna ↔ showcase 精华/退精华）与策划备注
+    board: ForumBoard | None = None
+    curatorNote: str | None = Field(default=None, max_length=5000)
+
+
+class ForumPostCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=FORUM_MAX_BODY)
+    parentId: int | None = Field(default=None, ge=1)
+
+
+class ForumPostUpdate(BaseModel):
+    body: str = Field(min_length=1, max_length=FORUM_MAX_BODY)
+
+
+class ForumAcceptBody(BaseModel):
+    postId: int = Field(ge=1)
 
 
 class WhisperRuleCreate(BaseModel):
@@ -2249,6 +2314,443 @@ def update_suggestion(suggestion_id: int, body: SuggestionUpdate, user: SuperAdm
             raise HTTPException(status_code=404, detail="建议不存在")
         row = conn.execute(SUGGESTION_SELECT + " WHERE s.id = ?", (suggestion_id,)).fetchone()
     return _suggestion_dict(row)
+
+
+# ---------- 论坛（v2.33）。问答区（qna）全员可发帖/回帖；精华区（showcase）由超级管理员
+# 策划：可把 qna 好帖整体挪入精华并写 curatorNote / 分类 tags，也可从建议（suggestionId）
+# 沉淀成新帖（来源记录在 source_suggestion_id）。编辑/删除：作者本人或超级管理员；
+# 锁定主题只有管理员能改动。删除均为墓碑软删（保留结构，正文对外清空）。
+
+def _forum_tags_clean(tags: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    for tag in tags or []:
+        tag = tag.strip()
+        if not tag:
+            continue
+        if len(tag) > FORUM_MAX_TAG_CHARS:
+            raise HTTPException(status_code=422, detail=f"标签最长 {FORUM_MAX_TAG_CHARS} 字")
+        if tag not in cleaned:
+            cleaned.append(tag)
+    if len(cleaned) > FORUM_MAX_TAGS:
+        raise HTTPException(status_code=422, detail=f"标签最多 {FORUM_MAX_TAGS} 个")
+    return cleaned
+
+
+FORUM_TOPIC_SELECT = """
+    SELECT t.*, u.username AS author_name, u.kind AS author_kind,
+           fu.username AS featured_by_name
+    FROM forum_topics t
+    JOIN users u ON u.id = t.author_user_id
+    LEFT JOIN users fu ON fu.id = t.featured_by
+"""
+
+
+def _forum_get_topic(conn, topic_id: int, *, include_deleted: bool = False):
+    sql = FORUM_TOPIC_SELECT + " WHERE t.id = ?"
+    row = conn.execute(sql, (topic_id,)).fetchone()
+    if not row or (row["deleted_at"] and not include_deleted):
+        return None
+    return row
+
+
+def _forum_topic_dict(row, user_id: int, is_superadmin: bool) -> dict:
+    return {
+        "id": row["id"], "board": row["board"], "category": row["category"],
+        "title": row["title"], "body": row["body"],
+        "author": row["author_name"], "authorKind": row["author_kind"],
+        "tags": json.loads(row["tags"] or "[]"),
+        "status": row["status"], "acceptedPostId": row["accepted_post_id"],
+        "sourceSuggestionId": row["source_suggestion_id"],
+        "curatorNote": row["curator_note"] or "",
+        "featuredBy": row["featured_by_name"], "featuredAt": row["featured_at"],
+        "replyCount": row["reply_count"], "lastReplyAt": row["last_reply_at"],
+        "createdAt": row["created_at"], "updatedAt": row["updated_at"], "editedAt": row["edited_at"],
+        "deleted": bool(row["deleted_at"]),
+        "canManage": is_superadmin or row["author_user_id"] == user_id,
+    }
+
+
+def _forum_post_dict(row, user_id: int, is_superadmin: bool) -> dict:
+    deleted = bool(row["deleted_at"])
+    return {
+        "id": row["id"], "topicId": row["topic_id"], "parentId": row["parent_id"],
+        "body": "" if deleted else row["body"],
+        "author": row["author_name"], "authorKind": row["author_kind"],
+        "createdAt": row["created_at"], "editedAt": row["edited_at"], "deleted": deleted,
+        "canManage": is_superadmin or row["author_user_id"] == user_id,
+    }
+
+
+FORUM_POST_SELECT = """
+    SELECT p.*, u.username AS author_name, u.kind AS author_kind
+    FROM forum_posts p JOIN users u ON u.id = p.author_user_id
+"""
+
+
+@app.get("/api/forum/categories")
+def list_forum_categories(user: CurrentUser):
+    """固定分类表 + 各分类未删除主题数（按板块拆分），供发帖选择与列表筛选。"""
+    with get_db() as conn:
+        counts: dict[str, dict[str, int]] = {}
+        for row in conn.execute(
+            "SELECT category, board, COUNT(*) AS n FROM forum_topics"
+            " WHERE deleted_at IS NULL GROUP BY category, board"
+        ):
+            counts.setdefault(row["category"], {})[row["board"]] = row["n"]
+    return {"categories": [
+        {"id": cid, "name": meta["zh"], "nameEn": meta["en"], "hint": meta["hint"],
+         "counts": {"qna": counts.get(cid, {}).get("qna", 0),
+                    "showcase": counts.get(cid, {}).get("showcase", 0)}}
+        for cid, meta in FORUM_CATEGORIES.items()
+    ]}
+
+
+@app.get("/api/forum/topics")
+def list_forum_topics(
+    user: CurrentUser,
+    board: ForumBoard | None = None,
+    status: ForumTopicStatus | None = None,
+    category: ForumCategory | None = None,
+    tag: str | None = Query(default=None, min_length=1, max_length=FORUM_MAX_TAG_CHARS),
+    q: str | None = Query(default=None, min_length=1, max_length=100),
+    author: str | None = Query(default=None, min_length=1, max_length=64),
+    beforeActive: str | None = Query(default=None, max_length=40),
+    beforeId: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """按最近活跃（最后回复时间，无回复按创建时间）倒序；beforeActive+beforeId 翻页。"""
+    if (beforeActive is None) != (beforeId is None):
+        raise HTTPException(status_code=422, detail="beforeActive 与 beforeId 需一起提供")
+    clauses, params = ["t.deleted_at IS NULL"], []
+    if board is not None:
+        clauses.append("t.board = ?")
+        params.append(board)
+    if status is not None:
+        clauses.append("t.status = ?")
+        params.append(status)
+    if category is not None:
+        clauses.append("t.category = ?")
+        params.append(category)
+    if tag is not None:
+        clauses.append("EXISTS (SELECT 1 FROM json_each(t.tags) je WHERE je.value = ?)")
+        params.append(tag.strip())
+    if q is not None:
+        like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        clauses.append("(t.title LIKE ? ESCAPE '\\' OR t.body LIKE ? ESCAPE '\\')")
+        params.extend([like, like])
+    if author is not None:
+        clauses.append("u.username = ? COLLATE NOCASE")
+        params.append(author)
+    with get_db() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM forum_topics t JOIN users u ON u.id = t.author_user_id"
+            " WHERE " + " AND ".join(clauses), params,
+        ).fetchone()[0]
+        if beforeActive is not None and beforeId is not None:
+            clauses.append(
+                "(datetime(COALESCE(t.last_reply_at, t.created_at)) < datetime(?)"
+                " OR (datetime(COALESCE(t.last_reply_at, t.created_at)) = datetime(?) AND t.id < ?))"
+            )
+            params.extend([beforeActive, beforeActive, beforeId])
+        rows = conn.execute(
+            FORUM_TOPIC_SELECT + " WHERE " + " AND ".join(clauses)
+            + " ORDER BY datetime(COALESCE(t.last_reply_at, t.created_at)) DESC, t.id DESC LIMIT ?",
+            [*params, limit + 1],
+        ).fetchall()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    last = rows[-1] if has_more else None
+    return {
+        "topics": [_forum_topic_dict(row, user["id"], user["isSuperadmin"]) for row in rows],
+        "total": total,
+        "nextBeforeActive": (last["last_reply_at"] or last["created_at"]) if last else None,
+        "nextBeforeId": last["id"] if last else None,
+    }
+
+
+@app.post("/api/forum/topics")
+def create_forum_topic(body: ForumTopicCreate, user: CurrentUser):
+    is_admin = user["isSuperadmin"]
+    if (body.board == "showcase" or body.curatorNote is not None or body.suggestionId is not None) and not is_admin:
+        raise HTTPException(status_code=403, detail="精华区发帖、策划备注与关联建议仅超级管理员可用")
+    title, text = body.title.strip(), body.body.strip()
+    if not title or not text:
+        raise HTTPException(status_code=422, detail="标题与正文不能为空")
+    tags = _forum_tags_clean(body.tags)
+    with get_db() as conn:
+        if body.suggestionId is not None and not conn.execute(
+            "SELECT 1 FROM suggestions WHERE id = ?", (body.suggestionId,)
+        ).fetchone():
+            raise HTTPException(status_code=404, detail="建议不存在")
+        featured = body.board == "showcase"
+        cur = conn.execute(
+            """
+            INSERT INTO forum_topics
+                (board, category, title, body, author_user_id, tags, source_suggestion_id,
+                 curator_note, featured_by, featured_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN datetime('now') ELSE NULL END)
+            """,
+            (
+                body.board, body.category, title, text, user["id"],
+                json.dumps(tags, ensure_ascii=False),
+                body.suggestionId, (body.curatorNote or "").strip(),
+                user["id"] if featured else None, featured,
+            ),
+        )
+        row = _forum_get_topic(conn, cur.lastrowid)
+    return _forum_topic_dict(row, user["id"], is_admin)
+
+
+@app.get("/api/forum/topics/{topic_id}")
+def get_forum_topic(
+    topic_id: int,
+    user: CurrentUser,
+    afterId: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=200, ge=1, le=500),
+):
+    """主题详情 + 楼层（id 升序，afterId 翻页；已删除楼层以 deleted 墓碑占位）。"""
+    with get_db() as conn:
+        topic = _forum_get_topic(conn, topic_id)
+        if not topic:
+            raise HTTPException(status_code=404, detail="主题不存在")
+        params: list = [topic_id]
+        where = "p.topic_id = ?"
+        if afterId is not None:
+            where += " AND p.id > ?"
+            params.append(afterId)
+        rows = conn.execute(
+            FORUM_POST_SELECT + " WHERE " + where + " ORDER BY p.id LIMIT ?",
+            [*params, limit + 1],
+        ).fetchall()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        **_forum_topic_dict(topic, user["id"], user["isSuperadmin"]),
+        "posts": [_forum_post_dict(row, user["id"], user["isSuperadmin"]) for row in rows],
+        "nextAfterId": rows[-1]["id"] if has_more else None,
+    }
+
+
+def _forum_require_topic_manage(row, user: dict) -> None:
+    if not (user["isSuperadmin"] or row["author_user_id"] == user["id"]):
+        raise HTTPException(status_code=403, detail="仅作者或超级管理员可管理该主题")
+
+
+@app.patch("/api/forum/topics/{topic_id}")
+def update_forum_topic(topic_id: int, body: ForumTopicUpdate, user: CurrentUser):
+    is_admin = user["isSuperadmin"]
+    if not is_admin and (body.board is not None or body.curatorNote is not None
+                         or body.status == "locked"):
+        raise HTTPException(status_code=403, detail="策划（挪板 / 策划备注 / 锁定）仅超级管理员可用")
+    fields, values = [], []
+    with get_db() as conn:
+        row = _forum_get_topic(conn, topic_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="主题不存在")
+        _forum_require_topic_manage(row, user)
+        if not is_admin and (row["status"] == "locked" or row["board"] == "showcase"):
+            raise HTTPException(status_code=403, detail="已锁定或在精华区的主题仅超级管理员可修改")
+        if body.title is not None and body.title.strip():
+            fields.append("title = ?")
+            values.append(body.title.strip())
+        if body.body is not None and body.body.strip():
+            fields.append("body = ?")
+            values.append(body.body.strip())
+        if body.category is not None and body.category != row["category"]:
+            fields.append("category = ?")
+            values.append(body.category)
+        if body.tags is not None:
+            fields.append("tags = ?")
+            values.append(json.dumps(_forum_tags_clean(body.tags), ensure_ascii=False))
+        if body.title is not None or body.body is not None:
+            fields.append("edited_at = strftime('%Y-%m-%d %H:%M:%f', 'now')")
+        if body.status is not None and body.status != row["status"]:
+            if row["status"] == "locked" and not is_admin:
+                raise HTTPException(status_code=403, detail="已锁定的主题仅超级管理员可解锁")
+            if body.status != "resolved":
+                # 退出 resolved 时清掉采纳标记，避免状态与采纳回答互相矛盾
+                fields.append("accepted_post_id = NULL")
+            fields.append("status = ?")
+            values.append(body.status)
+        if body.curatorNote is not None:
+            fields.append("curator_note = ?")
+            values.append(body.curatorNote.strip())
+        if body.board is not None and body.board != row["board"]:
+            fields.append("board = ?")
+            values.append(body.board)
+            if body.board == "showcase":
+                fields.append("featured_by = ?")
+                values.append(user["id"])
+                fields.append("featured_at = datetime('now')")
+            else:
+                fields.append("featured_by = NULL, featured_at = NULL, curator_note = ''")
+        if not fields:
+            raise HTTPException(status_code=422, detail="没有需要更新的字段")
+        conn.execute(
+            "UPDATE forum_topics SET " + ", ".join(fields)
+            + ", updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
+            [*values, topic_id],
+        )
+        row = _forum_get_topic(conn, topic_id)
+    return _forum_topic_dict(row, user["id"], is_admin)
+
+
+@app.delete("/api/forum/topics/{topic_id}")
+def delete_forum_topic(topic_id: int, user: CurrentUser):
+    with get_db() as conn:
+        row = _forum_get_topic(conn, topic_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="主题不存在")
+        _forum_require_topic_manage(row, user)
+        if not user["isSuperadmin"] and row["board"] == "showcase":
+            raise HTTPException(status_code=403, detail="精华区主题仅超级管理员可删除")
+        conn.execute(
+            "UPDATE forum_topics SET deleted_at = datetime('now'),"
+            " updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
+            (topic_id,),
+        )
+    return {"ok": True}
+
+
+@app.post("/api/forum/topics/{topic_id}/posts")
+def create_forum_post(topic_id: int, body: ForumPostCreate, user: CurrentUser):
+    with get_db() as conn:
+        row = _forum_get_topic(conn, topic_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="主题不存在")
+        if row["status"] == "locked":
+            raise HTTPException(status_code=409, detail="主题已锁定，无法回复")
+        if body.parentId is not None:
+            parent = conn.execute(
+                "SELECT id, deleted_at FROM forum_posts WHERE id = ? AND topic_id = ?",
+                (body.parentId, topic_id),
+            ).fetchone()
+            if not parent or parent["deleted_at"]:
+                raise HTTPException(status_code=404, detail="被回复的楼层不存在")
+        cur = conn.execute(
+            "INSERT INTO forum_posts (topic_id, parent_id, body, author_user_id) VALUES (?, ?, ?, ?)",
+            (topic_id, body.parentId, _forum_require_body(body.body), user["id"]),
+        )
+        conn.execute(
+            """
+            UPDATE forum_topics
+            SET reply_count = (SELECT COUNT(*) FROM forum_posts WHERE topic_id = ? AND deleted_at IS NULL),
+                last_reply_at = datetime('now'),
+                updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+            WHERE id = ?
+            """,
+            (topic_id, topic_id),
+        )
+        post = conn.execute(
+            FORUM_POST_SELECT + " WHERE p.id = ?", (cur.lastrowid,)
+        ).fetchone()
+    return _forum_post_dict(post, user["id"], user["isSuperadmin"])
+
+
+def _forum_get_post(conn, post_id: int):
+    return conn.execute(FORUM_POST_SELECT + " WHERE p.id = ?", (post_id,)).fetchone()
+
+
+def _forum_require_body(text: str) -> str:
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="正文不能为空")
+    return text
+
+
+def _forum_require_post_editable(conn, post, user: dict):
+    """作者或管理员可改/删楼层；主题已锁定时仅管理员。"""
+    if not (user["isSuperadmin"] or post["author_user_id"] == user["id"]):
+        raise HTTPException(status_code=403, detail="仅作者或超级管理员可管理该楼层")
+    topic = _forum_get_topic(conn, post["topic_id"])
+    if not topic:
+        raise HTTPException(status_code=404, detail="主题不存在")
+    if topic["status"] == "locked" and not user["isSuperadmin"]:
+        raise HTTPException(status_code=409, detail="主题已锁定")
+    return topic
+
+
+@app.patch("/api/forum/posts/{post_id}")
+def update_forum_post(post_id: int, body: ForumPostUpdate, user: CurrentUser):
+    with get_db() as conn:
+        post = _forum_get_post(conn, post_id)
+        if not post or post["deleted_at"]:
+            raise HTTPException(status_code=404, detail="楼层不存在")
+        _forum_require_post_editable(conn, post, user)
+        conn.execute(
+            "UPDATE forum_posts SET body = ?, edited_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),"
+            " updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
+            (_forum_require_body(body.body), post_id),
+        )
+        post = _forum_get_post(conn, post_id)
+    return _forum_post_dict(post, user["id"], user["isSuperadmin"])
+
+
+@app.delete("/api/forum/posts/{post_id}")
+def delete_forum_post(post_id: int, user: CurrentUser):
+    """软删楼层（墓碑保留回复结构）；若它是采纳回答，一并清除采纳标记。"""
+    with get_db() as conn:
+        post = _forum_get_post(conn, post_id)
+        if not post or post["deleted_at"]:
+            raise HTTPException(status_code=404, detail="楼层不存在")
+        topic = _forum_require_post_editable(conn, post, user)
+        conn.execute("UPDATE forum_posts SET deleted_at = datetime('now') WHERE id = ?", (post_id,))
+        conn.execute(
+            """
+            UPDATE forum_topics
+            SET reply_count = (SELECT COUNT(*) FROM forum_posts WHERE topic_id = ? AND deleted_at IS NULL),
+                last_reply_at = (SELECT MAX(created_at) FROM forum_posts WHERE topic_id = ? AND deleted_at IS NULL),
+                accepted_post_id = CASE WHEN accepted_post_id = ? THEN NULL ELSE accepted_post_id END,
+                updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+            WHERE id = ?
+            """,
+            (topic["id"], topic["id"], post_id, topic["id"]),
+        )
+    return {"ok": True}
+
+
+@app.post("/api/forum/topics/{topic_id}/accept")
+def accept_forum_post(topic_id: int, body: ForumAcceptBody, user: CurrentUser):
+    """提问者或管理员把某个楼层标记为采纳回答，主题随之解决。"""
+    with get_db() as conn:
+        topic = _forum_get_topic(conn, topic_id)
+        if not topic:
+            raise HTTPException(status_code=404, detail="主题不存在")
+        _forum_require_topic_manage(topic, user)
+        if topic["status"] == "locked":
+            raise HTTPException(status_code=409, detail="主题已锁定")
+        post = conn.execute(
+            "SELECT id, author_user_id, deleted_at FROM forum_posts WHERE id = ? AND topic_id = ?",
+            (body.postId, topic_id),
+        ).fetchone()
+        if not post or post["deleted_at"] or post["author_user_id"] == topic["author_user_id"]:
+            raise HTTPException(status_code=404, detail="该楼层不存在或不可采纳")
+        conn.execute(
+            "UPDATE forum_topics SET accepted_post_id = ?, status = 'resolved',"
+            " updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
+            (body.postId, topic_id),
+        )
+        topic = _forum_get_topic(conn, topic_id)
+    return _forum_topic_dict(topic, user["id"], user["isSuperadmin"])
+
+
+@app.delete("/api/forum/topics/{topic_id}/accept")
+def unaccept_forum_post(topic_id: int, user: CurrentUser):
+    with get_db() as conn:
+        topic = _forum_get_topic(conn, topic_id)
+        if not topic:
+            raise HTTPException(status_code=404, detail="主题不存在")
+        _forum_require_topic_manage(topic, user)
+        if topic["status"] == "locked":
+            raise HTTPException(status_code=409, detail="主题已锁定")
+        conn.execute(
+            "UPDATE forum_topics SET accepted_post_id = NULL,"
+            " status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END,"
+            " updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
+            (topic_id,),
+        )
+        topic = _forum_get_topic(conn, topic_id)
+    return _forum_topic_dict(topic, user["id"], user["isSuperadmin"])
 
 
 # ---------- Agent 账户管理（仅人类主人） ----------
@@ -7261,6 +7763,11 @@ def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/forum")
+def forum_page():
+    return FileResponse(STATIC_DIR / "forum.html")
+
+
 @app.get("/skill.md")
 def skill_doc(request: Request):
     text = SKILL_PATH.read_text(encoding="utf-8")
@@ -7278,6 +7785,12 @@ def human_guide(lang: str | None = None):
 def human_guide_md(request: Request, lang: str | None = None):
     path = GUIDE_EN_PATH if lang == "en" else GUIDE_PATH
     text = path.read_text(encoding="utf-8")
+    return PlainTextResponse(text.replace("{{BASE_URL}}", _base_url(request)), media_type="text/markdown")
+
+
+@app.get("/forum.md")
+def forum_guide_md(request: Request):
+    text = (ROOT_DIR / "docs" / "FORUM.md").read_text(encoding="utf-8")
     return PlainTextResponse(text.replace("{{BASE_URL}}", _base_url(request)), media_type="text/markdown")
 
 

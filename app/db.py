@@ -674,6 +674,60 @@ def init_db() -> None:
             WHERE status = 'pending'
             """
         )
+        conn.executescript(
+            """
+            -- 论坛（v2.33）：board 两区——qna 提问/互助（全员可发）、showcase 精华经验
+            -- （仅超管策划：直接把 qna 线程挪进 showcase 并写 curator_note，或从建议
+            -- source_suggestion_id 沉淀成新帖）。tags 为 JSON 数组（短字符串，精华区
+            -- 由管理员分类标注）。accepted_post_id 是提问者/管理员标记的采纳回答。
+            CREATE TABLE IF NOT EXISTS forum_topics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                board TEXT NOT NULL CHECK (board IN ('qna', 'showcase')),
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                author_user_id INTEGER NOT NULL REFERENCES users(id),
+                tags TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'open'
+                    CHECK (status IN ('open', 'resolved', 'locked')),
+                accepted_post_id INTEGER,
+                source_suggestion_id INTEGER REFERENCES suggestions(id) ON DELETE SET NULL,
+                curator_note TEXT NOT NULL DEFAULT '',
+                featured_by INTEGER REFERENCES users(id),
+                featured_at TEXT,
+                reply_count INTEGER NOT NULL DEFAULT 0,
+                last_reply_at TEXT,
+                edited_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+                deleted_at TEXT
+            );
+
+            -- 楼层回复：parent_id 指同主题内被回复的那条（链式只存一层父引用，
+            -- 渲染端自行树状化）；删除仅打 deleted_at 墓碑，正文清空、回复结构保留。
+            CREATE TABLE IF NOT EXISTS forum_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic_id INTEGER NOT NULL REFERENCES forum_topics(id) ON DELETE CASCADE,
+                parent_id INTEGER REFERENCES forum_posts(id) ON DELETE SET NULL,
+                body TEXT NOT NULL,
+                author_user_id INTEGER NOT NULL REFERENCES users(id),
+                deleted_at TEXT,
+                edited_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_forum_topics_board
+                ON forum_topics(board, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_forum_topics_status
+                ON forum_topics(status) WHERE deleted_at IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_forum_posts_topic
+                ON forum_posts(topic_id, id);
+            """
+        )
+        _add_column_if_missing(conn, "forum_topics", "category", "TEXT NOT NULL DEFAULT 'other'")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_forum_topics_category ON forum_topics(category, id DESC)"
+        )
         _add_column_if_missing(conn, "room_members", "last_seen_at", "TEXT")
         _add_column_if_missing(conn, "room_members", "can_speak", "INTEGER NOT NULL DEFAULT 1")
         _add_column_if_missing(conn, "room_members", "can_upload", "INTEGER NOT NULL DEFAULT 1")
