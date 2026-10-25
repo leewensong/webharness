@@ -245,7 +245,7 @@ Web UI 与人类文档支持中英双语，右上角「中 / E」一键切换：
 - **类型**：markdown / text / svg（可 JSON 直写、可编辑）/ image / video / model / audio / other，按魔数→扩展名→mime 判定；推荐「文本基础格式（.md/.json/.csv/.mermaid）+ WebXR 可渲染（.png/.jpg/.glb）」。
 - **编辑与冲突**：文本类文件带 `baseUpdatedAt` 乐观锁，被他人先更新返回 409（提示更新者）；网页编辑器 + 3D 头显键盘（长文/中文引导回 2D）。
 - **内容路由**（Agent 行为指引）：一次性表达 → 聊天富文本；会迭代内容 → 共同文件；**3D 内容（GLB/GLTF/VRM）一律共同文件**（聊天 3D 附件仅软提示）。
-- **3D 世界摆放**：kind=model 可 `PUT placement` 摆入房间常驻展示（`{visible, position, rotation, scale}`，房间世界坐标系、米、Euler 弧度、显式 scale；XR 端「摆入」自动 Box3 ~1m 归一化、底边落地）；点已摆放模型进入移动/旋转/缩放调整（拖拽 + 摇杆，500ms 节流保存、松手即 PUT）；`visible:false` 收起但保留位姿；同时常驻 ≤6 个；位姿变更只递增 `files_revision`，不污染内容乐观锁。
+- **3D 世界摆放**：kind=model 可 `PUT placement` 摆入房间常驻展示（`{visible, position, rotation, scale}`，房间世界坐标系、米、Euler 弧度、显式 scale；XR 端「摆入」自动 Box3 ~1m 归一化、底边落地）；点已摆放模型进入移动/旋转/缩放调整（拖拽 + 摇杆，500ms 节流保存、松手即 PUT）；`visible:false` 收起但保留位姿；同时常驻 ≤20 个；位姿变更只递增 `files_revision`，不污染内容乐观锁。
 - **权限**：成员级 `canEditFiles` + 房间级 `filesLocked`（镜像禁言合成，治理者=房主/roomAgent 恒豁免）；归档房间文件只读保留。
 - **上限**：200 个/房、文本类 2MB、二进制 50MB、描述 500 字；列表长轮询 `sinceRevision`+`wait`（0–30s）感知变更。
 
@@ -293,7 +293,7 @@ Web UI 与人类文档支持中英双语，右上角「中 / E」一键切换：
 | `GET` / `POST` | `/api/rooms/{roomName}/files` | 共同文件列表（`sinceRevision`+`wait` 长轮询）/ 新建（JSON 文本类或 multipart） |
 | `GET` / `PUT` / `PATCH` / `DELETE` | `/api/rooms/{roomName}/files/{id}` | 元数据 / 整体替换（`baseUpdatedAt` 乐观锁）/ 改名描述 / 删除 |
 | `GET` | `/api/rooms/{roomName}/files/{id}/content` | 下载内容（`?download=1` 强制 attachment） |
-| `PUT` | `/api/rooms/{roomName}/files/{id}/placement` | 3D 世界摆放（仅 model；`visible:false` 保留位姿；上限 6） |
+| `PUT` | `/api/rooms/{roomName}/files/{id}/placement` | 3D 世界摆放（仅 model；`visible:false` 保留位姿；上限 20） |
 | `GET` | `/api/library/resources` | 当前人类/Agent 主人的个人资源列表与配额 |
 | `POST` | `/api/library/resources` | multipart 上传个人私有资源；版本不可变 |
 | `POST` | `/api/library/resources/{id}/versions` | 上传新版本；新版本须重新审核 |

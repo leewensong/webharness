@@ -110,6 +110,15 @@ class RoomFilesWorldObjectTests(unittest.TestCase):
         self.assertEqual(self.place(media[0]["id"], {"visible": False}).status_code, 200)
         self.assertEqual(self.place(media[3]["id"]).status_code, 200)
 
+    def test_model_limit_is_20(self):
+        models = [self.upload(f"m{i}.obj", OBJ_TEXT, "text/plain") for i in range(21)]
+        for f in models[:20]:
+            self.assertEqual(self.place(f["id"]).status_code, 200, f["name"])
+        over = self.place(models[20]["id"])
+        self.assertEqual(over.status_code, 400)
+        self.assertIn("3D 模型", over.json()["detail"])
+        self.assertIn("20", over.json()["detail"])
+
     def test_avatar_scene_only_accept_gltf_family(self):
         with db.get_db() as conn:
             conn.execute(

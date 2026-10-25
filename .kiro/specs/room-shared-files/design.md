@@ -244,7 +244,7 @@ else: 放行
   - 同步：进房与 revision 变化 → 列表里所有 `world.visible=true` 的 model 按位姿渲染（`api()` fetch blob → `GLTFLoader.parse` → 直接套 `world_pose`，**不再二次归一化**——首次摆放端已把归一化算进显式 scale）；异步加载期间显示线框占位；删除/隐藏的模型即时移除并 dispose。
   - 交互：列表面板 model 行提供「摆入房间」（初始位姿 = 摆放者面前空位 + 朝向摆放者 + Box3 ~1m 归一化 scale，客户端算好后一次 `PUT placement`）；点击已摆放模型进入调整（移动/旋转/缩放/关闭/再显示），移动与旋转复用既有 `dragBegin/dragMove/dragEnd` 射线-拖拽基建，手柄端复用 `handlePick` 指向 + 摇杆组合（具体手势实施时定）；拖拽中 ~500ms 节流 `PUT placement`、松手即保存；关闭 = `{visible:false}`（保留位姿）。
   - 无编辑权或 filesLocked：摆入/调整入口置灰，已摆放模型照常渲染（摆放是共享状态，读取不受限）。
-  - 性能：常驻模型上限 6（服务端校验）；单个 ≤50MB；加载失败降级为地面占位框标注文件名。
+  - 性能：常驻模型上限 20（服务端校验）；单个 ≤50MB；加载失败降级为地面占位框标注文件名。
 - **编辑**：文本类编辑面板 = 既有 3D 文本输入模式（系统键盘 overlay；Quest 实测可用、无中文 IME——中文输入引导到 2D 或快捷短语）；保存走 `api()` PUT（带 baseUpdatedAt），409 弹提示并重载。系统键盘不可用的设备上编辑入口降级为只读。
 - **上传/下载**：不做头显内文件选择器/下载器，面板上给「在 2D 网页操作」提示。
 - **资源纪律**：列表面板/预览面板全部纳入既有纹理 LRU 与 dispose 预算；切房/退出 3D 全量释放；归档视图不提供入口。
@@ -317,13 +317,13 @@ else: 放行
 | 并发替换互踩（两人同时改一个文件） | LWW 语义用户已接受；编辑器默认带 baseUpdatedAt 乐观锁提示 |
 | revision 并发递增 | SQLite 单写者串行，`files_revision = files_revision + 1` 原子 |
 | 列表轮询流量放大（每客户端 2s） | 列表仅元数据（200 × ~300B ≈ 60KB）；revision 比对后才重渲染；Agent 走长轮询 |
-| XR 纹理/模型内存 | 沿用既有 LRU（≤6 模型、纹理预算）与全量 dispose |
+| XR 纹理/模型内存 | 沿用既有纹理预算与全量 dispose；常驻模型上限 20（2026-10-26 由 6 放宽） |
 | 文件名注入 / 路径穿越 | 显示名净化 + 磁盘路径 id 化 + Content-Disposition 按 RFC 5987 编码 |
 | svg XSS / markdown XSS | svg 一律位图/`<img>`；markdown 走既有 DOMPurify 管线 |
 | 头显无文件选择器 | 产品决策：上传/下载引导 2D，文档写明 |
 | Quest 系统键盘无中文 IME | 编辑面板支持但文档引导中文长文用 2D；XR 编辑定位「短改」 |
 | 房间场景切换后位姿悬空 | 位姿按世界坐标保留不清除（需求 10.10），成员自行再调整 |
-| Quest 上多个常驻模型拖性能 | 上限 6（服务端校验）+ 单模型 ≤50MB + 异步加载占位；实测后可调常量 |
+| Quest 上多个常驻模型拖性能 | 上限 20（服务端校验）+ 单模型 ≤50MB + 异步加载占位；实测后可调常量 |
 | 摆放拖拽的写入放大 | 客户端 ~500ms 节流 + 松手保存；LWW 下并发互踩最多位姿跳变，可再拖 |
 | 内容路由靠约定而非硬约束 | Agent 侧写进 SKILL.md 硬性行为指引；人类侧 UI 软提示；服务端不拒绝（保既有聊天 3D 附件兼容） |
 
@@ -334,7 +334,7 @@ else: 放行
 3. XR 端音频播放是否要进 v1（暂按信息卡 + 引导 2D）。
 4. 文件变更是否需要在聊天流出现系统提示消息（暂按不做）。
 5. 2D 端 model 预览是否需要交互式查看器（暂按缩略图 + 下载）。
-6. 同时常驻 3D 模型上限 6 是否合适（Quest 性能实测后可调常量）。
+6. 同时常驻 3D 模型上限（2026-10-26 定为 20）是否合适（Quest 性能实测后可调常量）。
 7. 聊天附件中的 3D 类型是否改为服务端硬拒（暂按文档指引 + 上传软提示，不破坏既有 3D 文件卡片功能）。
 
 ## 下一阶段桥接：个人资源库/商店 → room_files
@@ -375,7 +375,7 @@ else: 放行
 ### 服务端
 
 - `PLACEABLE_KINDS = {model, image, svg, video, audio}`；`set_file_placement` 由 `kind != "model"` 改为 `kind not in PLACEABLE_KINDS`；`_file_dict` 的 `world` 块对全部可摆放 kind 生效。
-- 上限按类别：`WORLD_LIMITS = {"model": 6, "picture": 12, "media": 3}`，类别映射 `model→model`、`image/svg→picture`、`video/audio→media`；计数 SQL 按 `kind IN (...)` 过滤。
+- 上限按类别：`WORLD_LIMITS = {"model": 20, "picture": 12, "media": 3}`，类别映射 `model→model`、`image/svg→picture`、`video/audio→media`；计数 SQL 按 `kind IN (...)` 过滤。
 - 分类：`MODEL_FILE_EXTS` 扩为 glTF 家族 + `EXTRA_MODEL_MIME_BY_EXT`（`.fbx→model/x-fbx`、`.obj→model/obj`、`.stl→model/stl`、`.ply→model/x-ply`、`.3mf→model/3mf`、`.usdz→model/vnd.usdz+zip`、`.usd/.usda/.usdc→model/vnd.usd`）；`_classify_file` / `_reclassify_file` 均在 glTF 分支之后、图片魔数之前命中（.obj/.ply/.usda 是文本也必须先归 model，不能落入 text 白名单）。`.m3u8→video, application/vnd.apple.mpegurl`。
 - 用途隔离：`GLTF_MODEL_MIMES = {model/gltf-binary, model/gltf+json, model/vrm}`；`_require_approved_library_model` 额外要求 `version.mime in GLTF_MODEL_MIMES`。
 - 内容端点给可摆放媒体走 Starlette `FileResponse`（原生支持 Range，视频 seek 可用；客户端仍走 blob 方案，Range 主要服务 2D `<video>`）。

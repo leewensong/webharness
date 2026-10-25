@@ -682,7 +682,7 @@ sequenceDiagram
 
 ### 上限
 
-每房 **200 个**文件；文本类（markdown/text/svg）**2MB**、二进制 **50MB**；描述 ≤500 字；同时常驻摆放（`world.visible=true`）按类别计：3D 模型 ≤**6**、图片盒子 ≤**12**、媒体播放器 ≤**3**。JSON 直写只收文本类（否则 400「请用 multipart」）；二进制一律 multipart。
+每房 **200 个**文件；文本类（markdown/text/svg）**2MB**、二进制 **50MB**；描述 ≤500 字；同时常驻摆放（`world.visible=true`）按类别计：3D 模型 ≤**20**、图片盒子 ≤**12**、媒体播放器 ≤**3**。JSON 直写只收文本类（否则 400「请用 multipart」）；二进制一律 multipart。
 
 ### 标准流程：先列表，再动手
 
@@ -735,7 +735,7 @@ curl -sS -X PUT "$URL/api/rooms/$ROOM/files/15/placement" -H "Authorization: Bea
 - `rotation` 为 **Euler 弧度** `[x,y,z]`（常规只用 `[0, yaw, 0]`）；`scale` 为显式三元组（建议等比 `[s,s,s]`）。
 - **底边落地**：`position.y = 模型高 × scale ÷ 2`。不知道模型尺寸就先 `scale=[1,1,1]`、`y≈0.5` 摆上，由人类在 XR 里拖拽微调（调整也是 LWW 写回同接口）；XR 客户端「摆入房间」按钮会自动做 Box3 归一化并算好显式 scale。
 - 朝向：面向摆放者 = `yaw = atan2(人x - 模型x, 人z - 模型z)`。
-- 收起 `{"visible":false}`：服务端保留位姿；上限 6 个，超限 400 提示先收起其他模型。
+- 收起 `{"visible":false}`：服务端保留位姿；上限 20 个，超限 400 提示先收起其他模型。
 - **再显示**：`PUT {"visible":true, position…}` 即可（位姿照 `GET files` 里读到的 `world.pose` 原样回传）；人类在 XR 里从「文件面板 → 选中模型 → ⋯ 动作 → 再显示在房间里」走同一接口，**按保留位姿复现、不会重算**。
 - 权限与消息同源：`files_locked` 或成员 `canEditFiles=false` → 403（读取不受限）；治理者恒可写。归档房间只读：`GET /api/archives/{roomId}/files`。
 - 房间详情 `myPermissions.canEditFiles` 与 `files.summary {revision, locked, canEdit, count}` 可先查再动。
@@ -1101,7 +1101,7 @@ curl -sS "$URL/api/room-templates/mygame/script" -H "Authorization: Bearer $TOKE
 | GET | `/api/rooms/{roomName}/presence/delta` | 增量：`?sinceId=<游标>&hold=<毫秒>&fmt=bin`（默认 JSON）→ `{reset, events:[{username,kind,pose,state,bones,face,at}]}`；`sinceId` 过期或落后过多时 `reset:true`（重拉全量） |
 | POST | `/api/rooms/{roomName}/presence/leave` | 离开 3D：删除自己的位姿并追加 leave 事件（别人立即移除其形象） |
 | GET | `/api/rooms/{roomName}/files/{fileId}/content` | 下载内容（inline；`?download=1` 强制 attachment） |
-| PUT | `/api/rooms/{roomName}/files/{fileId}/placement` | 世界摆放（kind ∈ model/image/svg/video/audio）：`{visible, position?, rotation?, scale?}`；visible=true 时 position 必填；LWW、不改 updated_at；同时可见上限按类别：模型 6 / 图片 12 / 媒体播放器 3；visible=false 保留位姿 |
+| PUT | `/api/rooms/{roomName}/files/{fileId}/placement` | 世界摆放（kind ∈ model/image/svg/video/audio）：`{visible, position?, rotation?, scale?}`；visible=true 时 position 必填；LWW、不改 updated_at；同时可见上限按类别：模型 20 / 图片 12 / 媒体播放器 3；visible=false 保留位姿 |
 | GET | `/api/archives/{roomId}/files` | 归档房间共同文件列表（只读，含已摆放状态） |
 | GET | `/api/archives/{roomId}/files/{fileId}/content` | 归档文件内容（只读） |
 
