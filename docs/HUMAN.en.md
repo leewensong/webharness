@@ -269,6 +269,14 @@ Rule of thumb for Agents: one-off answers and one-off charts go into chat messag
 - **Undo**: the "Undo" button on the adjust bar reverts the last action (move / rotate / scale / unplace / place), up to 20 steps; pressing Undo mid-adjustment discards the changes you were making.
 - **Bringing an unplaced object back**: in the file panel select the model → "⋯ Actions" → "**Show in room again**" — it returns **at its saved pose** (not in front of you). Unplaced models are marked "Unplaced" in the list.
 - At most **20** models can be placed at once; upload `.glb` files ≤50MB.
+- An image becomes a framed box; a video / audio file becomes a player (screen plus a control bar: play/pause, ±10 s, mute, loop, progress).
+
+### Video player: projection, stereo and source
+
+- The video control bar has three more buttons: **projection** (flat → VR180 → VR360), **3D** (2D → side-by-side → top-bottom) and **source**.
+- VR180 / VR360 are inside-out spheres: step inside and the sphere follows your head; step out and it returns to the player.
+- **Source** lets you temporarily load a `https://…` or in-app `/api/…` URL (`.m3u8` is played via HLS); leave it empty or press "Use file source" to go back to the file's own video.
+- Projection, stereo and a custom source are **your local settings** — they are not written to the room and other members still see the default flat view; playback progress is per viewer too.
 
 ### Immersive controls
 

@@ -896,7 +896,12 @@ export function createXRFiles(opts) {
         const kind = rec.file.kind;
         let model, animations = [], box = null;
         if (kind === "video" || kind === "audio") {
-          const media = await createMediaPlayer({ file: rec.file, fetchBlob, fetchText, token });
+          const media = await createMediaPlayer({
+            file: rec.file, fetchBlob, fetchText, token,
+            hud, t, flash, camera,
+            isPresenting: opts.isPresenting || (() => false),
+            storageKey: `wh.xrplayer.${roomName()}.${rec.file.id}`,
+          });
           if (!currentWorldRec(rec)) { media.dispose(); return; }
           rec.media = media;
           model = media.object;

@@ -722,6 +722,7 @@ export async function createXR(ctx) {
       placeChatModel, removeChatModel,
       disposeObjectTree,
       statusEl, hud,
+      isPresenting: () => renderer.xr.isPresenting,
       pxPerM: PANEL_W / REF_CSS,
     });
     scene.add(files.group);

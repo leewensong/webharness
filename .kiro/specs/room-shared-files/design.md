@@ -401,3 +401,13 @@ else: 放行
 ### 暂缓
 
 - 播放状态跨端同步（「一起看」）、空间音频（PositionalAudio）、Gaussian splat（.splat/.ksplat/.spz，参考 viewer 依赖 CDN 的 GaussianSplats3D，单独立项）、OBJ+MTL/GLTF+bin 多文件打包上传。
+
+## 视频播放器：投影 / 立体 / 片源（需求 14）
+
+- **按眼分层**：three r186 的 `WebXRManager` 在 `updateCamera` 里固定 `cameraL.layers.mask = cameraXR.layers.mask & -5`、`cameraR.layers.mask = ... & -3`（源码注释「1 = left, 2 = right」）。因此左眼网格 `layers.set(1)`、右眼 `layers.set(2)`、单画面网格留在 layer 0；非沉浸式时隐藏左右网格、显示单画面（`opts.isPresenting()`）。
+- **单一 VideoTexture + uvRect**：平面/球面共用一个 `VideoTexture`，每个网格一个 `ShaderMaterial`，uniform `uvRect = [offsetX, offsetY, repeatX, repeatY]`。2D=(0,0,1,1)；SBS 左=(0,0,.5,1) 右=(.5,0,.5,1)；OU 左=(0,.5,1,.5) 右=(0,0,1,.5)。片元里 `texture2D(map, uvRect.xy + vUv*uvRect.zw)` 后接 `#include <colorspace_fragment>`，与内置材质同一色彩管线；避免为两只眼各建一份视频纹理（每帧双份上传）。
+- **球面**：`SphereGeometry(2.4, 64, 40)`（360）与 `SphereGeometry(2.4, 48, 32, 0, π)`（180，覆盖 +Z 前半球）；材质 `BackSide`、`depthWrite:false`；`mesh.raycast = () => {}` 让球面不参与拾取。
+- **跟随**：`tick()` 里若投影非平面且相机到播放器距离 < 2.4×scale×0.92，把球心放到 `root.worldToLocal(camera)` 并按「相机 yaw − root yaw」转向；否则回到 `(0, SCREEN_Y, 0)`。球心跟随只影响本地渲染。
+- **片源**：HUD DOM 输入行（与文本编辑面板同风格、同系统键盘路径）。`attachSource(src)`：hls → 原生/hls.js；`/` 开头 → Bearer 取 blob；`http(s)` → 直接 `video.src`（`crossOrigin=anonymous`）。切换前 `cleanupSource()`（destroy hls / pause / removeAttribute / revoke）。
+- **持久化**：`localStorage["wh.xrplayer.<room>.<fileId>"] = {proj, stereo, src}`；只读本地，不写服务器。文件内容替换导致播放器重建后仍按该键恢复偏好。
+- **控制条布局**：两行。第一行按钮（⏪10 / ▶⏸ / 10⏩ / 静音 / 循环 / 投影 / 立体 / 片源，音频省略后两个），第二行进度条 + 当前/总时长。按钮区与进度区分别命中（`BTN_ROW_H` 分界），进度条点击即跳转。
